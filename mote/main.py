@@ -23,6 +23,6 @@ def main():
     elif len(args) == 1:
         run_file(args[0])
     else:
-        print("Usage: dust [script]")
+        print("Usage: mote [script]")
         sys.exit(64)
     

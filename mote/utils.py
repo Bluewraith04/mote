@@ -1,4 +1,4 @@
-from env import Symbol, null
+from .env import Symbol, null
 from typing import Any
 
 def wrap(value, is_mutable=True) -> Symbol:

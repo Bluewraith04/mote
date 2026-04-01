@@ -12,7 +12,7 @@ class REPL:
         self.is_active = True
 
     def init(self):
-        print("Dust 0.1.0 REPL (type 'exit()' to quit)")
+        print("Mote 0.2.0 REPL (type 'exit()' to quit)")
 
     def loop(self):
         self.init()
@@ -60,7 +60,7 @@ class REPL:
 
     def shutdown(self):
         self.is_active = False
-        print("Exiting Dust REPL...")
+        print("Exiting Mote REPL...")
         
             
                 
