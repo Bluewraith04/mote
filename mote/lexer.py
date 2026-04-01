@@ -26,7 +26,7 @@ tokens = [
     'AND', 'OR', 'NOT',
     'ASSIGN', 'DOT', 'COMMA', 'COLON',
     'LPAREN', 'RPAREN', 'LBRACE', 'RBRACE',
-    'LBRACKET', 'RBRACKET', 'SEMICOLON',
+    'LBRACKET', 'RBRACKET',
     'TRUE', 'FALSE', 'NULL', 'INDENT', 'DEDENT', 'NEWLINE'
 ] + list(reserved.values())
 
@@ -56,7 +56,6 @@ t_LBRACE  = r'\{'
 t_RBRACE  = r'\}'
 t_LBRACKET= r'\['
 t_RBRACKET= r'\]'
-t_SEMICOLON = r';'
 
 # Literal processing
 def t_FLOAT(t):
@@ -140,14 +139,28 @@ class IndentationLexer:
     def _generate_tokens(self):
         indent_stack = [0]
         pending_newlines = []
+        paren_count = 0
         for tok in self.lexer:
+            if tok.type in ('LPAREN', 'LBRACE', 'LBRACKET'):
+                paren_count += 1
+            elif tok.type in ('RPAREN', 'RBRACE', 'RBRACKET'):
+                paren_count -= 1
+
             if tok.type == 'NEWLINE':
+                if paren_count > 0:
+                    continue
                 pending_newlines.append(tok)
                 continue
             if pending_newlines:
                 last_nl = pending_newlines[-1]
                 pending_newlines = []
                 indent = last_nl.value
+                
+                import copy
+                nl_tok = copy.copy(last_nl)
+                nl_tok.type = 'NEWLINE'
+                yield nl_tok
+
                 if indent > indent_stack[-1]:
                     indent_stack.append(indent)
                     last_nl.type = 'INDENT'
@@ -155,7 +168,6 @@ class IndentationLexer:
                 elif indent < indent_stack[-1]:
                     while indent < indent_stack[-1]:
                         indent_stack.pop()
-                        import copy
                         dedent_tok = copy.copy(last_nl)
                         dedent_tok.type = 'DEDENT'
                         dedent_tok.value = indent_stack[-1]
@@ -164,9 +176,27 @@ class IndentationLexer:
                         print(f"IndentationError at line {last_nl.lineno}")
             yield tok
 
+        import ply.lex as lex
+        
+        # Flush any pending newlines at EOF
+        if pending_newlines:
+            last_nl = pending_newlines[-1]
+            pending_newlines = []
+            
+            import copy
+            nl_tok = copy.copy(last_nl)
+            nl_tok.type = 'NEWLINE'
+            yield nl_tok
+        else:
+            eof_nl = lex.LexToken()
+            eof_nl.type = 'NEWLINE'
+            eof_nl.value = 0
+            eof_nl.lineno = self.lexer.lineno
+            eof_nl.lexpos = self.lexer.lexpos
+            yield eof_nl
+
         while len(indent_stack) > 1:
             indent_stack.pop()
-            import ply.lex as lex
             dedent_tok = lex.LexToken()
             dedent_tok.type = 'DEDENT'
             dedent_tok.value = 0

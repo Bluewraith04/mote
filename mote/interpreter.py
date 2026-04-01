@@ -257,7 +257,8 @@ class Interpreter:
         self.env = Environment(parent=previous_env)
         try:
             for stmt in node.statements:
-                self.eval(stmt)
+                if stmt is not None:
+                    self.eval(stmt)
         finally:
             # Ensure the environment is restored even if an error occurs
             self.env = previous_env
@@ -265,4 +266,5 @@ class Interpreter:
     def eval_Program(self, node: Any):
         """Evaluates the top-level program (list of declarations/statements)."""
         for decl in node.declarations:
-            self.eval(decl)
+            if decl is not None:
+                self.eval(decl)
