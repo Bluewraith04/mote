@@ -1,17 +1,29 @@
-let x = 10;
-let y = x + 5;
+// Hello world
+print("Hello, Mote!")
 
-fn add(a, b)
-    return a + b;
+// Variables
+let x = 10
+let y = x + 5
 
-print(add(3, 4));
+// Functions
+fn add(a, b):
+    return a + b
 
-if x > 5
-    print("x is large");
-else
-    print("x is small");
+print(
+    add(
+        3, 
+        4
+    )
+)
 
-let i = 0;
-while i < 5
-    print(i);
-    i = i + 1;
+// Conditionals
+if x > 5:
+    print("x is large")
+else:
+    print("x is small")
+
+// Loops
+let i = 0
+while i < 5:
+    print(i)
+    i = i + 1

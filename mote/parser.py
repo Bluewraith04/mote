@@ -38,6 +38,7 @@ def p_program_item(p):
                 | function_decl
                 | struct_decl
                 | statement
+                | empty_stmt
     """
     p[0] = p[1]
 
@@ -56,14 +57,14 @@ def p_statement(p):
 
 # === Imports ===
 def p_import_stmt(p):
-    'import_stmt : IMPORT STRING SEMICOLON'
+    'import_stmt : IMPORT STRING NEWLINE'
     p[0] = Import(path=p[2])
 
 
 # === Functions ===
 def p_function_decl(p):
-    'function_decl : FN ID LPAREN parameters_opt RPAREN block'
-    p[0] = FunctionDecl(name=p[2], parameters=p[4], body=p[6])
+    'function_decl : FN ID LPAREN parameters_opt RPAREN COLON NEWLINE block'
+    p[0] = FunctionDecl(name=p[2], parameters=p[4], body=p[8])
 
 
 def p_parameters_opt(p):
@@ -85,8 +86,8 @@ def p_parameters(p):
 
 # === Structs ===
 def p_struct_decl(p):
-    'struct_decl : STRUCT ID INDENT struct_fields DEDENT SEMICOLON'
-    p[0] = StructDecl(name=p[2], fields=p[4])
+    'struct_decl : STRUCT ID COLON NEWLINE INDENT struct_fields DEDENT'
+    p[0] = StructDecl(name=p[2], fields=p[5])
 
 def p_struct_fields(p):
     """
@@ -104,12 +105,12 @@ def p_struct_fields(p):
 
 # === Variable ===
 def p_variable_decl(p):
-    'variable_decl : LET ID ASSIGN expr SEMICOLON'
+    'variable_decl : LET ID ASSIGN expr NEWLINE'
     p[0] = VariableDecl(name=p[2], expr=p[4])
 
 # === Assignment ===
 def p_assignment(p):
-    'assignment : assign_target ASSIGN expr SEMICOLON'
+    'assignment : assign_target ASSIGN expr NEWLINE'
     p[0] = Assignment(target=p[1], expr=p[3])
 
 def p_assign_target_id(p):
@@ -128,45 +129,59 @@ def p_assign_target_index(p):
 
 def p_if_stmt(p):
     """
-    if_stmt : IF expr block elif_blocks else_block_opt
+    if_stmt : IF expr COLON NEWLINE block
+            | IF expr COLON NEWLINE block else_block
+            | IF expr COLON NEWLINE block elif_blocks
+            | IF expr COLON NEWLINE block elif_blocks else_block
     """
-    p[0] = IfStmt(branches=[(p[2], p[3])] + p[4], else_block=p[5])
+    if len(p) == 6:
+        p[0] = IfStmt(branches=[(p[2], p[5])], else_block=None)
+    elif len(p) == 7:
+        if isinstance(p[6], list): # elif_blocks returns list
+            p[0] = IfStmt(branches=[(p[2], p[5])] + p[6], else_block=None)
+        else: # else_block returns just the block AST
+            p[0] = IfStmt(branches=[(p[2], p[5])], else_block=p[6])
+    else: # len 8, has both
+        p[0] = IfStmt(branches=[(p[2], p[5])] + p[6], else_block=p[7])
 
 def p_elif_blocks(p):
     """
-    elif_blocks : elif_blocks ELIF expr block
-        | empty
+    elif_blocks : ELIF expr COLON NEWLINE block
+                | elif_blocks ELIF expr COLON NEWLINE block
     """
-    if len(p) == 5:
-        p[0] = p[1] + [(p[3], p[4])]
+    if len(p) == 6:
+        p[0] = [(p[2], p[5])]
     else:
-        p[0] = []
+        p[0] = p[1] + [(p[3], p[6])]
 
-def p_else_block_opt(p):
+def p_else_block(p):
     """
-    else_block_opt : ELSE block
-        | empty
+    else_block : ELSE COLON NEWLINE block
     """
-    p[0] = p[2] if len(p) == 3 else None
+    p[0] = p[4]
 
 def p_while_stmt(p):
-    'while_stmt : WHILE expr block'
-    p[0] = WhileStmt(condition=p[2], body=p[3])
+    'while_stmt : WHILE expr COLON NEWLINE block'
+    p[0] = WhileStmt(condition=p[2], body=p[5])
 
 def p_for_stmt(p):
-    'for_stmt : FOR ID IN expr block'
-    p[0] = ForStmt(var=p[2], iterable=p[4], body=p[5])
+    'for_stmt : FOR ID IN expr COLON NEWLINE block'
+    p[0] = ForStmt(var=p[2], iterable=p[4], body=p[7])
 
 def p_return_stmt(p):
     """
-    return_stmt : RETURN expr SEMICOLON
-        | RETURN SEMICOLON
+    return_stmt : RETURN expr NEWLINE
+        | RETURN NEWLINE
     """
     p[0] = ReturnStmt(value=p[2] if len(p) == 4 else None)
 
 def p_expr_stmt(p):
-    'expr_stmt : expr SEMICOLON'
+    'expr_stmt : expr NEWLINE'
     p[0] = ExprStmt(expr=p[1])
+
+def p_empty_stmt(p):
+    'empty_stmt : NEWLINE'
+    pass
 
 def p_block(p):
     'block : INDENT statement_list DEDENT'
