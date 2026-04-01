@@ -110,7 +110,7 @@ class Interpreter:
         return array[index]
     
     def eval_ArrayLiteral(self, node: ArrayLiteral) -> Any:
-        """Evaluates an array literal and parses it into dust-friendly format. """
+        """Evaluates an array literal and parses it into mote-friendly format. """
         elements = [self.eval(expr) for expr in node.elements]
         return to_symbol(*elements)
     
@@ -196,8 +196,8 @@ class Interpreter:
         
     # Statements
     def eval_Assignment(self, node: Assignment):
-        if not isinstance(node, (Identifier, IndexAccess, MemberAccess)):
-            raise RuntimeError(f"Invalid assignment target: {type(node).__name__}")
+        if not isinstance(node.target, (Identifier, IndexAccess, MemberAccess)):
+            raise RuntimeError(f"Invalid assignment target: {type(node.target).__name__}")
         value = self.eval(node.expr)
         target = self.eval(node.target)
         if not isinstance(target, Symbol) and not target.is_mutable: raise TypeError("Invalid Assignment Target")

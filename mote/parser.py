@@ -85,7 +85,7 @@ def p_parameters(p):
 
 # === Structs ===
 def p_struct_decl(p):
-    'struct_decl : STRUCT ID LBRACE struct_fields RBRACE SEMICOLON'
+    'struct_decl : STRUCT ID INDENT struct_fields DEDENT SEMICOLON'
     p[0] = StructDecl(name=p[2], fields=p[4])
 
 def p_struct_fields(p):
@@ -169,7 +169,7 @@ def p_expr_stmt(p):
     p[0] = ExprStmt(expr=p[1])
 
 def p_block(p):
-    'block : LBRACE statement_list RBRACE'
+    'block : INDENT statement_list DEDENT'
     p[0] = Block(statements=p[2])
 
 def p_statement_list(p):

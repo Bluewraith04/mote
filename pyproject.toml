@@ -1,20 +1,25 @@
-[build-system]
-requires = ["setuptools"]
-build-backend = "setuptools.build_meta"
-
 [project]
-name = "dust-lang"
-version = "0.1.0"
-description = "A minimal interpreted programming language"
-requires-python = ">=3.7"
-license = { text = "MIT" }
-authors = [{name = "Warith Ogunwoolu", email = "ogunwooluolasunmbo@gmail.com"}]
-dependencies = [ "ply>=3.11" ]
-urls = { "Homepage" = "https://github.com/Bluewraith04/dust" }
-classifiers = [ "Programming Language :: Python :: 3", "License :: OSI Approved :: MIT License", "Operating System :: OS Independent" ]
+name = "mote"
+version = "0.2.0"
+description = "A minimal interpreted programming language (formerly Dust)"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "ply>=3.11",
+]
+authors = [
+  { name = "Warith Ogunwoolu", email = "ogunwooluolasunmbo@gmail.com" }
+]
+license = { file = "LICENSE" }
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent"
+]
 
 [project.scripts]
-dust = "dust.main:main"
+mote = "mote.main:main"
 
-[tool.setuptools.packages.find]
-where = ["."]
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
