@@ -1,0 +1,10 @@
+/// Grows one List<Int> to {N} elements.
+fn main() {
+    var xs: List<Int> = []
+    var i = 0
+    while i < {N} {
+        xs.push(i)
+        i += 1
+    }
+    println(xs.len())
+}

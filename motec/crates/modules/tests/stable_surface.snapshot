@@ -1,0 +1,11 @@
+std.error::Error [class] class Error { kind: ErrorKind, message: String }
+std.error::ErrorKind [enum] enum ErrorKind { NotFound PermissionDenied InvalidData Interrupted AlreadyExists WouldBlock TimedOut Unsupported Other }
+std.error::IoError [enum] enum IoError { NotFound PermissionDenied AlreadyExists Interrupted WouldBlock TimedOut Other }
+std.error::ParseError [enum] enum ParseError { InvalidSyntax Other }
+std.error::io_error_of [fn] fn io_error_of(e: Error) -> IoError
+std.error::parse_error_of [fn] fn parse_error_of(e: Error) -> ParseError
+std.sys.fs::read_bytes [fn] fn read_bytes(path: String) -> Result<Bytes, Error>
+std.sys.fs::read_text [fn] fn read_text(path: String) -> Result<String, Error>
+std.sys.fs::write_bytes [fn] fn write_bytes(path: String, b: Bytes) -> Result<Null, Error>
+std.sys.fs::write_text [fn] fn write_text(path: String, s: String) -> Result<Null, Error>
+std.traits::Closeable [trait] trait Closeable { fn close(self) -> Result<Null, Error> }

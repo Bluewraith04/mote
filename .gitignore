@@ -1,0 +1,15 @@
+/target
+**/target/
+.mirror-export
+
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+__pycache__/
+*.pyc
+
+*.bak
+*.tmp
+test.log

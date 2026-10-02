@@ -1,0 +1,22 @@
+fn max<T: Ord>(a: T, b: T) -> T {
+    if a.compare(b) > 0 { return a }
+    return b
+}
+
+fn describe<T: Display>(x: T) -> String {
+    return "value: ${x.to_string()}"
+}
+
+@derive(Display, Debug)
+class Point {
+    x: Int
+    y: Int
+}
+
+fn main() {
+    println(max(3, 7).to_string())
+    println(max("pear", "apple"))
+    let p = Point { x: 1, y: 2 }
+    println(describe(p))
+    println(p.debug())
+}

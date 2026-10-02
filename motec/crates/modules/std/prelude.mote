@@ -1,0 +1,5 @@
+/// The prelude: every non-`std` module is compiled with an injected `import std.prelude`.
+
+pub import { Result } from std.result
+pub import { Error, ErrorKind } from std.error
+pub import { Display, Debug, Eq, Ord, Closeable } from std.traits

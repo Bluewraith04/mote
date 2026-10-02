@@ -1,0 +1,59 @@
+/// std.dev.libtools — calls C libraries at run time. Explicit import; the run needs `--allow-native`.
+///
+///     let libm = open("libm.so.6")?
+///     let sin = bind<(Float) -> Float>(libm, "sin")?
+///
+/// `F` is the C signature: `Int` is an i64, `Float` an f64, `Bool` a C int, `String` a borrowed char*,
+/// `Bytes` a writable buffer, and `Null` no result. The compiler passes `F` to `__bind_raw`.
+
+import std.prelude
+import { Error, ErrorKind } from std.error
+
+pub class Library {
+    id: Int
+
+    /// Drops the handle; functions already bound keep working.
+    pub fn close(self) {
+        __libtools_close(self.id)
+    }
+}
+
+/// Loads the shared library at `path`.
+pub fn open(path: String) -> Result<Library, Error> {
+    let id = __libtools_open(path)?
+    let lib = Library { id: id }
+    __release_on_collect(lib, 3)
+    return Ok(lib)
+}
+
+/// Looks `name` up in `lib` as a C function of type `F`; a call runs on the worker, so use it for fast functions.
+pub fn bind<F>(lib: Library, name: String) -> Result<F, Error> {
+    match __bind_raw(lib, name, "", -1, false) {
+        Ok(_) => { return Err(Error.new(ErrorKind.Unsupported, "bind was not given a function type")) }
+        Err(e) => { return Err(e) }
+    }
+}
+
+/// Like `bind`, but a call runs on a helper thread and the task waits, so a function that blocks does not stop other tasks.
+pub fn bind_blocking<F>(lib: Library, name: String) -> Result<F, Error> {
+    match __bind_raw(lib, name, "", -1, true) {
+        Ok(_) => { return Err(Error.new(ErrorKind.Unsupported, "bind_blocking was not given a function type")) }
+        Err(e) => { return Err(e) }
+    }
+}
+
+/// `bind<F>` and `bind_blocking<F>` calls become this with `F` written out as a signature and its parameter count.
+pub fn __bind_raw(lib: Library, name: String, signature: String, arity: Int, blocking: Bool) -> Result<__Any, Error> {
+    if arity < 0 {
+        return Err(Error.new(ErrorKind.InvalidData, "bind needs a function type, as in bind<(Float) -> Float>(lib, name)"))
+    }
+    let sym = __libtools_symbol(lib.id, name, signature)?
+    if arity == 0 { return Ok(|| __libtools_call(sym, signature, [], blocking)) }
+    if arity == 1 { return Ok(|a| __libtools_call(sym, signature, [a], blocking)) }
+    if arity == 2 { return Ok(|a, b| __libtools_call(sym, signature, [a, b], blocking)) }
+    if arity == 3 { return Ok(|a, b, c| __libtools_call(sym, signature, [a, b, c], blocking)) }
+    if arity == 4 { return Ok(|a, b, c, d| __libtools_call(sym, signature, [a, b, c, d], blocking)) }
+    if arity == 5 { return Ok(|a, b, c, d, e| __libtools_call(sym, signature, [a, b, c, d, e], blocking)) }
+    if arity == 6 { return Ok(|a, b, c, d, e, f| __libtools_call(sym, signature, [a, b, c, d, e, f], blocking)) }
+    return Err(Error.new(ErrorKind.Unsupported, "a C function takes at most 6 arguments here"))
+}

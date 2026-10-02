@@ -1,0 +1,25 @@
+/// std.task — join-combinators over already-live `Task<T>` handles,
+/// decoupled from any lexical `scope { }`.
+
+import std.prelude
+
+/// Every task's result, in list order. The first `Err` short-circuits the
+/// rest: a still-running task after the failing one is left alone, not
+/// cancelled — `all` collects results, it doesn't supervise failure.
+pub fn all<T>(tasks: List<Task<T>>) -> Result<List<T>, String> {
+    var out: List<T> = []
+    for t in tasks {
+        match t.join() {
+            Ok(v) => out.push(v)
+            Err(e) => return Err(e)
+        }
+    }
+    return Ok(out)
+}
+
+/// Whichever task resolves first, success or failure. Every other task in
+/// `tasks` is `.cancel()`'d once the winner resolves.
+pub fn any<T>(tasks: List<Task<T>>) -> Result<T, String> {
+    let winner: Task<T> = __task_any(tasks)
+    return winner.join()
+}

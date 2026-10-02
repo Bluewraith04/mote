@@ -1,0 +1,19 @@
+[package]
+name = "pkg"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[dependencies]
+modules = { path = "../modules" }
+compiler = { path = "../compiler" }
+serde = { version = "1.0", features = ["derive"] }
+toml = "0.8"
+sha2 = "0.10"
+flate2 = "1"
+ureq = "3.4.2"
+
+[dev-dependencies]
+isa = { path = "../isa" }
+runtime = { path = "../runtime" }
+ffi = { path = "../ffi" }

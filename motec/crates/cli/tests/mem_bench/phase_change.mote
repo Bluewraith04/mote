@@ -1,0 +1,42 @@
+/// Fills the heap with 2-slot objects, drops them, then fills it again with 8-slot objects.
+struct Small {
+    a: Int
+    b: Int
+}
+
+struct Big {
+    a: Int
+    b: Int
+    c: Int
+    d: Int
+    e: Int
+    f: Int
+    g: Int
+    h: Int
+}
+
+fn small_phase() -> Int {
+    var keep: List<Small> = []
+    var i = 0
+    while i < {N} {
+        keep.push(Small { a: i, b: i })
+        i += 1
+    }
+    return keep.len()
+}
+
+fn big_phase() -> Int {
+    var keep: List<Big> = []
+    var i = 0
+    while i < {N} / 4 {
+        keep.push(Big { a: i, b: i, c: i, d: i, e: i, f: i, g: i, h: i })
+        i += 1
+    }
+    return keep.len()
+}
+
+fn main() {
+    println(small_phase())
+    println(big_phase())
+    println(small_phase())
+}

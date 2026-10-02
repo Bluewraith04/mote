@@ -1,0 +1,52 @@
+/// std.sys.io: standard streams and one-shot file operations. Explicit import.
+/// `write`, `write_line` and `flush` cannot fail; the file operations answer a `Result`. `read_line` answers `Ok(None)` at the end of input.
+
+import std.prelude
+
+pub class OutStream {
+    fd: Int
+
+    pub fn write(self, s: String) {
+        __io_write(self.fd, s)
+    }
+
+    pub fn write_line(self, s: String) {
+        __io_write(self.fd, s + "\n")
+    }
+
+    pub fn flush(self) {
+        __io_flush(self.fd)
+    }
+}
+
+pub class InStream {
+    fd: Int
+
+    pub fn read_line(self) -> Result<Option<String>, Error> {
+        let line = __io_read_line()?
+        if line == null {
+            return Ok(None)
+        }
+        return Ok(Some(line))
+    }
+}
+
+pub fn stdout() -> OutStream { return OutStream { fd: 1 } }
+pub fn stderr() -> OutStream { return OutStream { fd: 2 } }
+pub fn stdin() -> InStream { return InStream { fd: 0 } }
+
+pub fn read_file(path: String) -> Result<String, Error> {
+    return __io_read_file(path)
+}
+
+pub fn write_file(path: String, contents: String) -> Result<Null, Error> {
+    return __io_write_file(path, contents)
+}
+
+pub fn read_file_bytes(path: String) -> Result<Bytes, Error> {
+    return __io_read_file_bytes(path)
+}
+
+pub fn write_file_bytes(path: String, b: Bytes) -> Result<Null, Error> {
+    return __io_write_file_bytes(path, b)
+}

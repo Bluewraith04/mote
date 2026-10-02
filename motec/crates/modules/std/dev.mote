@@ -1,0 +1,5 @@
+/// std.dev — what programs need around themselves as one group: `import std.dev` gives `dev.log`, `dev.args` and `dev.libtools`.
+
+import std.dev.log as log
+import std.dev.args as args
+import std.dev.libtools as libtools

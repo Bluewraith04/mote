@@ -1,0 +1,27 @@
+[workspace]
+members = [
+    "crates/isa",
+    "crates/contracts",
+    "crates/platform",
+    "crates/runtime",
+    "crates/gc",
+    "crates/ffi",
+    "crates/compiler",
+    "crates/modules",
+    "crates/pkg",
+    "crates/cli",
+]
+resolver = "2"
+
+[workspace.dependencies]
+isa = { path = "crates/isa" }
+
+[profile.release]
+lto = true
+
+# Argon2 fills 19 MiB per hash; unoptimized it takes seconds, which slows every debug build and test.
+[profile.dev.package.argon2]
+opt-level = 3
+
+[profile.dev.package.blake2]
+opt-level = 3

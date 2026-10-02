@@ -1,0 +1,59 @@
+import std.data.json as json
+
+@derive(Json)
+enum Role {
+    Guest
+    Member(Int)
+    Admin { level: Int, scopes: List<String> }
+}
+
+@derive(Json)
+struct Address {
+    city: String
+    zip: Int
+}
+
+@derive(Json)
+class User {
+    name: String
+    email: String?
+    role: Role
+    homes: List<Address>
+    limits: Map<String, Int | Float>
+    id: Int | String
+}
+
+fn main() {
+    let users = [
+        User { name: "Ann", email: "ann@example.com", role: Role.Admin { level: 2, scopes: ["read", "write"] }, homes: [Address { city: "Oslo", zip: 150 }], limits: {"rate": 5, "ratio": 0.5}, id: 7 },
+        User { name: "Bo", email: null, role: Role.Guest, homes: [], limits: {}, id: "bo-1" },
+    ]
+    var members: List<json.Json> = []
+    for u in users { members.push(u.to_json()) }
+    let doc = json.Json.Array(members)
+    let text = json.pretty(doc, 2).unwrap()
+    println(text)
+
+    match json.parse(text) {
+        Ok(j) => {
+            match j {
+                json.Json.Array(items) => {
+                    for item in items {
+                        match User.from_json(item) {
+                            Ok(u) => { println("${u.name} ${json.to_text(u.role.to_json()).unwrap()}") }
+                            Err(e) => { println(e.message) }
+                        }
+                    }
+                }
+                _ => { println("not an array") }
+            }
+        }
+        Err(e) => { println(e.message) }
+    }
+
+    let broken = "{\"name\": \"Cy\", \"email\": null, \"role\": {\"Member\": \"x\"}, \"homes\": [], \"limits\": {}, \"id\": 1}"
+    match User.from_json(json.parse(broken).unwrap()) {
+        Ok(u) => { println("read") }
+        Err(e) => { println(e.message) }
+    }
+}

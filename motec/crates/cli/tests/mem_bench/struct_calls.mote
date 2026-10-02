@@ -1,0 +1,30 @@
+struct V {
+    var x: Int
+    var y: Int
+    pub fn dot(self, o: V) -> Int { return self.x * o.x + self.y * o.y }
+    pub fn scaled(self, k: Int) -> V { return V { x: self.x * k, y: self.y * k } }
+}
+
+fn dist2(a: V, b: V) -> Int {
+    let dx = a.x - b.x
+    let dy = a.y - b.y
+    return dx * dx + dy * dy
+}
+
+fn step(i: Int) -> Int {
+    let a = V { x: i, y: 1 }
+    let b = V { x: 1, y: i }
+    let c = a.scaled(2)
+    let (p, q) = (dist2(a, b), a.dot(b))
+    return p + q + c.x
+}
+
+fn main() {
+    var total = 0
+    var i = 0
+    while i < {N} {
+        total += step(i)
+        i += 1
+    }
+    println(total)
+}

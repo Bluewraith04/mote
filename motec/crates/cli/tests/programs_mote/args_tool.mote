@@ -1,0 +1,51 @@
+/// A small tool whose command line is a type: global flag, subcommands, positionals and defaults.
+import std.sys.env
+
+@derive(Args)
+enum Command {
+    @arg(help = "add up the numbers")
+    Sum {
+        @arg(positional, help = "the numbers")
+        numbers: List<Int>
+    }
+    @arg(help = "repeat a word")
+    Say {
+        @arg(positional, help = "the word")
+        word: String
+        @arg(short = "n", default = "1", help = "how many times")
+        times: Int
+        @arg(help = "end with this")
+        end: String?
+    }
+}
+
+@derive(Args)
+@arg(help = "Small tools")
+class Tool {
+    @arg(short = "q", help = "print only the result")
+    quiet: Bool
+    command: Command
+}
+
+fn run(c: Command, quiet: Bool) {
+    match c {
+        Sum { numbers } => {
+            var total = 0
+            for n in numbers { total = total + n }
+            if quiet { println(total) } else { println("sum of ${numbers.len()} numbers: ${total}") }
+        }
+        Say { word, times, end } => {
+            var i = 0
+            while i < times {
+                println(word)
+                i = i + 1
+            }
+            if end != null { println(end) }
+        }
+    }
+}
+
+fn main() {
+    let tool = Tool.parse_or_exit(env.args())
+    run(tool.command, tool.quiet)
+}

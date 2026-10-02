@@ -1,0 +1,54 @@
+trait Named {
+    fn name(self) -> String
+    fn shout(self) -> String { return "${self.name()}!" }
+}
+
+enum Light: (Named) {
+    Red
+    Green
+    Yellow
+
+    fn next(self) -> Light {
+        match self {
+            Light.Red => return Light.Green
+            Light.Green => return Light.Yellow
+            Light.Yellow => return Light.Red
+        }
+    }
+
+    fn name(self) -> String {
+        match self {
+            Light.Red => return "red"
+            Light.Green => return "green"
+            Light.Yellow => return "yellow"
+        }
+    }
+
+    fn start() -> Light { return Light.Red }
+}
+
+enum Tree<T> {
+    Leaf
+    Node(T, Int)
+
+    fn size(self) -> Int {
+        match self {
+            Tree.Leaf => return 0
+            Tree.Node(v, n) => return n
+        }
+    }
+}
+
+fn announce<T: Named>(x: T) -> String { return x.shout() }
+
+fn main() {
+    var light = Light.start()
+    for i in 0..4 {
+        println(light.name())
+        light = light.next()
+    }
+    println(announce(light))
+    let t: Tree<Int> = Tree.Node(5, 2)
+    println(t.size())
+    println(Tree.Leaf.size())
+}

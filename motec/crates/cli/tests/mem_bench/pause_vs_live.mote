@@ -1,0 +1,28 @@
+/// Holds {N} live structs, then churns short-lived lists so collections run against that live set.
+struct Node {
+    id: Int
+    next: Int
+    label: String
+}
+
+fn main() {
+    var live: List<Node> = []
+    var i = 0
+    while i < {N} {
+        live.push(Node { id: i, next: i + 1, label: "n" })
+        i += 1
+    }
+    var total = 0
+    var round = 0
+    while round < 20000 {
+        var tmp: List<Int> = []
+        var j = 0
+        while j < 100 {
+            tmp.push(j)
+            j += 1
+        }
+        total += tmp.len()
+        round += 1
+    }
+    println(live.len() + total)
+}

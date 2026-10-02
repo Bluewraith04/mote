@@ -1,0 +1,11 @@
+/// Recurses {N} calls deep, then unwinds.
+fn depth(n: Int) -> Int {
+    if n == 0 {
+        return 0
+    }
+    return depth(n - 1) + 1
+}
+
+fn main() {
+    println(depth({N}))
+}

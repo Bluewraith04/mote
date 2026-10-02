@@ -1,0 +1,39 @@
+class Stack<T> {
+    var items: List<T>
+
+    pub fn new() -> Stack<T> { return Stack { items: [] } }
+    pub fn push(var self, x: T) { self.items.push(x) }
+    pub fn pop(var self) -> Option<T> { return self.items.pop() }
+    pub fn peek(self) -> Option<T> { return self.items.last() }
+    pub fn size(self) -> Int { return self.items.len() }
+}
+
+struct Pair<A, B> {
+    a: A
+    b: B
+}
+
+fn first<T>(xs: List<T>) -> Option<T> { return xs.first() }
+fn swap<A, B>(p: Pair<A, B>) -> Pair<B, A> { return Pair { a: p.b, b: p.a } }
+fn top_or<T>(s: Stack<T>, fallback: T) -> T {
+    match s.peek() {
+        Some(x) => return x
+        None => return fallback
+    }
+}
+
+fn main() {
+    let s: Stack<Int> = Stack.new()
+    s.push(1)
+    s.push(2)
+    let n: Int = s.pop().unwrap()
+    println(n)
+    println(top_or(s, 0))
+    let f: Int = first([7, 8]).unwrap()
+    println(f)
+    let p = swap(Pair { a: 1, b: "x" })
+    let a: String = p.a
+    let b: Int = p.b
+    println(a)
+    println(b)
+}

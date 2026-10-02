@@ -1,0 +1,64 @@
+/// A TOML config read into derived types, tagged with a UUID, and passed on as JSON and base64.
+import std.data.toml as toml
+import std.data.json as json
+import std.data.base64 as base64
+import std.data.uuid as uuid
+import { Uuid } from std.data.uuid
+
+@derive(Json)
+struct Server {
+    host: String
+    port: Int
+    tls: Bool
+}
+
+@derive(Json)
+class Config {
+    name: String
+    server: Server
+    tags: List<String>
+    limits: Map<String, Int>
+    started: String
+}
+
+@derive(Json)
+struct Record {
+    id: Uuid
+    config: Config
+}
+
+let TEXT = "# service settings
+name = \"demo\"
+tags = [\"edge\", \"blue\"]
+started = 2026-10-02T12:30:00Z
+
+[server]
+host = \"localhost\"
+port = 8_080
+tls = false
+
+[limits]
+rate = 5
+burst = 0x10
+"
+
+fn main() {
+    let config = Config.from_json(toml.parse(TEXT).unwrap()).unwrap()
+    println("${config.name} on ${config.server.host}:${config.server.port}")
+    println(config.limits["burst"])
+    println(config.started)
+
+    let record = Record { id: uuid.v7(), config: config }
+    println(record.id.version())
+    println(record.id.to_string().len())
+
+    let text = json.to_text(record.to_json()).unwrap()
+    let packed = base64.encode(text.bytes())
+    let again = base64.decode(packed).unwrap().decode().unwrap()
+    println(again == text)
+
+    let back = Record.from_json(json.parse(again).unwrap()).unwrap()
+    println(back.id == record.id)
+
+    println(toml.to_text(config.to_json()).unwrap())
+}

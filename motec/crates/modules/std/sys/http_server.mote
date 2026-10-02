@@ -1,0 +1,468 @@
+/// std.sys.http_server — an HTTP/1.1 server over platform sockets. Explicit import, not in the prelude.
+///
+/// `listen` gives a `Server`, `accept` a `Connection`, `requests().next()` the requests on it, and `respond` answers one.
+/// The program starts its own task per connection. Requests are parsed by the Rust `httparse` crate.
+
+import std.prelude
+import std.data.json as jsonlib
+import { Json } from std.data.json
+import { Identity } from std.sys.tls
+
+class Socket {
+    id: Int
+}
+
+fn owned_socket(id: Int) -> Socket {
+    let s = Socket { id: id }
+    __release_on_collect(s, 2)
+    return s
+}
+
+fn with_header(items: List<String>, name: String, value: String) -> List<String> {
+    let lower = name.to_lower()
+    var out: List<String> = []
+    var i = 0
+    while i < items.len() {
+        let have: String = items.get(i)
+        if have != lower {
+            out.push(have)
+            let kept: String = items.get(i + 1)
+            out.push(kept)
+        }
+        i = i + 2
+    }
+    out.push(lower)
+    out.push(value)
+    return out
+}
+
+fn is_token(s: String) -> Bool {
+    let b = s.bytes()
+    if b.len() == 0 { return false }
+    var i = 0
+    while i < b.len() {
+        let c: Int = b.get(i)
+        let ok = (c >= 97 && c <= 122) || (c >= 65 && c <= 90) || (c >= 48 && c <= 57) || "!#$%&'*+-.^_`|~".bytes().contains(c)
+        if !ok { return false }
+        i = i + 1
+    }
+    return true
+}
+
+/// A reply to send with `Request.respond`.
+pub class Response {
+    pub status: Int
+    headers: List<String>
+    pub body: Bytes
+    failure: String
+
+    /// A reply with a status and a body; a `content-length` is added when it is sent.
+    pub fn new(status: Int, body: Bytes) -> Response {
+        let none: List<String> = []
+        return Response { status: status, headers: none, body: body, failure: "" }
+    }
+
+    /// A reply with no body.
+    pub fn empty(status: Int) -> Response {
+        let none: List<String> = []
+        return Response { status: status, headers: none, body: Bytes(), failure: "" }
+    }
+
+    /// A UTF-8 text body with a `text/plain` content type.
+    pub fn text(status: Int, content: String) -> Response {
+        let none: List<String> = []
+        return Response { status: status, headers: with_header(none, "content-type", "text/plain; charset=utf-8"), body: content.bytes(), failure: "" }
+    }
+
+    /// A JSON body with a JSON content type; a value with no JSON text (`NaN`) makes `respond` an `Err`.
+    pub fn json(status: Int, value: Json) -> Response {
+        let none: List<String> = []
+        match jsonlib.to_text(value) {
+            Ok(t) => { return Response { status: status, headers: with_header(none, "content-type", "application/json"), body: t.bytes(), failure: "" } }
+            Err(e) => { return Response { status: status, headers: none, body: Bytes(), failure: e.message } }
+        }
+    }
+
+    /// Sets a header, replacing one of the same name.
+    pub fn header(self, name: String, value: String) -> Response {
+        return Response { status: self.status, headers: with_header(self.headers, name, value), body: self.body, failure: self.failure }
+    }
+}
+
+/// A request whose head and whole body have arrived.
+pub class Request {
+    pub method: String
+    /// The target as sent, such as `/items?id=7`.
+    pub target: String
+    /// The target's path, percent-decoded.
+    pub path: String
+    pub body: Bytes
+    headers: List<String>
+    sock: Socket
+    keep_alive: Bool
+
+    /// The first header called `name` (any case), if there is one.
+    pub fn header(self, name: String) -> Option<String> {
+        let want = name.to_lower()
+        var i = 0
+        while i < self.headers.len() {
+            let have: String = self.headers.get(i)
+            if have == want {
+                let value: String = self.headers.get(i + 1)
+                return Some(value)
+            }
+            i = i + 2
+        }
+        return None
+    }
+
+    /// Every header by lowercase name; a repeated header's values are joined with `, `.
+    pub fn header_map(self) -> Map<String, String> {
+        var out: Map<String, String> = Map()
+        var i = 0
+        while i < self.headers.len() {
+            let name: String = self.headers.get(i)
+            let value: String = self.headers.get(i + 1)
+            if out.contains_key(name) {
+                let before: String = out[name]
+                out[name] = before + ", " + value
+            } else {
+                out[name] = value
+            }
+            i = i + 2
+        }
+        return out
+    }
+
+    /// The query parameters, percent-decoded; a repeated name keeps its last value.
+    pub fn query(self) -> Map<String, String> {
+        match self.target.find("?") {
+            Some(i) => { return pairs(self.target.slice(i + 1, self.target.len())) }
+            None => { return Map() }
+        }
+    }
+
+    /// The body as text; an `Err` if it is not UTF-8.
+    pub fn text(self) -> Result<String, Error> {
+        match self.body.decode() {
+            Some(t) => { return Ok(t) }
+            None => { return Err(Error.new(ErrorKind.InvalidData, "the request body is not UTF-8")) }
+        }
+    }
+
+    /// The body parsed as JSON.
+    pub fn json(self) -> Result<Json, Error> {
+        let t = self.text()?
+        return jsonlib.parse(t)
+    }
+
+    /// The body read as a form (`a=1&b=2`).
+    pub fn form(self) -> Result<Map<String, String>, Error> {
+        let t = self.text()?
+        return Ok(pairs(t))
+    }
+
+    /// Sends the reply, then closes the connection unless it stays open. An `Err` before any byte is sent leaves the request unanswered.
+    pub fn respond(self, reply: Response) -> Result<Null, Error> {
+        if reply.failure != "" { return Err(Error.new(ErrorKind.InvalidData, reply.failure)) }
+        if reply.status < 100 || reply.status > 999 {
+            return Err(Error.new(ErrorKind.InvalidData, "bad status ${reply.status}"))
+        }
+        var head = "HTTP/1.1 ${reply.status} ${__http_reason(reply.status)}\r\n"
+        var dated = false
+        var i = 0
+        while i < reply.headers.len() {
+            let name: String = reply.headers.get(i)
+            let value: String = reply.headers.get(i + 1)
+            if !is_token(name) || value.contains("\r") || value.contains("\n") {
+                return Err(Error.new(ErrorKind.InvalidData, "bad header ${name}"))
+            }
+            if name == "date" { dated = true }
+            if name != "content-length" && name != "transfer-encoding" && name != "connection" {
+                head = head + name + ": " + value + "\r\n"
+            }
+            i = i + 2
+        }
+        if !dated { head = head + "date: " + __http_date() + "\r\n" }
+        let bodiless = reply.status < 200 || reply.status == 204 || reply.status == 304
+        if !bodiless { head = head + "content-length: ${reply.body.len()}\r\n" }
+        if !self.keep_alive { head = head + "connection: close\r\n" }
+        let out = (head + "\r\n").bytes()
+        if !bodiless && self.method != "HEAD" { out.extend(reply.body) }
+        let wrote = __net_write(self.sock.id, out)
+        if !self.keep_alive {
+            let closed = __net_close(self.sock.id)
+        }
+        return wrote
+    }
+}
+
+fn pairs(text: String) -> Map<String, String> {
+    var out: Map<String, String> = Map()
+    let flat = __form_decode(text)
+    var i = 0
+    while i + 1 < flat.len() {
+        out[flat.get(i)] = flat.get(i + 1)
+        i = i + 2
+    }
+    return out
+}
+
+/// One client's connection, safe to hand to a task; `requests()` starts reading it there.
+pub class Connection {
+    sock: Socket
+    header_limit: Int
+    body_limit: Int
+    idle_millis: Int
+
+    /// The peer as `host:port`.
+    pub fn peer_addr(self) -> Result<String, Error> {
+        return __net_peer_addr(self.sock.id)
+    }
+
+    /// Closes the connection now.
+    pub fn close(self) -> Result<Null, Error> {
+        return __net_close(self.sock.id)
+    }
+
+    /// The reader of this connection's requests; make it in the task that serves the connection.
+    pub fn requests(self) -> Requests {
+        return Requests { sock: self.sock, buf: Bytes(), done: false, header_limit: self.header_limit, body_limit: self.body_limit, idle_millis: self.idle_millis }
+    }
+}
+
+/// Reads the requests on one connection in order.
+pub class Requests {
+    sock: Socket
+    var buf: Bytes
+    var done: Bool
+    header_limit: Int
+    body_limit: Int
+    idle_millis: Int
+
+    fn shut(var self) {
+        self.done = true
+        let closed = __net_close(self.sock.id)
+    }
+
+    fn refuse(var self, status: Int, message: String) -> Error {
+        let reply = "HTTP/1.1 ${status} ${__http_reason(status)}\r\ndate: ${__http_date()}\r\ncontent-type: text/plain; charset=utf-8\r\ncontent-length: ${message.len()}\r\nconnection: close\r\n\r\n${message}"
+        let sent = __net_write(self.sock.id, reply.bytes())
+        self.shut()
+        if status == 408 { return Error.new(ErrorKind.TimedOut, message) }
+        return Error.new(ErrorKind.InvalidData, message)
+    }
+
+    fn more(var self, size: Int, started: Bool) -> Result<Bool, Error> {
+        match __net_read_for(self.sock.id, size, self.idle_millis) {
+            Ok(chunk) => {
+                let c: Bytes = chunk
+                if c.len() == 0 {
+                    self.shut()
+                    if started { return Err(Error.new(ErrorKind.InvalidData, "the connection closed in the middle of a request")) }
+                    return Ok(false)
+                }
+                self.buf.extend(c)
+                return Ok(true)
+            }
+            Err(e) => {
+                if e.kind == ErrorKind.TimedOut {
+                    if started { return Err(self.refuse(408, "the request timed out")) }
+                    self.shut()
+                    return Ok(false)
+                }
+                self.shut()
+                return Err(e)
+            }
+        }
+    }
+
+    fn take(var self, n: Int) -> Bytes {
+        let front = self.buf.slice(0, n)
+        self.buf = self.buf.slice(n, self.buf.len())
+        return front
+    }
+
+    /// Waits for the next request; `None` once the client is done, the connection is closing, or it sat idle too long.
+    /// A malformed or oversized request is answered with an error status, the connection closes, and this is an `Err`.
+    pub fn next(var self) -> Result<Request?, Error> {
+        if self.done { return Ok(None) }
+        while true {
+            if self.buf.len() > 0 {
+                match __http_parse_request(self.buf) {
+                    Err(e) => { return Err(self.refuse(400, "malformed request: ${e.message}")) }
+                    Ok(r) => {
+                        let n: Int = r.get(0)
+                        if n > self.header_limit { return Err(self.refuse(431, "the request header is too large")) }
+                        if n > 0 {
+                            let method: String = r.get(1)
+                            let target: String = r.get(2)
+                            let minor: Int = r.get(3)
+                            var flat: List<String> = []
+                            var k = 4
+                            while k < r.len() {
+                                let item: String = r.get(k)
+                                flat.push(item)
+                                k = k + 1
+                            }
+                            return self.finish(method, target, minor, flat, n)
+                        }
+                    }
+                }
+                if self.buf.len() > self.header_limit { return Err(self.refuse(431, "the request header is too large")) }
+            }
+            match self.more(16384, self.buf.len() > 0) {
+                Ok(got) => { if !got { return Ok(None) } }
+                Err(e) => { return Err(e) }
+            }
+        }
+        return Ok(None)
+    }
+
+    fn finish(var self, method: String, target: String, minor: Int, headers: List<String>, n: Int) -> Result<Request?, Error> {
+        var length = -1
+        var chunked = false
+        var other_coding = false
+        var closing = minor == 0
+        var expect = false
+        var i = 0
+        while i < headers.len() {
+            let name: String = headers.get(i)
+            let value: String = headers.get(i + 1)
+            if name == "content-length" {
+                match __str_parse_int(value) {
+                    Ok(v) => {
+                        let got: Int = v
+                        if got < 0 || (length >= 0 && got != length) { return Err(self.refuse(400, "bad content-length")) }
+                        length = got
+                    }
+                    Err(e) => { return Err(self.refuse(400, "bad content-length")) }
+                }
+            }
+            if name == "transfer-encoding" {
+                if value.to_lower().trim() == "chunked" { chunked = true } else { other_coding = true }
+            }
+            if name == "connection" {
+                for token in value.to_lower().split(",") {
+                    if token.trim() == "close" { closing = true }
+                    if token.trim() == "keep-alive" && minor == 0 { closing = false }
+                }
+            }
+            if name == "expect" && value.to_lower().trim() == "100-continue" { expect = true }
+            i = i + 2
+        }
+        if other_coding { return Err(self.refuse(501, "that transfer-encoding is not supported")) }
+        if chunked && length >= 0 { return Err(self.refuse(400, "both content-length and transfer-encoding")) }
+        if length > self.body_limit { return Err(self.refuse(413, "the request body is too large")) }
+        self.buf = self.buf.slice(n, self.buf.len())
+        if expect && (chunked || length > self.buf.len()) {
+            let sent = __net_write(self.sock.id, "HTTP/1.1 100 Continue\r\n\r\n".bytes())
+        }
+        var body = Bytes()
+        if chunked {
+            while true {
+                let d = __http_decode_chunked(self.buf, self.body_limit)
+                match d {
+                    Err(e) => { return Err(self.refuse(400, "malformed chunked body: ${e.message}")) }
+                    Ok(parts) => {
+                        let used: Int = parts.get(0)
+                        if used < 0 { return Err(self.refuse(413, "the request body is too large")) }
+                        if used > 0 {
+                            let decoded: Bytes = parts.get(1)
+                            body = decoded
+                            let rest = self.take(used)
+                            break
+                        }
+                    }
+                }
+                if self.buf.len() > self.body_limit + self.header_limit { return Err(self.refuse(413, "the request body is too large")) }
+                match self.more(1048576, true) {
+                    Ok(got) => {}
+                    Err(e) => { return Err(e) }
+                }
+            }
+        } else if length > 0 {
+            while self.buf.len() < length {
+                match self.more(1048576, true) {
+                    Ok(got) => {}
+                    Err(e) => { return Err(e) }
+                }
+            }
+            body = self.take(length)
+        }
+        if closing { self.done = true }
+        var raw = target
+        match raw.find("?") {
+            Some(q) => { raw = raw.slice(0, q) }
+            None => {}
+        }
+        if raw.starts_with("http://") || raw.starts_with("https://") {
+            let tail = raw.slice(raw.find("://").unwrap() + 3, raw.len())
+            match tail.find("/") {
+                Some(slash) => { raw = tail.slice(slash, tail.len()) }
+                None => { raw = "/" }
+            }
+        }
+        return Ok(Some(Request { method: method, target: target, path: __percent_decode(raw), body: body, headers: headers, sock: self.sock, keep_alive: !closing }))
+    }
+}
+
+/// A listening server.
+pub class Server {
+    id: Int
+    var header_limit: Int
+    var body_limit: Int
+    var idle_millis: Int
+
+    /// Waits for the next client.
+    pub fn accept(self) -> Result<Connection, Error> {
+        let sid = __net_tcp_accept(self.id)?
+        return Ok(Connection {
+            sock: owned_socket(sid),
+            header_limit: self.header_limit, body_limit: self.body_limit, idle_millis: self.idle_millis,
+        })
+    }
+
+    /// The bound port; useful after `listen(host, 0)`.
+    pub fn local_port(self) -> Result<Int, Error> {
+        return __net_local_port(self.id)
+    }
+
+    /// Stops listening; clients already accepted are not affected.
+    pub fn close(self) -> Result<Null, Error> {
+        return __net_close(self.id)
+    }
+
+    /// The most bytes of request head (64 KiB by default); more is answered with 431.
+    pub fn set_max_header(var self, bytes: Int) {
+        self.header_limit = bytes
+    }
+
+    /// The most bytes of request body (64 MiB by default); more is answered with 413.
+    pub fn set_max_body(var self, bytes: Int) {
+        self.body_limit = bytes
+    }
+
+    /// How long a read waits for data (10 seconds by default) before an idle connection closes or a half-sent request gets 408.
+    pub fn set_idle_timeout(var self, seconds: Int) {
+        self.idle_millis = seconds * 1000
+    }
+}
+
+fn serving(id: Int) -> Server {
+    let server = Server { id: id, header_limit: 65536, body_limit: 67108864, idle_millis: 10000 }
+    __release_on_collect(server, 2)
+    return server
+}
+
+/// Listens on `host:port`; port `0` picks a free one. Connections accepted from it are served over plain HTTP.
+pub fn listen(host: String, port: Int) -> Result<Server, Error> {
+    let id = __net_tcp_listen(host, port)?
+    return Ok(serving(id))
+}
+
+/// Listens like `listen`, but serves HTTPS with `identity`; the TLS handshake happens in the task that reads the connection.
+pub fn listen_tls(host: String, port: Int, identity: Identity) -> Result<Server, Error> {
+    let id = __net_tcp_listen_tls(host, port, identity.cert_pem(), identity.key_pem())?
+    return Ok(serving(id))
+}

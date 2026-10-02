@@ -1,0 +1,12 @@
+id = "mote"
+name = "Mote"
+version = "0.1.0"
+schema_version = 1
+authors = ["Warith Ogunwoolu"]
+description = "Mote language support: syntax highlighting, outline, brackets and indents."
+repository = "https://github.com/Bluewraith04/mote"
+
+[grammars.mote]
+repository = "https://github.com/Bluewraith04/mote"
+rev = "56ebec454be26721814ef10db9f7939ed6304c6d"
+path = "editors/tree-sitter-mote"

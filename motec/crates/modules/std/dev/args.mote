@@ -1,0 +1,266 @@
+/// std.dev.args — the scanner behind `@derive(Args)`. Explicit import is not needed: the derive imports it.
+///
+/// Everything here is for the generated code: the `__` names are not a public API.
+
+import std.prelude
+import { stdout, stderr } from std.sys.io
+import { exit } from std.sys.env
+import { join, parse_int, parse_float } from std.string
+
+/// One option the type declares: `name` is the long name, `short` is "" or one letter.
+pub class Opt {
+    name: String
+    short: String
+    takes: Bool
+}
+
+pub fn __opt(name: String, short: String, takes: Bool) -> Opt {
+    return Opt { name: name, short: short, takes: takes }
+}
+
+/// The options found, by long name; the bare arguments; and where scanning stopped.
+pub class Scan {
+    pub values: Map<String, List<String>>
+    pub bare: List<String>
+    pub stop: Int
+}
+
+class Hit {
+    name: String
+    takes: Bool
+    has_text: Bool
+    text: String
+}
+
+fn invalid(message: String) -> Error {
+    return Error.new(ErrorKind.InvalidData, message)
+}
+
+fn long_opt(opts: List<Opt>, name: String) -> Option<Opt> {
+    for o in opts {
+        if o.name == name { return Some(o) }
+    }
+    return None
+}
+
+fn short_opt(opts: List<Opt>, c: String) -> Option<Opt> {
+    for o in opts {
+        if o.short == c { return Some(o) }
+    }
+    return None
+}
+
+fn lookup(opts: List<Opt>, a: String) -> Result<Hit, Error> {
+    if a.starts_with("--") {
+        let body = a.slice(2, a.len())
+        var name = body
+        var has_text = false
+        var text = ""
+        match body.find("=") {
+            Some(p) => {
+                name = body.slice(0, p)
+                has_text = true
+                text = body.slice(p + 1, body.len())
+            }
+            None => {}
+        }
+        if name == "help" { return Err(invalid("help requested")) }
+        match long_opt(opts, name) {
+            Some(o) => {
+                if has_text && !o.takes { return Err(invalid("option --${name} takes no value")) }
+                return Ok(Hit { name: o.name, takes: o.takes, has_text: has_text, text: text })
+            }
+            None => { return Err(invalid("unknown option --${name}")) }
+        }
+    }
+    let c = a.slice(1, 2)
+    let rest = a.slice(2, a.len())
+    if c == "h" && rest == "" { return Err(invalid("help requested")) }
+    match short_opt(opts, c) {
+        Some(o) => {
+            if !o.takes {
+                if rest != "" { return Err(invalid("unknown option ${a}")) }
+                return Ok(Hit { name: o.name, takes: false, has_text: false, text: "" })
+            }
+            if rest.starts_with("=") { return Ok(Hit { name: o.name, takes: true, has_text: true, text: rest.slice(1, rest.len()) }) }
+            if rest != "" { return Ok(Hit { name: o.name, takes: true, has_text: true, text: rest }) }
+            return Ok(Hit { name: o.name, takes: true, has_text: false, text: "" })
+        }
+        None => { return Err(invalid("unknown option ${a}")) }
+    }
+}
+
+/// Scans `argv` from `start`; with `stop_at_bare` it ends at the first bare argument (a subcommand's name).
+pub fn __scan(argv: List<String>, start: Int, opts: List<Opt>, stop_at_bare: Bool) -> Result<Scan, Error> {
+    var values: Map<String, List<String>> = {}
+    var bare: List<String> = []
+    var stop = argv.len()
+    var i = start
+    while i < argv.len() {
+        let a = argv[i]
+        if a == "--" {
+            if stop_at_bare {
+                stop = i + 1
+            } else {
+                var j = i + 1
+                while j < argv.len() {
+                    bare.push(argv[j])
+                    j = j + 1
+                }
+            }
+            break
+        }
+        if a.starts_with("-") && a.len() > 1 {
+            var seen: List<String> = []
+            let h = lookup(opts, a)?
+            if values.contains_key(h.name) { seen = values[h.name] }
+            if !h.takes {
+                seen.push("true")
+            } else if h.has_text {
+                seen.push(h.text)
+            } else {
+                if i + 1 >= argv.len() { return Err(invalid("option --${h.name} needs a value")) }
+                i = i + 1
+                seen.push(argv[i])
+            }
+            values[h.name] = seen
+            i = i + 1
+            continue
+        }
+        if stop_at_bare {
+            stop = i
+            break
+        }
+        bare.push(a)
+        i = i + 1
+    }
+    return Ok(Scan { values: values, bare: bare, stop: stop })
+}
+
+pub fn __flag(s: Scan, name: String) -> Bool {
+    return s.values.contains_key(name)
+}
+
+fn last_value(s: Scan, name: String) -> String {
+    let xs = s.values[name]
+    return xs[xs.len() - 1]
+}
+
+/// An option that must be given.
+pub fn __req<T>(s: Scan, name: String, conv: (String, String) -> Result<T, Error>) -> Result<T, Error> {
+    if !s.values.contains_key(name) { return Err(invalid("missing option --${name}")) }
+    return conv("--${name}", last_value(s, name))
+}
+
+/// An option read from `text` when it is not given.
+pub fn __or<T>(s: Scan, name: String, text: String, conv: (String, String) -> Result<T, Error>) -> Result<T, Error> {
+    if !s.values.contains_key(name) { return conv("--${name}", text) }
+    return conv("--${name}", last_value(s, name))
+}
+
+pub fn __maybe<T>(s: Scan, name: String, conv: (String, String) -> Result<T, Error>) -> Result<T?, Error> {
+    if !s.values.contains_key(name) { return Ok(null) }
+    return Ok(conv("--${name}", last_value(s, name))?)
+}
+
+pub fn __many<T>(s: Scan, name: String, conv: (String, String) -> Result<T, Error>) -> Result<List<T>, Error> {
+    var out: List<T> = []
+    if !s.values.contains_key(name) { return Ok(out) }
+    for text in s.values[name] {
+        out.push(conv("--${name}", text)?)
+    }
+    return Ok(out)
+}
+
+/// The bare argument at `index`, which must be there.
+pub fn __pos<T>(s: Scan, index: Int, label: String, conv: (String, String) -> Result<T, Error>) -> Result<T, Error> {
+    if index >= s.bare.len() { return Err(invalid("missing argument ${label}")) }
+    return conv(label, s.bare[index])
+}
+
+pub fn __pos_maybe<T>(s: Scan, index: Int, label: String, conv: (String, String) -> Result<T, Error>) -> Result<T?, Error> {
+    if index >= s.bare.len() { return Ok(null) }
+    return Ok(conv(label, s.bare[index])?)
+}
+
+/// Every bare argument from `index` on.
+pub fn __pos_many<T>(s: Scan, index: Int, label: String, conv: (String, String) -> Result<T, Error>) -> Result<List<T>, Error> {
+    var out: List<T> = []
+    var i = index
+    while i < s.bare.len() {
+        out.push(conv(label, s.bare[i])?)
+        i = i + 1
+    }
+    return Ok(out)
+}
+
+/// Fails on a bare argument past the `used` the type declares.
+pub fn __no_extra(s: Scan, used: Int) -> Result<Null, Error> {
+    if s.bare.len() > used { return Err(invalid("unexpected argument \"${s.bare[used]}\"")) }
+    return Ok(null)
+}
+
+pub fn __int(label: String, text: String) -> Result<Int, Error> {
+    match parse_int(text) {
+        Ok(n) => { return Ok(n) }
+        Err(_) => { return Err(invalid("invalid value for ${label}: expected an int, found \"${text}\"")) }
+    }
+}
+
+pub fn __float(label: String, text: String) -> Result<Float, Error> {
+    match parse_float(text) {
+        Ok(x) => { return Ok(x) }
+        Err(_) => { return Err(invalid("invalid value for ${label}: expected a float, found \"${text}\"")) }
+    }
+}
+
+pub fn __str(label: String, text: String) -> Result<String, Error> {
+    return Ok(text)
+}
+
+pub fn __no_command(names: List<String>) -> Error {
+    let all = join(names, ", ")
+    return invalid("missing command (expected ${all})")
+}
+
+pub fn __bad_command(name: String, names: List<String>) -> Error {
+    let all = join(names, ", ")
+    return invalid("unknown command \"${name}\" (expected ${all})")
+}
+
+/// The program's file name, from `argv[0]`.
+pub fn __program(argv: List<String>) -> String {
+    if argv.len() == 0 { return "program" }
+    let p = argv[0]
+    match p.rfind("/") {
+        Some(i) => { return p.slice(i + 1, p.len()) }
+        None => { return p }
+    }
+}
+
+/// Whether `--help` or `-h` comes before any `--`.
+pub fn __wants_help(argv: List<String>) -> Bool {
+    var i = 1
+    while i < argv.len() {
+        if argv[i] == "--" { return false }
+        if argv[i] == "--help" || argv[i] == "-h" { return true }
+        i = i + 1
+    }
+    return false
+}
+
+/// Prints the help text and ends the process with 0.
+pub fn __print_help(text: String) {
+    stdout().write(text)
+    exit(0)
+}
+
+/// Prints the error and the one-line usage to stderr and ends the process with 2.
+pub fn __fail(line: String, e: Error) {
+    stderr().write_line("error: ${e.message}")
+    stderr().write_line("")
+    stderr().write_line(line)
+    stderr().write_line("")
+    stderr().write_line("For more information, try '--help'.")
+    exit(2)
+}

@@ -1,0 +1,85 @@
+/// std.error: the `Error` and `ErrorKind` types every fallible std operation returns; the prelude re-exports them.
+/// A native reports an `ErrorKind` code and a message, and the compiler builds the `Err` through `__native_error`.
+
+@stable
+pub enum ErrorKind {
+    NotFound
+    PermissionDenied
+    InvalidData
+    Interrupted
+    AlreadyExists
+    WouldBlock
+    TimedOut
+    Unsupported
+    Other
+}
+
+@stable
+pub class Error {
+    pub kind: ErrorKind
+    pub message: String
+
+    pub fn new(kind: ErrorKind, message: String) -> Error { return Error { kind: kind, message: message } }
+}
+
+pub fn error_kind_from_code(code: Int) -> ErrorKind {
+    if code == 0 { return ErrorKind.NotFound }
+    if code == 1 { return ErrorKind.PermissionDenied }
+    if code == 2 { return ErrorKind.InvalidData }
+    if code == 3 { return ErrorKind.Interrupted }
+    if code == 4 { return ErrorKind.AlreadyExists }
+    if code == 5 { return ErrorKind.WouldBlock }
+    if code == 6 { return ErrorKind.TimedOut }
+    if code == 7 { return ErrorKind.Unsupported }
+    return ErrorKind.Other
+}
+
+/// The `Error` a fallible native's recoverable failure becomes: codegen calls this with the
+/// failure's `ErrorKind` code and message after a `CALLNATIVEF`.
+pub fn __native_error(code: Int, message: String) -> Error {
+    return Error.new(error_kind_from_code(code), message)
+}
+
+/// A domain-relevant view of an I/O failure (`std.sys.fs`, `std.sys.io`, `std.sys.net`).
+@stable
+pub enum IoError {
+    NotFound
+    PermissionDenied
+    AlreadyExists
+    Interrupted
+    WouldBlock
+    TimedOut
+    Other
+}
+
+@stable
+pub fn io_error_of(e: Error) -> IoError {
+    match e.kind {
+        NotFound => { return IoError.NotFound }
+        PermissionDenied => { return IoError.PermissionDenied }
+        AlreadyExists => { return IoError.AlreadyExists }
+        Interrupted => { return IoError.Interrupted }
+        WouldBlock => { return IoError.WouldBlock }
+        TimedOut => { return IoError.TimedOut }
+        _ => { return IoError.Other }
+    }
+}
+
+/// A domain-relevant view of a parse failure (`std.data.json`, `std.date`,
+/// `std.regex`, `std.string.parse_int`/`parse_float`) — every parser in the
+/// std today reports a bad input as `ErrorKind.InvalidData`, so this is
+/// coarse by construction; it still reads better at a call site than
+/// matching the I/O-flavored `ErrorKind` against a parser's own failure.
+@stable
+pub enum ParseError {
+    InvalidSyntax
+    Other
+}
+
+@stable
+pub fn parse_error_of(e: Error) -> ParseError {
+    match e.kind {
+        InvalidData => { return ParseError.InvalidSyntax }
+        _ => { return ParseError.Other }
+    }
+}

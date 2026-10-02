@@ -1,0 +1,50 @@
+; Function-Call Test Program
+; Tests non-recursive function call compositions and recursive fibonacci
+; CALL rA, @f passes the arguments in rA+1.. and returns into rA.
+
+.func @main regs=16 params=0
+    ; 1. Test sum_of_squares(3, 4) -> 25
+    LOADI r3, 3
+    LOADI r4, 4
+    CALL r2, @sum_of_squares
+    ; r2 should be 25
+
+    ; 2. Test recursive fib(10) -> 55
+    LOADI r5, 10
+    CALL r4, @fib
+    ; r4 should be 55
+
+    HALT
+.end
+
+.func @square regs=4 params=1
+    MUL r1, r0, r0
+    RET r1
+.end
+
+.func @sum_of_squares regs=8 params=2
+    ; params: r0 = a, r1 = b
+    MOVE r3, r0
+    CALL r2, @square      ; r2 = a^2
+    MOVE r4, r1
+    CALL r3, @square      ; r3 = b^2
+    ADD r4, r2, r3        ; r4 = a^2 + b^2
+    RET r4
+.end
+
+.func @fib regs=8 params=1
+    ; r0 = n
+    LOADI r1, 1
+    LE r2, r0, r1         ; if n <= 1
+    JMPIFNOT r2, fib_rec
+    RET r0                ; base case: return n
+
+fib_rec:
+    SUB r5, r0, r1        ; r5 = n - 1
+    CALL r4, @fib         ; r4 = fib(n - 1)
+    LOADI r1, 2
+    SUB r7, r0, r1        ; r7 = n - 2
+    CALL r6, @fib         ; r6 = fib(n - 2)
+    ADD r7, r4, r6        ; r7 = fib(n - 1) + fib(n - 2)
+    RET r7
+.end

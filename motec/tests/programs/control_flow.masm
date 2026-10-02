@@ -1,0 +1,31 @@
+; Control-Flow Test Program
+; Computes sum of even numbers from 1 to 20:
+; 2 + 4 + 6 + 8 + 10 + 12 + 14 + 16 + 18 + 20 = 110
+
+.func @main regs=16 params=0
+    LOADI r0, 1           ; current i = 1
+    LOADI r1, 20          ; max = 20
+    LOADI r2, 0           ; even sum = 0
+    LOADI r3, 1           ; step = 1
+    LOADI r4, 2           ; divisor = 2
+    LOADI r5, 0           ; zero comparator
+
+loop_header:
+    GT r6, r0, r1         ; if i > 20, exit
+    JMPIF r6, loop_exit
+
+    ; Check if i is even: (i % 2) == 0
+    MOD r7, r0, r4
+    EQ r8, r7, r5         ; is_even
+    JMPIFNOT r8, next_iter
+
+    ; Even: add to sum
+    ADD r2, r2, r0
+
+next_iter:
+    ADD r0, r0, r3        ; i = i + 1
+    JMP loop_header
+
+loop_exit:
+    HALT
+.end

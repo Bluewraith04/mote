@@ -1,0 +1,50 @@
+; Arithmetic & Comparison Test Program
+; Exercises arithmetic, bitwise, comparison, and unary opcodes
+
+.func @main regs=32 params=0
+    .const 3.5
+    .const 2.5
+
+    ; Integer arithmetic
+    LOADI r0, 100
+    LOADI r1, 30
+    ADD r2, r0, r1        ; 100 + 30 = 130
+    SUB r3, r0, r1        ; 100 - 30 = 70
+    MUL r4, r0, r1        ; 100 * 30 = 3000
+    DIV r5, r0, r1        ; 100 / 30 = 3
+    MOD r6, r0, r1        ; 100 % 30 = 10
+    NEG r7, r0            ; -100
+
+    ; Bitwise operations
+    LOADI r8, 0x0F
+    LOADI r9, 0x33
+    BAND r10, r8, r9      ; 0x0F & 0x33 = 0x03 (3)
+    BOR  r11, r8, r9      ; 0x0F | 0x33 = 0x3F (63)
+    BXOR r12, r8, r9      ; 0x0F ^ 0x33 = 0x3C (60)
+    BNOT r13, r8          ; !0x0F
+    LOADI r14, 2
+    SHL  r15, r8, r14     ; 0x0F << 2 = 60
+    SHR  r16, r8, r14     ; 0x0F >> 2 = 3
+
+    ; Comparisons
+    EQ r17, r0, r1        ; 100 == 30 -> False
+    NE r18, r0, r1        ; 100 != 30 -> True
+    LT r19, r1, r0        ; 30 < 100  -> True
+    LE r20, r0, r0        ; 100 <= 100 -> True
+    GT r21, r0, r1        ; 100 > 30  -> True
+    GE r22, r1, r0        ; 30 >= 100 -> False
+
+    ; Logical operations
+    AND r23, r18, r19     ; True && True -> True
+    OR  r24, r17, r18     ; False || True -> True
+    XOR r25, r18, r19     ; True ^ True -> False
+    NOT r26, r17          ; !False -> True
+
+    ; Data movement & constants
+    MOVE r27, r2          ; r27 = 130
+    LOADK r28, 0          ; r28 = 3.5
+    LOADK r29, 1          ; r29 = 2.5
+    ADD r30, r28, r29     ; 3.5 + 2.5 = 6.0
+
+    HALT
+.end

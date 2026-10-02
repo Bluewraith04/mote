@@ -1,0 +1,212 @@
+================================================================================
+control flow
+================================================================================
+
+fn f() {
+    if x > 0 { return 1 } else if x < 0 { return 2 } else { return 3 }
+    while true { break }
+    for i in 0..10 { continue }
+    with f = open("a") { f.read() }
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (function_item
+    (identifier)
+    (parameters)
+    (block
+      (if_statement
+        (binary_expression
+          (identifier)
+          (integer))
+        (block
+          (return_statement
+            (integer)))
+        (if_statement
+          (binary_expression
+            (identifier)
+            (integer))
+          (block
+            (return_statement
+              (integer)))
+          (block
+            (return_statement
+              (integer)))))
+      (while_statement
+        (boolean)
+        (block
+          (break_statement)))
+      (for_statement
+        (identifier)
+        (range_expression
+          (integer)
+          (integer))
+        (block
+          (continue_statement)))
+      (with_statement
+        (identifier)
+        (call_expression
+          (identifier)
+          (arguments
+            (string
+              (string_content))))
+        (block
+          (expression_statement
+            (call_expression
+              (member_expression
+                (identifier)
+                (identifier))
+              (arguments))))))))
+
+================================================================================
+match with guards and patterns
+================================================================================
+
+fn f(s: Shape) {
+    match s {
+        (a, b) => { return a }
+        Shape.Circle(r) if r > 0.0 => { return r }
+        Shape.Rect { w, h: height } => return w * height
+        1 | 2 => null
+        n @ 3..9 => null
+        _ => null
+    }
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (function_item
+    (identifier)
+    (parameters
+      (parameter
+        (identifier)
+        (named_type
+          (identifier))))
+    (block
+      (match_statement
+        (identifier)
+        (match_arm
+          (tuple_pattern
+            (pattern_identifier
+              (identifier))
+            (pattern_identifier
+              (identifier)))
+          (block
+            (return_statement
+              (identifier))))
+        (match_arm
+          (enum_pattern
+            (identifier)
+            (identifier)
+            (pattern_identifier
+              (identifier)))
+          (binary_expression
+            (identifier)
+            (float))
+          (block
+            (return_statement
+              (identifier))))
+        (match_arm
+          (struct_pattern
+            (identifier)
+            (identifier)
+            (field_pattern
+              (identifier))
+            (field_pattern
+              (identifier)
+              (pattern_identifier
+                (identifier))))
+          (return_statement
+            (binary_expression
+              (identifier)
+              (identifier))))
+        (match_arm
+          (or_pattern
+            (literal_pattern
+              (integer))
+            (literal_pattern
+              (integer)))
+          (expression_statement
+            (null)))
+        (match_arm
+          (range_pattern
+            (at_pattern
+              (identifier)
+              (literal_pattern
+                (integer)))
+            (literal_pattern
+              (integer)))
+          (expression_statement
+            (null)))
+        (match_arm
+          (wildcard_pattern)
+          (expression_statement
+            (null)))))))
+
+================================================================================
+bindings and assignment
+================================================================================
+
+fn f() {
+    let a: Int = 1
+    var b = 2
+    let (x, y) = pair
+    b += 1
+    p.x = 3
+    xs[0] = 4
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (function_item
+    (identifier)
+    (parameters)
+    (block
+      (let_declaration
+        (identifier)
+        (named_type
+          (identifier))
+        (integer))
+      (let_declaration
+        (identifier)
+        (integer))
+      (tuple_let_declaration
+        (identifier)
+        (identifier)
+        (identifier))
+      (assignment
+        (identifier)
+        (integer))
+      (assignment
+        (member_expression
+          (identifier)
+          (identifier))
+        (integer))
+      (assignment
+        (index_expression
+          (identifier)
+          (integer))
+        (integer)))))
+
+================================================================================
+comments
+================================================================================
+
+// a line comment
+/// a doc comment
+/* a block comment */
+fn f() {}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (line_comment)
+  (doc_comment)
+  (block_comment)
+  (function_item
+    (identifier)
+    (parameters)
+    (block)))

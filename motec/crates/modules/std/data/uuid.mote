@@ -1,0 +1,61 @@
+/// std.data.uuid — UUIDs, versions 4 and 7, over the Rust `uuid` crate. Explicit import, not in the prelude.
+
+import std.prelude
+import { Json } from std.data.json
+
+pub struct Uuid: (Display) {
+    text: String
+
+    /// The all-zero id.
+    pub fn nil() -> Uuid {
+        return Uuid { text: "00000000-0000-0000-0000-000000000000" }
+    }
+
+    /// The id of exactly 16 bytes, most significant first.
+    pub fn from_bytes(bytes: Bytes) -> Result<Uuid, Error> {
+        let text = __uuid_from_bytes(bytes)?
+        return Ok(Uuid { text: text })
+    }
+
+    /// The id written as hyphenated, simple, braced or URN text, in either case.
+    pub fn parse(text: String) -> Result<Uuid, Error> {
+        let canonical = __uuid_parse(text)?
+        return Ok(Uuid { text: canonical })
+    }
+
+    /// The 16 bytes, most significant first.
+    pub fn to_bytes(self) -> Bytes {
+        return __uuid_bytes(self.text)
+    }
+
+    /// Lowercase `8-4-4-4-12` hex digits.
+    pub fn to_string(self) -> String {
+        return self.text
+    }
+
+    /// The version nibble.
+    pub fn version(self) -> Int {
+        return __uuid_version(self.text)
+    }
+
+    pub fn to_json(self) -> Json {
+        return Json.Str(self.text)
+    }
+
+    pub fn from_json(j: Json) -> Result<Uuid, Error> {
+        match j {
+            Json.Str(s) => { return Uuid.parse(s) }
+            _ => { return Err(Error.new(ErrorKind.InvalidData, "expected a UUID string")) }
+        }
+    }
+}
+
+/// A random UUID (version 4).
+pub fn v4() -> Uuid {
+    return Uuid { text: __uuid_v4() }
+}
+
+/// A time-ordered UUID (version 7): 48 bits of Unix milliseconds, then random bits.
+pub fn v7() -> Uuid {
+    return Uuid { text: __uuid_v7() }
+}

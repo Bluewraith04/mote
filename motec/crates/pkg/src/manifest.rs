@@ -1,0 +1,126 @@
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
+use std::fs;
+use std::path::Path;
+use crate::semver::Version;
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+/// The `[package]` table of `mote.toml`.
+pub struct PackageMeta {
+    pub name: String,
+    pub version: Version,
+    #[serde(default)]
+    pub authors: Vec<String>,
+    #[serde(default = "default_edition")]
+    pub edition: String,
+    #[serde(default = "default_entry")]
+    pub entry: String,
+}
+
+fn default_edition() -> String {
+    "2026".to_string()
+}
+
+fn default_entry() -> String {
+    "src/main.mote".to_string()
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+/// How a dependency is specified in `mote.toml`.
+pub enum DependencySpec {
+    Simple(String),
+    Detailed {
+        version: Option<String>,
+        path: Option<String>,
+        url: Option<String>,
+    },
+}
+
+impl DependencySpec {
+    pub(crate) fn version_req_str(&self) -> &str {
+        match self {
+            DependencySpec::Simple(v) => v.as_str(),
+            DependencySpec::Detailed { version, .. } => version.as_deref().unwrap_or("*"),
+        }
+    }
+
+    pub fn path(&self) -> Option<&str> {
+        match self {
+            DependencySpec::Simple(_) => None,
+            DependencySpec::Detailed { path, .. } => path.as_deref(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+/// The contents of `mote.toml`.
+pub struct PackageManifest {
+    pub package: PackageMeta,
+    #[serde(default)]
+    pub dependencies: BTreeMap<String, DependencySpec>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub registry: Option<RegistryConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run: Option<RunConfig>,
+}
+
+/// `[run]`: limits `mote run` applies to the package's program.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunConfig {
+    /// The heap limit, such as `2GiB` or `unlimited`.
+    #[serde(default, rename = "max-heap", skip_serializing_if = "Option::is_none")]
+    pub max_heap: Option<String>,
+}
+
+/// `[registry]`: where registry dependencies are fetched from.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RegistryConfig {
+    pub url: String,
+}
+
+impl PackageManifest {
+    pub fn from_file(path: &Path) -> Result<Self, String> {
+        let text = fs::read_to_string(path).map_err(|e| format!("Failed to read '{:?}': {}", path, e))?;
+        Self::from_toml_str(&text)
+    }
+
+    /// Walks up from `start` looking for a `mote.toml`; returns the directory it was found in and the parsed manifest.
+    pub fn discover(start: &Path) -> Result<(std::path::PathBuf, Self), String> {
+        let mut dir = if start.is_dir() {
+            start.to_path_buf()
+        } else {
+            start.parent().unwrap_or(Path::new(".")).to_path_buf()
+        };
+        if let Ok(abs) = dir.canonicalize() {
+            dir = abs;
+        }
+        loop {
+            let candidate = dir.join("mote.toml");
+            if candidate.is_file() {
+                return Ok((dir.clone(), Self::from_file(&candidate)?));
+            }
+            if !dir.pop() {
+                return Err("no mote.toml found in this directory or any parent".to_string());
+            }
+        }
+    }
+
+    /// The entry source file, resolved against `project_root`.
+    pub fn entry_path(&self, project_root: &Path) -> std::path::PathBuf {
+        project_root.join(&self.package.entry)
+    }
+
+    pub fn from_toml_str(toml_str: &str) -> Result<Self, String> {
+        toml::from_str(toml_str).map_err(|e| format!("Failed to parse mote.toml: {}", e))
+    }
+
+    pub(crate) fn to_toml_string(&self) -> Result<String, String> {
+        toml::to_string_pretty(self).map_err(|e| format!("Failed to serialize mote.toml: {}", e))
+    }
+
+    pub(crate) fn save_to_file(&self, path: &Path) -> Result<(), String> {
+        let toml_str = self.to_toml_string()?;
+        fs::write(path, toml_str).map_err(|e| format!("Failed to write '{:?}': {}", path, e))
+    }
+}

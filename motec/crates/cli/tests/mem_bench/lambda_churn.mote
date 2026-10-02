@@ -1,0 +1,18 @@
+fn apply(f: (Int) -> Int, x: Int) -> Int {
+    return f(x)
+}
+
+fn step(i: Int) -> Int {
+    let k = i % 7
+    return apply(|v| v * 2 + k, i) + apply(|v| v + 1, i)
+}
+
+fn main() {
+    var total = 0
+    var i = 0
+    while i < {N} {
+        total += step(i)
+        i += 1
+    }
+    println(total)
+}

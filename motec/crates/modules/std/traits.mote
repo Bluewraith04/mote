@@ -1,0 +1,27 @@
+/// The std traits. `Int`, `Float`, `Bool`, `Char` and `String` satisfy them structurally.
+
+import { Error } from std.error
+
+pub trait Display {
+    fn to_string(self) -> String
+}
+
+pub trait Debug {
+    fn debug(self) -> String
+}
+
+pub trait Eq {
+    fn eq(self, other: Self) -> Bool
+}
+
+pub trait Ord {
+    fn compare(self, other: Self) -> Int
+}
+
+/// A resource that `with` closes on every exit from its block.
+/// `File`, `TcpStream`, `TcpListener` and `UdpSocket` already satisfy this —
+/// their `close` methods match already, structurally, with no `impl` needed.
+@stable
+pub trait Closeable {
+    fn close(self) -> Result<Null, Error>
+}

@@ -1,0 +1,22 @@
+/// Spawns {N} tasks that all park on one channel, then releases them.
+fn main() {
+    let (tx, rx) = Channel<Int>(4)
+    scope {
+        var i = 0
+        while i < {N} {
+            let r = rx.clone()
+            spawn {
+                let v = r.recv()
+                return 0
+            }
+            i += 1
+        }
+        var j = 0
+        while j < {N} {
+            tx.send(j)
+            j += 1
+        }
+        tx.close()
+    }
+    println("done")
+}

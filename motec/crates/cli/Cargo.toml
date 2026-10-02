@@ -1,0 +1,41 @@
+[package]
+name = "cli"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[dependencies]
+isa = { path = "../isa" }
+runtime = { path = "../runtime" }
+gc = { path = "../gc" }
+contracts = { path = "../contracts" }
+platform = { path = "../platform" }
+ffi = { path = "../ffi" }
+compiler = { path = "../compiler" }
+modules = { path = "../modules" }
+pkg = { path = "../pkg" }
+
+[[bin]]
+name = "mote"
+path = "src/main.rs"
+
+[features]
+# Prints memory events to stderr as they happen.
+mem-trace = ["contracts/mem-trace"]
+
+[dev-dependencies]
+criterion = { version = "0.5", default-features = false }
+rcgen = { version = "0.14.10", default-features = false, features = ["crypto", "pem", "ring"] }
+rustls = { version = "0.23.45", default-features = false, features = ["ring", "std", "tls12"] }
+rustls-pki-types = "1.15.1"
+
+[target.'cfg(unix)'.dev-dependencies]
+libc = "0.2"
+
+[[bench]]
+name = "vm_benchmarks"
+harness = false
+
+[[bench]]
+name = "gc_benchmarks"
+harness = false

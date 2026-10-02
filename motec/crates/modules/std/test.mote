@@ -1,0 +1,53 @@
+/// std.test: assertions and a case runner. Explicit import.
+/// The registry is a value: create a `Suite`, register cases on it and call `finish()`.
+/// A failed assertion is recorded and the case keeps running. `finish()` prints a report and faults if anything failed; `mote test` fails only the test that called it.
+
+import std.prelude
+import std.sys.io as io
+
+pub class Suite {
+    var passed: Int
+    var failed: Int
+    var case_name: String
+    var case_failed: Bool
+
+    pub fn new() -> Suite {
+        return Suite { passed: 0, failed: 0, case_name: "", case_failed: false }
+    }
+
+    /// Run one case. `body` receives this suite so it can assert.
+    pub fn test(var self, name: String, body: (var Suite) -> Null) {
+        self.case_name = name
+        self.case_failed = false
+        body(self)
+        if self.case_failed {
+            self.failed = self.failed + 1
+        } else {
+            self.passed = self.passed + 1
+            println("  ok    ${name}")
+        }
+    }
+
+    pub fn fail(var self, msg: String) {
+        self.case_failed = true
+        println("  FAIL  ${self.case_name}: ${msg}")
+    }
+
+    pub fn assert(var self, cond: Bool, msg: String) {
+        if !cond { self.fail(msg) }
+    }
+
+    pub fn assert_eq<T>(var self, a: T, b: T) {
+        if a != b { self.fail("expected ${a} == ${b}") }
+    }
+
+    pub fn assert_ne<T>(var self, a: T, b: T) {
+        if a == b { self.fail("expected ${a} != ${b}") }
+    }
+
+    /// Print the report. Faults if any case failed.
+    pub fn finish(var self) {
+        println("${self.passed} passed, ${self.failed} failed")
+        if self.failed > 0 { __panic("${self.failed} test case(s) failed") }
+    }
+}

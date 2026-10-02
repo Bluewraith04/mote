@@ -1,0 +1,29 @@
+/// A task per "connection": {N} short-lived tasks, each building a small reply, at most 200 in flight.
+struct Reply {
+    id: Int
+    body: String
+}
+
+fn serve(id: Int) -> Int {
+    let reply = Reply { id: id, body: "reply ${id}" }
+    return reply.body.len()
+}
+
+fn main() {
+    var total = 0
+    var batch = 0
+    while batch < {N} / 200 {
+        scope {
+            var i = 0
+            while i < 200 {
+                let id = batch * 200 + i
+                spawn {
+                    return serve(id)
+                }
+                i += 1
+            }
+        }
+        batch += 1
+    }
+    println(total)
+}

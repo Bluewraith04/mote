@@ -1,0 +1,19 @@
+.func @main regs=8 params=0
+    LOADI r2, 6
+    CALL r1, @fact
+    DEBUGPRINT r1
+    HALT
+.end
+
+.func @fact regs=8 params=1
+    LOADI r1, 1
+    LE r2, r0, r1
+    JMPIFNOT r2, recursive_step
+    RET r1
+
+recursive_step:
+    SUB r5, r0, r1
+    CALL r4, @fact
+    MUL r5, r0, r4
+    RET r5
+.end

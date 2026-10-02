@@ -1,0 +1,241 @@
+================================================================================
+function with generics and return type
+================================================================================
+
+pub fn first<T>(xs: List<T>, n: Int = 0) -> T? {
+    return xs[n]
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (function_item
+    (visibility)
+    (identifier)
+    (type_parameters
+      (type_parameter
+        (identifier)))
+    (parameters
+      (parameter
+        (identifier)
+        (generic_type
+          (named_type)
+          (type_arguments
+            (named_type
+              (identifier)))))
+      (parameter
+        (identifier)
+        (named_type
+          (identifier))
+        (integer)))
+    (nullable_type
+      (named_type
+        (identifier)))
+    (block
+      (return_statement
+        (index_expression
+          (identifier)
+          (identifier))))))
+
+================================================================================
+struct, class and enum
+================================================================================
+
+struct Point {
+    x: Int
+    var y: Int
+}
+
+class Dog: Animal {
+    name: String
+    fn bark(self) { println("woof") }
+}
+
+enum Shape {
+    Circle(Float)
+    Rect { w: Float, h: Float }
+    Empty
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (struct_item
+    (identifier)
+    (member_list
+      (field_declaration
+        (identifier)
+        (named_type
+          (identifier)))
+      (field_declaration
+        (identifier)
+        (named_type
+          (identifier)))))
+  (class_item
+    (identifier)
+    (identifier)
+    (member_list
+      (field_declaration
+        (identifier)
+        (named_type
+          (identifier)))
+      (function_item
+        (identifier)
+        (parameters
+          (self_parameter))
+        (block
+          (expression_statement
+            (call_expression
+              (identifier)
+              (arguments
+                (string
+                  (string_content)))))))))
+  (enum_item
+    (identifier)
+    (enum_variant
+      (identifier)
+      (named_type
+        (identifier)))
+    (enum_variant
+      (identifier)
+      (variant_field
+        (identifier)
+        (named_type
+          (identifier)))
+      (variant_field
+        (identifier)
+        (named_type
+          (identifier))))
+    (enum_variant
+      (identifier))))
+
+================================================================================
+trait, impl and type alias
+================================================================================
+
+trait Shape {
+    fn area(self) -> Int
+    fn describe(self) -> String { return "area ${self.area()}" }
+}
+
+impl Shape for Point {
+    fn area(self) -> Int { return self.x * self.y }
+}
+
+type Pair<A, B> = (A, B)
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (trait_item
+    (identifier)
+    (trait_method
+      (identifier)
+      (parameters
+        (self_parameter))
+      (named_type
+        (identifier)))
+    (trait_method
+      (identifier)
+      (parameters
+        (self_parameter))
+      (named_type
+        (identifier))
+      (block
+        (return_statement
+          (string
+            (string_content)
+            (interpolation
+              (call_expression
+                (member_expression
+                  (self)
+                  (identifier))
+                (arguments))))))))
+  (impl_item
+    (named_type
+      (identifier))
+    (named_type
+      (identifier))
+    (function_item
+      (identifier)
+      (parameters
+        (self_parameter))
+      (named_type
+        (identifier))
+      (block
+        (return_statement
+          (binary_expression
+            (member_expression
+              (self)
+              (identifier))
+            (member_expression
+              (self)
+              (identifier)))))))
+  (type_alias
+    (identifier)
+    (type_parameters
+      (type_parameter
+        (identifier))
+      (type_parameter
+        (identifier)))
+    (tuple_type
+      (named_type
+        (identifier))
+      (named_type
+        (identifier)))))
+
+================================================================================
+imports, attributes and tests
+================================================================================
+
+import std.sys.io
+import { Any, List as L } from std.experimental.types
+
+@derive(Debug)
+pub struct Id { n: Int }
+
+test "adds" { assert(1 + 1 == 2) }
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (import_declaration
+    (module_path
+      (identifier)
+      (identifier)))
+  (import_declaration
+    (import_list
+      (import_symbol
+        (identifier))
+      (import_symbol
+        (identifier)
+        (identifier)))
+    (module_path
+      (identifier)
+      (identifier)
+      (identifier)))
+  (attribute
+    (identifier)
+    (identifier))
+  (struct_item
+    (visibility)
+    (identifier)
+    (member_list
+      (field_declaration
+        (identifier)
+        (named_type
+          (identifier)))))
+  (test_declaration
+    (identifier)
+    (string
+      (string_content))
+    (block
+      (expression_statement
+        (call_expression
+          (identifier)
+          (arguments
+            (binary_expression
+              (binary_expression
+                (integer)
+                (integer))
+              (integer))))))))

@@ -1,0 +1,12 @@
+[package]
+name = "contracts"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[dependencies]
+isa = { path = "../isa" }
+
+[features]
+# Prints memory events to stderr as they happen.
+mem-trace = []

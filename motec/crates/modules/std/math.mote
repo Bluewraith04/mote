@@ -1,0 +1,130 @@
+/// std.math: numeric helpers, used as `import std.math as math` then `math.sqrt(x)`.
+/// `Int` and `Float` do not overload, so the `Float` forms of `abs`, `min` and `max` are `fabs`, `fmin` and `fmax`.
+
+import std.prelude
+
+/// Constants are nullary functions, as in `math.pi()`.
+pub fn pi() -> Float { return 3.141592653589793 }
+pub fn e() -> Float { return 2.718281828459045 }
+pub fn tau() -> Float { return 6.283185307179586 }
+pub fn inf() -> Float { return 1.0 / 0.0 }
+pub fn nan() -> Float { return 0.0 / 0.0 }
+
+pub fn sqrt(x: Float) -> Float { return __math_f1("sqrt", x) }
+pub fn cbrt(x: Float) -> Float { return __math_f1("cbrt", x) }
+pub fn exp(x: Float) -> Float { return __math_f1("exp", x) }
+pub fn ln(x: Float) -> Float { return __math_f1("ln", x) }
+pub fn log2(x: Float) -> Float { return __math_f1("log2", x) }
+pub fn log10(x: Float) -> Float { return __math_f1("log10", x) }
+pub fn sin(x: Float) -> Float { return __math_f1("sin", x) }
+pub fn cos(x: Float) -> Float { return __math_f1("cos", x) }
+pub fn tan(x: Float) -> Float { return __math_f1("tan", x) }
+pub fn asin(x: Float) -> Float { return __math_f1("asin", x) }
+pub fn acos(x: Float) -> Float { return __math_f1("acos", x) }
+pub fn atan(x: Float) -> Float { return __math_f1("atan", x) }
+pub fn floor(x: Float) -> Float { return __math_f1("floor", x) }
+pub fn ceil(x: Float) -> Float { return __math_f1("ceil", x) }
+pub fn round(x: Float) -> Float { return __math_f1("round", x) }
+pub fn trunc(x: Float) -> Float { return __math_f1("trunc", x) }
+pub fn fabs(x: Float) -> Float { return __math_f1("abs", x) }
+
+pub fn pow(x: Float, y: Float) -> Float { return __math_f2("pow", x, y) }
+pub fn log(x: Float, base: Float) -> Float { return __math_f2("log", x, base) }
+pub fn atan2(y: Float, x: Float) -> Float { return __math_f2("atan2", y, x) }
+pub fn hypot(x: Float, y: Float) -> Float { return __math_f2("hypot", x, y) }
+pub fn copysign(x: Float, sign: Float) -> Float { return __math_f2("copysign", x, sign) }
+pub fn fmin(x: Float, y: Float) -> Float { return __math_f2("min", x, y) }
+pub fn fmax(x: Float, y: Float) -> Float { return __math_f2("max", x, y) }
+
+pub fn is_nan(x: Float) -> Bool { return __math_pred("is_nan", x) }
+pub fn is_infinite(x: Float) -> Bool { return __math_pred("is_infinite", x) }
+pub fn is_finite(x: Float) -> Bool { return __math_pred("is_finite", x) }
+
+pub fn to_float(n: Int) -> Float { return __num_to_float(n) }
+
+/// Truncating. Panics on a non-finite input.
+pub fn to_int(x: Float) -> Int { return __num_to_int(x) }
+
+pub fn abs(n: Int) -> Int {
+    if n < 0 {
+        return -n
+    }
+    return n
+}
+
+pub fn sign(n: Int) -> Int {
+    if n > 0 {
+        return 1
+    }
+    if n < 0 {
+        return -1
+    }
+    return 0
+}
+
+pub fn min(a: Int, b: Int) -> Int {
+    if a < b {
+        return a
+    }
+    return b
+}
+
+pub fn max(a: Int, b: Int) -> Int {
+    if a > b {
+        return a
+    }
+    return b
+}
+
+pub fn clamp(x: Int, lo: Int, hi: Int) -> Int {
+    if x < lo {
+        return lo
+    }
+    if x > hi {
+        return hi
+    }
+    return x
+}
+
+pub fn gcd(a: Int, b: Int) -> Int {
+    var x = abs(a)
+    var y = abs(b)
+    while y != 0 {
+        let t = y
+        y = x % y
+        x = t
+    }
+    return x
+}
+
+pub fn lcm(a: Int, b: Int) -> Int {
+    if a == 0 {
+        return 0
+    }
+    if b == 0 {
+        return 0
+    }
+    return abs(a / gcd(a, b) * b)
+}
+
+/// `base` to a non-negative integer `exp`, by squaring. Overflow panics (as `*`).
+pub fn ipow(base: Int, exp: Int) -> Int {
+    var result = 1
+    var b = base
+    var e = exp
+    while e > 0 {
+        if e % 2 == 1 {
+            result = result * b
+        }
+        b = b * b
+        e = e / 2
+    }
+    return result
+}
+
+pub fn wrapping_add(a: Int, b: Int) -> Int { return __math_iwrap("wrapping_add", a, b) }
+pub fn wrapping_sub(a: Int, b: Int) -> Int { return __math_iwrap("wrapping_sub", a, b) }
+pub fn wrapping_mul(a: Int, b: Int) -> Int { return __math_iwrap("wrapping_mul", a, b) }
+pub fn saturating_add(a: Int, b: Int) -> Int { return __math_iwrap("saturating_add", a, b) }
+pub fn saturating_sub(a: Int, b: Int) -> Int { return __math_iwrap("saturating_sub", a, b) }
+pub fn saturating_mul(a: Int, b: Int) -> Int { return __math_iwrap("saturating_mul", a, b) }

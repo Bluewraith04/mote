@@ -1,0 +1,266 @@
+================================================================================
+operators and precedence
+================================================================================
+
+fn f() {
+    let a = 1 + 2 * 3 << 1 >> 2
+    let b = x ?? y ?? z
+    let c = cond ? 1 : 2
+    let d = a is Int && b != null
+    let e = 0..10
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (function_item
+    (identifier)
+    (parameters)
+    (block
+      (let_declaration
+        (identifier)
+        (binary_expression
+          (binary_expression
+            (binary_expression
+              (integer)
+              (binary_expression
+                (integer)
+                (integer)))
+            (integer))
+          (integer)))
+      (let_declaration
+        (identifier)
+        (coalesce_expression
+          (coalesce_expression
+            (identifier)
+            (identifier))
+          (identifier)))
+      (let_declaration
+        (identifier)
+        (ternary_expression
+          (identifier)
+          (integer)
+          (integer)))
+      (let_declaration
+        (identifier)
+        (binary_expression
+          (type_test
+            (identifier)
+            (named_type
+              (identifier)))
+          (binary_expression
+            (identifier)
+            (null))))
+      (let_declaration
+        (identifier)
+        (range_expression
+          (integer)
+          (integer))))))
+
+================================================================================
+calls, members, indexes, unwrap and try
+================================================================================
+
+fn f() {
+    let a = xs[0].name.1.0
+    let b = read()?
+    let c = try read()
+    let d = opt!
+    let e = Map<String, Int>()
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (function_item
+    (identifier)
+    (parameters)
+    (block
+      (let_declaration
+        (identifier)
+        (member_expression
+          (member_expression
+            (index_expression
+              (identifier)
+              (integer))
+            (identifier))
+          (tuple_index)))
+      (let_declaration
+        (identifier)
+        (try_expression
+          (call_expression
+            (identifier)
+            (arguments))))
+      (let_declaration
+        (identifier)
+        (unary_expression
+          (call_expression
+            (identifier)
+            (arguments))))
+      (let_declaration
+        (identifier)
+        (unwrap_expression
+          (identifier)))
+      (let_declaration
+        (identifier)
+        (call_expression
+          (generic_expression
+            (identifier)
+            (type_arguments
+              (named_type
+                (identifier))
+              (named_type
+                (identifier))))
+          (arguments))))))
+
+================================================================================
+lambdas, spawn and scope
+================================================================================
+
+fn f() {
+    let add = |a, b| a + b
+    let nop = || 0
+    let typed = |x: Int| -> Int { return x }
+    scope {
+        spawn { println("hi") }
+    }
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (function_item
+    (identifier)
+    (parameters)
+    (block
+      (let_declaration
+        (identifier)
+        (lambda_expression
+          (lambda_parameter
+            (identifier))
+          (lambda_parameter
+            (identifier))
+          (binary_expression
+            (identifier)
+            (identifier))))
+      (let_declaration
+        (identifier)
+        (lambda_expression
+          (integer)))
+      (let_declaration
+        (identifier)
+        (lambda_expression
+          (lambda_parameter
+            (identifier)
+            (named_type
+              (identifier)))
+          (named_type
+            (identifier))
+          (block
+            (return_statement
+              (identifier)))))
+      (scope_statement
+        (block
+          (expression_statement
+            (spawn_expression
+              (block
+                (expression_statement
+                  (call_expression
+                    (identifier)
+                    (arguments
+                      (string
+                        (string_content)))))))))))))
+
+================================================================================
+strings, chars and numbers
+================================================================================
+
+fn f() {
+    let s = "a ${x + 1} b\n"
+    let c = 'x'
+    let n = 1_000u8 + 0xff + 1.5e3
+    let b = true
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (function_item
+    (identifier)
+    (parameters)
+    (block
+      (let_declaration
+        (identifier)
+        (string
+          (string_content)
+          (interpolation
+            (binary_expression
+              (identifier)
+              (integer)))
+          (string_content)
+          (escape_sequence)))
+      (let_declaration
+        (identifier)
+        (char))
+      (let_declaration
+        (identifier)
+        (binary_expression
+          (binary_expression
+            (integer)
+            (integer))
+          (float)))
+      (let_declaration
+        (identifier)
+        (boolean)))))
+
+================================================================================
+struct literals, lists and maps
+================================================================================
+
+fn f() {
+    let p = Point { x: 1, y: 2 }
+    let xs = [1, 2, 3]
+    let m = { "a": 1, "b": 2 }
+    let t = (1, "two")
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (function_item
+    (identifier)
+    (parameters)
+    (block
+      (let_declaration
+        (identifier)
+        (struct_expression
+          (identifier)
+          (field_initializer
+            (identifier)
+            (integer))
+          (field_initializer
+            (identifier)
+            (integer))))
+      (let_declaration
+        (identifier)
+        (list_expression
+          (integer)
+          (integer)
+          (integer)))
+      (let_declaration
+        (identifier)
+        (map_expression
+          (map_entry
+            (string
+              (string_content))
+            (integer))
+          (map_entry
+            (string
+              (string_content))
+            (integer))))
+      (let_declaration
+        (identifier)
+        (tuple_expression
+          (integer)
+          (string
+            (string_content)))))))

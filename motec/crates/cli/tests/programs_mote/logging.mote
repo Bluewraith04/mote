@@ -1,0 +1,45 @@
+import std.sys.fs as fs
+import std.data.json as json
+import std.dev.log as log
+import { lines, is_blank } from std.string
+import { sort } from std.iter
+
+@derive(Json)
+struct Job {
+    id: Int
+    name: String
+}
+
+fn describe(line: String) -> String {
+    let doc = json.parse(line).unwrap()
+    let level = json.as_str(json.get(doc, "level").unwrap()).unwrap()
+    let msg = json.as_str(json.get(doc, "msg").unwrap()).unwrap()
+    let service = json.as_str(json.get(doc, "service").unwrap()).unwrap()
+    return "${level} ${msg} ${service}"
+}
+
+fn main() {
+    let path = "/tmp/mote_logging_done_bar.log"
+    fs.remove_file(path)
+    log.set_output(log.Output.File(path))
+    log.set_format(log.Format.Json)
+    log.set_fields({"service": "worker"})
+    log.set_level(log.Level.Debug)
+
+    log.debug("starting", {"jobs": 2})
+    scope {
+        spawn { log.info("job done", {"job": Job { id: 1, name: "a" }.to_json()}) }
+        spawn { log.warn("job slow", {"job": Job { id: 2, name: "b" }.to_json(), "ms": 900}) }
+    }
+    log.set_level(log.Level.Error)
+    log.info("hidden")
+    log.error("finished")
+
+    let text = fs.read_text(path).unwrap()
+    var seen: List<String> = []
+    for line in lines(text) {
+        if !is_blank(line) { seen.push(describe(line)) }
+    }
+    for s in sort(seen) { println(s) }
+    fs.remove_file(path)
+}

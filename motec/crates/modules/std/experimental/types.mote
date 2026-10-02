@@ -1,0 +1,4 @@
+/// std.experimental.types — types that switch off checking. Prefer a union or a bound generic.
+
+/// A value of any type, checked only at run time.
+pub type Any = __Any
