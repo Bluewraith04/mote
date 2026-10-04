@@ -1,0 +1,173 @@
+/// path — pure path text. A path is a `String`, the separator is `/`,
+/// and nothing here touches the filesystem.
+
+fn last_index(s: String, sub: String) -> Int {
+    var base = 0
+    var last = -1
+    var rest = s
+    while true {
+        match rest.find(sub) {
+            Some(i) => {
+                last = base + i
+                base = base + i + sub.len()
+                rest = rest.slice(i + sub.len(), rest.len())
+            }
+            None => { return last }
+        }
+    }
+    return last
+}
+
+fn trim_slashes(p: String) -> String {
+    var end = p.len()
+    while end > 1 && p.slice(end - 1, end) == "/" {
+        end = end - 1
+    }
+    return p.slice(0, end)
+}
+
+pub fn is_absolute(p: String) -> Bool {
+    return p.starts_with("/")
+}
+
+/// The non-empty parts; a leading `/` is the first part.
+pub fn components(p: String) -> List<String> {
+    var out: List<String> = []
+    if is_absolute(p) {
+        out.push("/")
+    }
+    for part in p.split("/") {
+        if !part.is_empty() {
+            out.push(part)
+        }
+    }
+    return out
+}
+
+/// `b` if it is absolute or `a` is empty; else `a` and `b` with one `/` between.
+pub fn join(a: String, b: String) -> String {
+    if is_absolute(b) || a.is_empty() {
+        return b
+    }
+    if b.is_empty() {
+        return a
+    }
+    if a.ends_with("/") {
+        return a + b
+    }
+    return a + "/" + b
+}
+
+/// The last component, `None` for `""` and `"/"`.
+pub fn file_name(p: String) -> Option<String> {
+    let t = trim_slashes(p)
+    if t.is_empty() || t == "/" {
+        return None
+    }
+    let i = last_index(t, "/")
+    if i < 0 {
+        return Some(t)
+    }
+    return Some(t.slice(i + 1, t.len()))
+}
+
+/// Everything before the last component; `None` for `""` and `"/"`, `Some("")` for a bare name.
+pub fn parent(p: String) -> Option<String> {
+    let t = trim_slashes(p)
+    if t.is_empty() || t == "/" {
+        return None
+    }
+    let i = last_index(t, "/")
+    if i < 0 {
+        return Some("")
+    }
+    if i == 0 {
+        return Some("/")
+    }
+    return Some(t.slice(0, i))
+}
+
+fn dot_index(name: String) -> Int {
+    return last_index(name, ".")
+}
+
+/// The text after the last `.` of the file name; `None` without one (`.bashrc` has none).
+pub fn extension(p: String) -> Option<String> {
+    match file_name(p) {
+        Some(name) => {
+            let i = dot_index(name)
+            if i <= 0 {
+                return None
+            }
+            return Some(name.slice(i + 1, name.len()))
+        }
+        None => { return None }
+    }
+}
+
+/// The file name without its extension.
+pub fn stem(p: String) -> Option<String> {
+    match file_name(p) {
+        Some(name) => {
+            let i = dot_index(name)
+            if i <= 0 {
+                return Some(name)
+            }
+            return Some(name.slice(0, i))
+        }
+        None => { return None }
+    }
+}
+
+/// `p` with its extension replaced; an empty `ext` removes it.
+pub fn with_extension(p: String, ext: String) -> String {
+    match stem(p) {
+        Some(s) => {
+            let t = trim_slashes(p)
+            let name_len = file_name(p).unwrap().len()
+            var name = s
+            if !ext.is_empty() {
+                name = s + "." + ext
+            }
+            return t.slice(0, t.len() - name_len) + name
+        }
+        None => { return p }
+    }
+}
+
+/// Drops `.` and empty parts and resolves `..` lexically; never follows symlinks.
+pub fn normalize(p: String) -> String {
+    let abs = is_absolute(p)
+    var stack: List<String> = []
+    for part in p.split("/") {
+        if part.is_empty() || part == "." {
+            continue
+        }
+        if part == ".." {
+            if stack.len() > 0 && stack.get(stack.len() - 1) != ".." {
+                stack.pop()
+            } else if !abs {
+                stack.push("..")
+            }
+        } else {
+            stack.push(part)
+        }
+    }
+    var out = ""
+    var first = true
+    for s in stack {
+        if first {
+            out = s
+            first = false
+        } else {
+            out = out + "/" + s
+        }
+    }
+    if abs {
+        return "/" + out
+    }
+    if out.is_empty() {
+        return "."
+    }
+    return out
+}

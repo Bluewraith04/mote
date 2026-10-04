@@ -1,0 +1,47 @@
+/// A counter and a to-do form, written as a view of one state value; the handlers change it and the window follows.
+/// Copy it to `src/main.mote` of a package that depends on `pane`, and run it on a machine with a display: `mote run`.
+
+import pane
+
+class Todo {
+    var count: Int
+    var draft: String
+    var items: List<String>
+}
+
+fn add(var s: Todo) {
+    if s.draft.len() > 0 {
+        s.items.push(s.draft)
+        s.draft = ""
+    }
+}
+
+fn view(s: Todo) -> pane.Element<Todo> {
+    var rows: List<pane.Element<Todo>> = []
+    for item in s.items {
+        rows.push(pane.text("• ${item}"))
+    }
+    return pane.vstack([
+        pane.h1("Mote UI"),
+        pane.hstack([
+            pane.button("-").on_click(|var s| { s.count -= 1 }),
+            pane.text("Clicked ${s.count}").bold(),
+            pane.button("+").on_click(|var s| { s.count += 1 }),
+        ]),
+        pane.h3("To do"),
+        pane.hstack([
+            pane.input(s.draft).on_change(|var s, t| { s.draft = t }).on_submit(|var s| { add(s) }).grow(),
+            pane.button("Add").on_click(|var s| { add(s) }),
+        ]),
+        pane.scroll(rows).height(240.0).pad(8.0).bg(0xffffffff).radius(6.0),
+        pane.text("${s.items.len()} items").color(0x6b7280ff).size(14.0),
+    ]).gap(12.0)
+}
+
+fn main() {
+    let state = Todo { count: 0, draft: "", items: [] }
+    match pane.run("Mote UI", state, view) {
+        Err(e) => { println("cannot open the window: ${e.message}") }
+        _ => { }
+    }
+}

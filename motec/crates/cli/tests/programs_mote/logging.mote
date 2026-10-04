@@ -1,6 +1,6 @@
 import std.sys.fs as fs
 import std.data.json as json
-import std.dev.log as log
+import log
 import { lines, is_blank } from std.string
 import { sort } from std.iter
 

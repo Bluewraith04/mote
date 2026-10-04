@@ -278,6 +278,16 @@ impl CodeGenerator {
                         return Ok(winner);
                     }
 
+                    if func_name == "__task_pin" {
+                        let arg = self.compile_expr(
+                            args.first()
+                                .ok_or_else(|| ("`__task_pin` needs one argument".to_string(), *span))?,
+                        )?;
+                        let pinned = self.emit_native_regs(isa::intrinsics::TASK_PIN_INTRINSIC, &[arg]);
+                        self.reg_alloc.free_temp(arg);
+                        return Ok(pinned);
+                    }
+
                     if func_name.starts_with("__")
                         && let Some(name) = crate::builtin_natives::lookup(func_name) {
                             if crate::builtin_natives::is_fallible(func_name) {

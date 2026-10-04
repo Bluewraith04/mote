@@ -6,6 +6,7 @@ members = [
     "crates/runtime",
     "crates/gc",
     "crates/ffi",
+    "crates/gui",
     "crates/compiler",
     "crates/modules",
     "crates/pkg",
@@ -18,6 +19,22 @@ isa = { path = "crates/isa" }
 
 [profile.release]
 lto = true
+codegen-units = 1
+strip = true
+opt-level = "s"
+
+# Only the interpreter's hot loop and the collector are tuned for speed; everything else is tuned for size.
+[profile.release.package.runtime]
+opt-level = 3
+
+[profile.release.package.gc]
+opt-level = 3
+
+[profile.release.package.isa]
+opt-level = 3
+
+[profile.release.package.contracts]
+opt-level = 3
 
 # Argon2 fills 19 MiB per hash; unoptimized it takes seconds, which slows every debug build and test.
 [profile.dev.package.argon2]

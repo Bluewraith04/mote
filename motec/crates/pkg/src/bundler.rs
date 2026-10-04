@@ -1,6 +1,6 @@
 use std::fs::{self, File};
 use std::io::{Read, Seek, SeekFrom, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use compiler::CompiledProgram;
 use modules::MultiFileCompiler;
 
@@ -13,23 +13,39 @@ impl StandaloneBundler {
     pub const MAGIC_TRAILER: &'static [u8; 15] = b"MOTE_PAYLOAD_V1";
 
     /// Compiles `entry_mote_path` and bundles the result into a standalone binary.
-    pub fn bundle(entry_mote_path: &Path, output_exe_path: &Path) -> Result<(), String> {
+    pub fn bundle(entry_mote_path: &Path, output_exe_path: &Path, tier_of: &dyn Fn(&[String]) -> u8) -> Result<(), String> {
         let root_dir = entry_mote_path
             .parent()
             .unwrap_or(Path::new("."))
             .to_path_buf();
         let mut compiler = MultiFileCompiler::new(root_dir);
         let compiled = compiler.compile_program(entry_mote_path)?;
-        Self::bundle_program(&compiled, output_exe_path)
+        Self::bundle_program(&compiled, output_exe_path, tier_of)
     }
 
-    /// Bundles an already-compiled program into a copy of the running `mote` binary.
+    /// The runtime stubs, smallest first: a tier is an index into this list.
+    const STUBS: [&'static str; 3] = ["mote-rt", "mote-rt-full", "mote-rt-gui"];
+
+    /// The binary a program is attached to: the stub of `tier`, else a larger one, beside the running executable, else the running executable.
+    pub fn host_executable(tier: u8) -> Result<PathBuf, String> {
+        let current_exe = std::env::current_exe()
+            .map_err(|e| format!("Failed to locate current executable: {}", e))?;
+        let dir = current_exe.parent().map(Path::to_path_buf);
+        let stub = Self::STUBS
+            .iter()
+            .skip(usize::from(tier))
+            .filter_map(|name| dir.as_ref().map(|d| d.join(format!("{name}{}", std::env::consts::EXE_SUFFIX))))
+            .find(|path| path.is_file());
+        Ok(stub.unwrap_or(current_exe))
+    }
+
+    /// Bundles an already-compiled program into a copy of `host_executable`; `tier_of` names the stub tier its native table needs.
     pub fn bundle_program(
         compiled: &CompiledProgram,
         output_exe_path: &Path,
+        tier_of: &dyn Fn(&[String]) -> u8,
     ) -> Result<(), String> {
-        let current_exe = std::env::current_exe()
-            .map_err(|e| format!("Failed to locate current executable: {}", e))?;
+        let current_exe = Self::host_executable(tier_of(&compiled.native_table))?;
         let host_bytes = fs::read(&current_exe)
             .map_err(|e| format!("Failed to read host executable '{:?}': {}", current_exe, e))?;
         let bytes = Self::assemble(host_bytes, &compiled.to_bytes());

@@ -12,9 +12,9 @@ use contracts::{
 };
 
 use crate::dynlib::DynLibs;
+use crate::ext::{Tls, NO_TLS};
 use crate::net::{is_socket_request, Readiness, SystemNet};
 use crate::reactor::Reactor;
-use crate::sql::{is_sql_request, SystemSql};
 
 type Handle = Arc<Mutex<BufReader<File>>>;
 
@@ -25,7 +25,6 @@ pub struct SystemPlatform {
     handles: Mutex<HashMap<i64, Handle>>,
     next_handle: AtomicI64,
     net: SystemNet,
-    sql: SystemSql,
     libs: DynLibs,
     reactor: OnceLock<Option<Arc<Reactor>>>,
 }
@@ -39,14 +38,23 @@ impl Drop for SystemPlatform {
 }
 
 impl SystemPlatform {
+    /// The full machine: TLS included.
     pub fn new(args: Vec<String>) -> Self {
+        Self::with(args, &crate::tls::RUSTLS)
+    }
+
+    /// The machine without TLS, so none of its code is linked.
+    pub fn lean(args: Vec<String>) -> Self {
+        Self::with(args, &NO_TLS)
+    }
+
+    fn with(args: Vec<String>, tls: &'static dyn Tls) -> Self {
         SystemPlatform {
             origin: Instant::now(),
             args: RwLock::new(args),
             handles: Mutex::new(HashMap::new()),
             next_handle: AtomicI64::new(1),
-            net: SystemNet::new(),
-            sql: SystemSql::new(),
+            net: SystemNet::new(tls),
             libs: DynLibs::new(),
             reactor: OnceLock::new(),
         }
@@ -63,6 +71,11 @@ impl SystemPlatform {
     /// Whether `LibOpen` may load native libraries (`--allow-native`).
     pub fn set_allow_native(&self, allowed: bool) {
         self.libs.set_allowed(allowed);
+    }
+
+    /// The packages whose native libraries `LibOpenPackage` may load, each with its library directory.
+    pub fn set_native_packages(&self, packages: Vec<(String, std::path::PathBuf)>) {
+        self.libs.set_packages(packages);
     }
 
     fn handle(&self, id: i64) -> Result<Handle, PlatformError> {
@@ -185,22 +198,18 @@ impl Platform for SystemPlatform {
             PlatformRequest::RunProcess { program, args, env, stdin, cwd } => {
                 return run_process(program, args, env, stdin, cwd)
             }
-            PlatformRequest::HttpRequest { method, url, headers, body, timeout_millis, max_redirects, max_body } => {
-                return crate::http::request(&method, &url, &headers, &body, timeout_millis, max_redirects, max_body)
-            }
             PlatformRequest::LibOpen { path } => PlatformResponse::Int(self.libs.open(&path)?),
+            PlatformRequest::LibOpenPackage { package, name } => PlatformResponse::Int(self.libs.open_package(&package, &name)?),
             PlatformRequest::LibSymbol { lib, name, signature } => PlatformResponse::Int(self.libs.symbol(lib, &name, &signature)?),
             PlatformRequest::LibCall { symbol, args, .. } => return self.libs.call(symbol, args),
             PlatformRequest::LibClose { lib } => return self.libs.close(lib),
             socket if is_socket_request(&socket) => return self.net.request(socket),
-            sql if is_sql_request(&sql) => return self.sql.request(sql),
             file => return self.file_request(file),
         })
     }
 
     fn blocking(&self, request: &PlatformRequest) -> bool {
         is_socket_request(request)
-            || is_sql_request(request)
             || matches!(request, PlatformRequest::LibCall { blocking: true, .. })
             || matches!(
             request,
@@ -218,7 +227,6 @@ impl Platform for SystemPlatform {
                 | PlatformRequest::Rename { .. }
                 | PlatformRequest::Stat { .. }
                 | PlatformRequest::RunProcess { .. }
-                | PlatformRequest::HttpRequest { .. }
                 | PlatformRequest::ReadFile { .. }
                 | PlatformRequest::ReadFileBytes { .. }
                 | PlatformRequest::WriteFile { .. }
@@ -243,7 +251,9 @@ impl Platform for SystemPlatform {
     }
 
     fn open_source(&self, request: SourceRequest, sink: EventSink) -> Result<SourceHandle, PlatformError> {
-        let SourceRequest::Timer { period_nanos } = request;
+        let SourceRequest::Timer { period_nanos } = request else {
+            return Err(PlatformError { kind: PlatformErrorKind::Other, message: "not a platform source".to_string() });
+        };
         let reactor = self
             .reactor()
             .ok_or_else(|| PlatformError { kind: PlatformErrorKind::Other, message: "the reactor could not start".to_string() })?

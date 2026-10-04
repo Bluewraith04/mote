@@ -153,6 +153,10 @@ impl NativeCtx for VmIntrinsicCtx<'_> {
         self.platform.ok_or_else(|| "no platform installed".to_string())
     }
 
+    fn on_home_thread(&self) -> bool {
+        crate::sched::on_home_thread()
+    }
+
     fn alloc_header(&mut self, type_id: u64, slot_count: usize) -> Result<Value, String> {
         if !is_intrinsic_type_id(type_id) {
             return Err(format!(

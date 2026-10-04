@@ -1,5 +1,5 @@
 /// A TOML config read into derived types, tagged with a UUID, and passed on as JSON and base64.
-import std.data.toml as toml
+import toml as toml
 import std.data.json as json
 import std.data.base64 as base64
 import std.data.uuid as uuid

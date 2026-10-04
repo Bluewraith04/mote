@@ -54,15 +54,17 @@ Limits are set on the server, so it must be a `var`: `set_max_header(bytes)` (64
 
 ```mote
 import std.sys.http_server as server
-import std.sys.http as http
+import std.sys.net as net
 
 fn main() {
     let s = server.listen("127.0.0.1", 0)!
     let port = s.local_port()!
     scope {
         spawn {
-            let r = http.get("http://127.0.0.1:${port}/greet?name=zed")!
-            println(r.text()!)
+            let c = net.connect("127.0.0.1", port)!
+            let sent = c.write_text("GET /greet?name=zed HTTP/1.1\r\nconnection: close\r\n\r\n")
+            let reply = c.read_to_end()!.decode().unwrap_or("")
+            println(reply.split("\r\n\r\n").get(1))
         }
         let conn = s.accept()!
         var requests = conn.requests()

@@ -25,9 +25,29 @@ fn a_directory_of_modules_names_the_module_inside() {
 
 #[test]
 fn an_old_top_level_path_names_where_the_module_moved() {
-    for (old, now) in [("json", "std.data.json"), ("fs", "std.sys.fs"), ("log", "std.dev.log"), ("yaml", "std.data.yaml")] {
+    for (old, now) in [("json", "std.data.json"), ("fs", "std.sys.fs"), ("uuid", "std.data.uuid")] {
         let text = check(&format!("import std.{old}\nfn main() {{ }}\n"), old);
         assert!(text.contains(&format!("unknown standard-library module 'std.{old}': did you mean `{now}`?")), "{text}");
+    }
+}
+
+#[test]
+fn a_module_that_became_a_package_names_the_package() {
+    let moved = [
+        ("log", "log"),
+        ("dev.log", "log"),
+        ("sys.path", "path"),
+        ("sys.ui", "pane"),
+        ("data.toml", "toml"),
+        ("yaml", "yaml"),
+        ("data.compress", "compress"),
+        ("data.archive", "archive"),
+        ("data.sql", "sqlite"),
+        ("sys.http", "http"),
+    ];
+    for (old, package) in moved {
+        let text = check(&format!("import std.{old}\nfn main() {{ }}\n"), old);
+        assert!(text.contains(&format!("unknown standard-library module 'std.{old}': it is now the package `{package}`")), "{text}");
     }
 }
 

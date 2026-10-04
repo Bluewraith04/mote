@@ -75,12 +75,7 @@ impl CodeGenerator {
     pub(crate) fn lambda_fv_expr(&self, e: &Expr, bound: &mut HashSet<String>, free: &mut Vec<String>) {
         match e {
             Expr::Ident(name, _) => {
-                let is_global = self.func_map.contains_key(name)
-                    || self.type_map.contains_key(name)
-                    || name == "print"
-                    || name == "println"
-                    || name == "typeof";
-                if !is_global && !bound.contains(name) && !free.contains(name) {
+                if !bound.contains(name) && !free.contains(name) {
                     free.push(name.clone());
                 }
             }

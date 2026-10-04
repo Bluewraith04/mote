@@ -37,14 +37,16 @@ fn main() {
 | Register VM, task scheduler | `motec/crates/runtime` |
 | Mark-sweep garbage collector | `motec/crates/gc` |
 | Native calls, I/O, networking, clocks | `motec/crates/ffi`, `motec/crates/platform` |
-| Packages, lockfile, registry client, bundler | `motec/crates/pkg` |
+| Packages from git or a path, lockfile, bundler | `motec/crates/pkg` |
 | The `mote` command | `motec/crates/cli` |
 | Standard library, written in Mote | `motec/crates/modules/std` |
+| Packages that ship with the repository (`pane`, `sqlite`, `http`, `toml`, `yaml`, `compress`, `archive`, `log`, `path`) | `motec/packages` |
+| Window and drawing library | `motec/crates/gui` |
 | Tree-sitter grammar and Zed extension | `editors/` |
 
 The language has structs, classes, enums, generics with trait bounds, optionals and `Result`, closures, generators, modules, and tasks with channels. Types are checked at compile time; `Any` exists as an explicit escape hatch. Memory is managed by the compiler and a tracing collector.
 
-The standard library covers collections, strings, regex, dates, JSON/TOML/YAML, compression, archives, hashing, SQLite, files, sockets, TLS, an HTTP client and server, logging and argument parsing. Several of these wrap Rust crates.
+The standard library covers collections, strings, regex, dates, JSON, hashing, files, sockets, TLS, an HTTP server, argument parsing and a window with flexbox layout (`std.sys.gui`). TOML, YAML, compression, archives, SQLite and an HTTP client are packages that wrap Rust crates and carry their own native library; `pane` is a package for describing a window as a function of your state. See [CHANGELOG.md](CHANGELOG.md) for what changed in each release.
 
 ## Building
 

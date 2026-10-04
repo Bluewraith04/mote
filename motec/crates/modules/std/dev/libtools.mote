@@ -26,6 +26,14 @@ pub fn open(path: String) -> Result<Library, Error> {
     return Ok(lib)
 }
 
+/// Loads the library `name` (no `lib` prefix or suffix) that `package` carries; the package needs `native = true` in `mote.toml`.
+pub fn open_package(package: String, name: String) -> Result<Library, Error> {
+    let id = __libtools_open_package(package, name)?
+    let lib = Library { id: id }
+    __release_on_collect(lib, 3)
+    return Ok(lib)
+}
+
 /// Looks `name` up in `lib` as a C function of type `F`; a call runs on the worker, so use it for fast functions.
 pub fn bind<F>(lib: Library, name: String) -> Result<F, Error> {
     match __bind_raw(lib, name, "", -1, false) {

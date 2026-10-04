@@ -1,0 +1,10 @@
+/// pane.image — a PNG shown scaled to its box.
+
+import std.sys.gui as gui
+import .element
+import .theme
+
+/// An image of `png`; give it a `width` and `height`, as it is scaled to fit them.
+pub fn image<S>(png: Bytes) -> element.Element<S> {
+    return element.element(gui.Kind.Image, theme.Role.Plain, "", []).source(png)
+}

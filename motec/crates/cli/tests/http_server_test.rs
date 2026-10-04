@@ -1,12 +1,13 @@
 //! `std.sys.http_server` driven by raw TCP clients against a Mote server process.
 
+mod common;
+
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 
 const APP: &str = r#"import std.sys.http_server as server
-import std.sys.http as http
 import std.sys.io as io
 import std.data.json as json
 
@@ -405,7 +406,7 @@ fn connections_are_served_at_the_same_time() {
 #[test]
 fn the_client_and_the_server_meet() {
     let source = r#"import std.sys.http_server as server
-import std.sys.http as http
+import http as http
 
 fn handle(conn: server.Connection) {
     var requests = conn.requests()
@@ -445,9 +446,11 @@ fn main() {
 }
 "#;
     let dir = std::env::temp_dir().join(format!("mote_httpd_meet_{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
     std::fs::create_dir_all(&dir).unwrap();
+    common::install_native_packages(&dir, &["http"]);
     std::fs::write(dir.join("main.mote"), source).unwrap();
-    let out = Command::new(env!("CARGO_BIN_EXE_mote")).arg("run").arg(dir.join("main.mote")).output().unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_mote")).arg("run").arg(dir.join("main.mote")).current_dir(&dir).output().unwrap();
     std::fs::remove_dir_all(&dir).ok();
     let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
     assert!(out.status.success(), "{text}");

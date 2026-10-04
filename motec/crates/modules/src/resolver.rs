@@ -100,6 +100,9 @@ impl ModuleResolver {
                         [_, one] => crate::embedded::moved_to(one),
                         _ => None,
                     };
+                    if let Some(package) = crate::embedded::packaged_as(&ast_path.segments) {
+                        return Err(format!("unknown standard-library module '{name}': it is now the package `{package}`"));
+                    }
                     return Err(match (ast_path.segments.len(), inside.first(), moved) {
                         (1, _, _) => format!("unknown standard-library module '{name}': name one, as in `import std.sys.env`"),
                         (_, _, Some(now)) => format!("unknown standard-library module '{name}': did you mean `{now}`?"),
@@ -134,6 +137,16 @@ impl ModuleResolver {
         }
 
         for base in &self.search_paths.clone() {
+            if let [first, rest @ ..] = ast_path.segments.as_slice() {
+                let src = base.join(first).join("src");
+                if !rest.is_empty() && src.is_dir() {
+                    if let Some(target) = self.resolve_under(&src, rest) {
+                        let id = CanonicalModuleId::new(self.canonicalize_id(&target));
+                        self.resolved_paths.insert(id.clone(), target.clone());
+                        return Ok((id, target));
+                    }
+                }
+            }
             let mut cur = base.clone();
             for (i, seg) in ast_path.segments.iter().enumerate() {
                 if i == ast_path.segments.len() - 1 {
@@ -155,6 +168,16 @@ impl ModuleResolver {
         }
 
         Err(format!("Module '{}' not found in search paths", ast_path.to_dotted_string()))
+    }
+
+    /// The module `segments` names under `dir`: a package's `src/` for `import package.module`.
+    fn resolve_under(&self, dir: &Path, segments: &[String]) -> Option<PathBuf> {
+        let (last, parents) = segments.split_last()?;
+        let mut cur = dir.to_path_buf();
+        for seg in parents {
+            cur = cur.join(seg);
+        }
+        self.try_resolve_file_or_dir(&cur.join(last))
     }
 
     fn try_resolve_file_or_dir(&self, base_path: &Path) -> Option<PathBuf> {

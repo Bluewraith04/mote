@@ -1,0 +1,25 @@
+/// pane.select — a closed choice that opens in place to a list of options.
+
+import std.sys.gui as gui
+import .element
+import .theme
+
+/// Shows `options[selected]`; while `open` the options are listed under it. Clicking the header runs `on_change(state, selected, !open)`
+/// and clicking option `i` runs `on_change(state, i, false)`, so the state holds both the choice and whether it is open.
+pub fn select<S>(options: List<String>, selected: Int, open: Bool, on_change: (var S, Int, Bool) -> Null) -> element.Element<S> {
+    var mark = "v"
+    if open { mark = "^" }
+    let head: element.Element<S> = element.element(gui.Kind.Button, theme.Role.Item, "${options.get(selected)}  ${mark}", []).on_click(|var s| { on_change(s, selected, !open) })
+    var kids: List<element.Element<S>> = [head]
+    if open {
+        var i = 0
+        while i < options.len() {
+            let at = i
+            var role = theme.Role.Item
+            if at == selected { role = theme.Role.Chosen }
+            kids.push(element.element(gui.Kind.Button, role, options.get(at), []).on_click(|var s| { on_change(s, at, false) }))
+            i = i + 1
+        }
+    }
+    return element.element(gui.Kind.Box, theme.Role.Plain, "", kids).style(|s| s.direction(gui.Direction.Column).gap(4.0))
+}

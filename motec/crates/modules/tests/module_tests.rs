@@ -935,6 +935,63 @@ fn test_ambiguous_glob_import_is_rejected() {
 }
 
 #[test]
+fn test_one_name_glob_imported_through_a_facade_and_its_module_is_not_ambiguous() {
+    let temp = setup_temp_dir("glob_facade");
+    fs::write(temp.join("origin.mote"), "pub fn thing() -> Int { return 7 }").unwrap();
+    fs::write(temp.join("facade.mote"), "pub import { thing } from .origin").unwrap();
+    fs::write(
+        temp.join("main.mote"),
+        "import .facade\nimport .origin\nfn main() -> Int { return thing() }\nreturn main()",
+    )
+    .unwrap();
+
+    let mut compiler = MultiFileCompiler::new(temp.clone());
+    compiler.compile_program(&temp.join("main.mote")).expect("the same function through two paths is one name");
+
+    fs::remove_dir_all(temp).ok();
+}
+
+#[test]
+fn test_a_package_module_imports_by_the_package_and_file_name() {
+    let temp = setup_temp_dir("pkg_module");
+    let src = temp.join(".mote_packages").join("kit").join("src");
+    fs::create_dir_all(&src).unwrap();
+    fs::write(src.join("lib.mote"), "pub fn base() -> Int { return 1 }").unwrap();
+    fs::write(src.join("extra.mote"), "pub fn more() -> Int { return 40 }").unwrap();
+    fs::write(
+        temp.join("main.mote"),
+        "import kit\nimport kit.extra\nfn main() -> Int { return kit.base() + extra.more() }\nreturn main()",
+    )
+    .unwrap();
+
+    let mut compiler = MultiFileCompiler::new(temp.clone());
+    let compiled = compiler.compile_program(&temp.join("main.mote")).unwrap();
+    let registry = TypeRegistry::new();
+    let mut rt = runtime::Runtime::with_type_registry(compiled.code_objects, &registry);
+    ffi::builtins::install(&mut rt);
+    rt.set_native_table(&compiled.native_table).unwrap();
+    let task = rt.run_entry().unwrap();
+    assert_eq!(task.registers[0].as_int(), Some(41));
+
+    fs::remove_dir_all(temp).ok();
+}
+
+#[test]
+fn test_a_glob_import_beats_the_prelude_for_the_same_name() {
+    let temp = setup_temp_dir("glob_prelude");
+    fs::write(
+        temp.join("main.mote"),
+        "import std.sys.gui\nfn main() -> Int {\n    let d = Display.Flex\n    return 1\n}\nreturn main()",
+    )
+    .unwrap();
+
+    let mut compiler = MultiFileCompiler::new(temp.clone());
+    compiler.compile_program(&temp.join("main.mote")).expect("`Display` from std.sys.gui must win over the prelude's");
+
+    fs::remove_dir_all(temp).ok();
+}
+
+#[test]
 fn test_directory_package_and_submodules() {
     let temp = setup_temp_dir("dir_pkg");
     let linalg_dir = temp.join("linalg");

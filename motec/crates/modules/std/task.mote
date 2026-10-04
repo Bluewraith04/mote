@@ -1,5 +1,5 @@
 /// std.task — join-combinators over already-live `Task<T>` handles,
-/// decoupled from any lexical `scope { }`.
+/// decoupled from any lexical `scope { }`; and pinning a task to the main thread.
 
 import std.prelude
 
@@ -22,4 +22,19 @@ pub fn all<T>(tasks: List<Task<T>>) -> Result<List<T>, String> {
 pub fn any<T>(tasks: List<Task<T>>) -> Result<T, String> {
     let winner: Task<T> = __task_any(tasks)
     return winner.join()
+}
+
+/// Moves the calling task to the program's main thread, where it stays until `unpin`.
+pub fn pin() {
+    __task_pin(1)
+}
+
+/// Returns the calling task to the worker pool.
+pub fn unpin() {
+    __task_pin(0)
+}
+
+/// Whether the calling task runs on the main thread.
+pub fn is_pinned() -> Bool {
+    return __task_pin(2)
 }

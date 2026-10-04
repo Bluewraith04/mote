@@ -22,7 +22,6 @@ pub struct ResolvedPackage {
 /// Picks one version of every dependency that satisfies all constraints.
 pub struct DependencyResolver {
     universe: HashMap<String, Vec<AvailablePackage>>,
-    preferred: HashMap<String, Version>,
 }
 
 impl Default for DependencyResolver {
@@ -33,19 +32,11 @@ impl Default for DependencyResolver {
 
 impl DependencyResolver {
     pub fn new() -> Self {
-        Self {
-            universe: HashMap::new(),
-            preferred: HashMap::new(),
-        }
+        Self { universe: HashMap::new() }
     }
 
     pub fn add_available_package(&mut self, pkg: AvailablePackage) {
         self.universe.entry(pkg.name.clone()).or_default().push(pkg);
-    }
-
-    /// Tries `version` of `name` before any other matching version.
-    pub(crate) fn prefer(&mut self, name: &str, version: Version) {
-        self.preferred.insert(name.to_string(), version);
     }
 
     /// Resolves root manifest dependencies into a unified concrete version set.
@@ -95,7 +86,6 @@ impl DependencyResolver {
 
         let mut candidates = self.universe.get(pkg_name).cloned().unwrap_or_default();
         candidates.sort_by(|a, b| b.version.cmp(&a.version));
-        candidates.sort_by_key(|c| self.preferred.get(pkg_name) != Some(&c.version));
 
         let matching: Vec<_> = candidates.into_iter().filter(|c| req.matches(&c.version)).collect();
         if matching.is_empty() {

@@ -1,0 +1,80 @@
+/// A window with a click counter, a text field, a scrolling list and a clock that a second task keeps ticking.
+/// Run it on a machine with a display: `mote run examples/gui_demo.mote`.
+
+import std.sys.gui as gui
+import std.task as task
+import std.time as time
+
+fn main() {
+    task.pin()
+    let opened = gui.open("Mote GUI demo", 480, 560)
+    match opened {
+        Err(e) => {
+            println("cannot open the window: ${e.message}")
+            return
+        }
+        _ => { }
+    }
+    let win = opened!
+
+    let page = win.style(gui.style().direction(gui.Direction.Column).width(gui.Size.Pct(100.0)).height(gui.Size.Pct(100.0)).padding(16.0).gap(12.0).background(0xf4f5f7ff))!
+    let heading = win.style(gui.style().font_size(22.0).font_weight(700))!
+    let hovered = win.style(gui.style().background(0x2d6cdfff).color(0xffffffff).radius(6.0))!
+    let held = win.style(gui.style().background(0x1b4fb0ff).color(0xffffffff).radius(6.0))!
+    let button_look = win.style(gui.style().background(0x3b82f6ff).color(0xffffffff).radius(6.0).padding_sides(8.0, 16.0, 8.0, 16.0).align_self(gui.Align.Start).hover(hovered).pressed(held))!
+    let field_look = win.style(gui.style().width(gui.Size.Pct(100.0)).height(gui.Size.Px(38.0)).padding(8.0).border(1.0, 0xc4c9d0ff).radius(6.0).background(0xffffffff))!
+    let list_look = win.style(gui.style().direction(gui.Direction.Column).width(gui.Size.Pct(100.0)).height(gui.Size.Px(200.0)).shrink(0.0).padding(8.0).radius(6.0).background(0xffffffff))!
+    let row_look = win.style(gui.style().shrink(0.0).padding_sides(2.0, 0.0, 2.0, 0.0))!
+
+    win.set_style(win.root(), page)!
+    let title = win.add(win.root(), gui.Kind.Text)!
+    win.set_text(title, "Mote GUI demo")!
+    win.set_style(title, heading)!
+    let clock = win.add(win.root(), gui.Kind.Text)!
+    win.set_text(clock, "Seconds up: 0")!
+    let button = win.add(win.root(), gui.Kind.Button)!
+    win.set_text(button, "Clicked 0 times")!
+    win.set_style(button, button_look)!
+    let field = win.add(win.root(), gui.Kind.Input)!
+    win.set_style(field, field_look)!
+    let echo = win.add(win.root(), gui.Kind.Text)!
+    win.set_text(echo, "Type above.")!
+    let list = win.add(win.root(), gui.Kind.Scroll)!
+    win.set_style(list, list_look)!
+    for i in 1..41 {
+        let row = win.add(list, gui.Kind.Text)!
+        win.set_text(row, "Row ${i}")!
+        win.set_style(row, row_look)!
+    }
+
+    spawn {
+        var seconds = 0
+        while true {
+            time.sleep(time.Duration.from_secs(1))
+            seconds = seconds + 1
+            win.post(seconds)!
+        }
+    }
+
+    var clicks = 0
+    win.present()!
+    for e in win.events() {
+        match e {
+            gui.UiEvent.Click(n) => {
+                if n.id == button.id {
+                    clicks = clicks + 1
+                    win.set_text(button, "Clicked ${clicks} times")!
+                }
+            }
+            gui.UiEvent.Changed(n) => { win.set_text(echo, "You typed: ${win.text(field)!}")! }
+            gui.UiEvent.Submit(n) => { win.set_text(field, "")! }
+            gui.UiEvent.User(seconds) => { win.set_text(clock, "Seconds up: ${seconds}")! }
+            gui.UiEvent.Close => {
+                win.close()!
+                return
+            }
+            _ => { }
+        }
+        win.present()!
+    }
+}

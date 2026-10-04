@@ -133,6 +133,8 @@ pub enum PlatformRequest {
     UdpRecvFrom { id: i64, max: usize },
     /// Loads a shared library; answers `Int(id)`. `PermissionDenied` unless the run allows native libraries.
     LibOpen { path: String },
+    /// Loads library `name` from the native directory of a package the run grants; answers `Int(id)`.
+    LibOpenPackage { package: String, name: String },
     /// Looks `name` up in a library and binds it to `signature` (`"fi>f"`: `i` Int, `f` Float, `b` Bool, `s` String, `p` Bytes, `v` no result); answers `Int(id)`.
     LibSymbol { lib: i64, name: String, signature: String },
     /// Calls a bound symbol; answers `Int` (a Float as its bits), `Text` or `Unit` by the signature's result.
@@ -140,38 +142,6 @@ pub enum PlatformRequest {
     LibCall { symbol: i64, args: Vec<CArg>, blocking: bool },
     /// Drops the handle; symbols already bound keep the library loaded.
     LibClose { lib: i64 },
-    /// One HTTP exchange to completion; answers `Http`. Any status is an answer; a transport failure, a body past `max_body` or too many redirects is an error.
-    HttpRequest { method: String, url: String, headers: Vec<(String, String)>, body: Vec<u8>, timeout_millis: u64, max_redirects: u32, max_body: u64 },
-    /// Opens a SQLite database file (`:memory:` for a private one in memory); answers `Int(id)`.
-    SqlOpen { path: String },
-    /// Runs one statement; answers `Sql`. `tx` is `0` or the token of the open transaction.
-    SqlRun { id: i64, tx: i64, sql: String, params: Vec<SqlValue>, mode: SqlMode },
-    /// Starts a transaction, waiting while another is open; answers `Int(token)`, unique across databases.
-    SqlBegin { id: i64 },
-    /// Commits or rolls back the transaction with `tx` and lets the next caller in.
-    SqlEnd { tx: i64, commit: bool },
-    SqlClose { id: i64 },
-}
-
-/// What `SqlRun` does with its statement.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SqlMode {
-    /// Runs it, answering the rows changed and the last inserted row id.
-    Execute,
-    /// Runs it, answering the result columns and rows.
-    Query,
-    /// Only prepares it: answers its parameter count (as `changed`) and result columns, running nothing.
-    Check,
-}
-
-/// One SQLite value; a float is held as its bits so requests stay `Eq`.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum SqlValue {
-    Null,
-    Int(i64),
-    Float(u64),
-    Text(String),
-    Blob(Vec<u8>),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -190,10 +160,6 @@ pub enum PlatformResponse {
     Process(ProcessOutput),
     /// One UDP datagram and its sender as `host:port`.
     Datagram { bytes: Vec<u8>, from: String },
-    /// A finished HTTP exchange; header names are lowercase.
-    Http { status: i64, headers: Vec<(String, String)>, body: Vec<u8> },
-    /// A finished statement: rows changed, the last inserted row id, and the result columns and rows.
-    Sql { changed: i64, last_id: i64, columns: Vec<String>, rows: Vec<Vec<SqlValue>> },
 }
 
 /// Ordinals match `std.error.ErrorKind`.

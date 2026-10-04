@@ -18,27 +18,20 @@ const EMBEDDED_STD: &[(&str, &str)] = &[
     ("sys.env", include_str!("../std/sys/env.mote")),
     ("sys.io", include_str!("../std/sys/io.mote")),
     ("sys.fs", include_str!("../std/sys/fs.mote")),
-    ("sys.path", include_str!("../std/sys/path.mote")),
     ("sys.process", include_str!("../std/sys/process.mote")),
     ("sys.net", include_str!("../std/sys/net.mote")),
-    ("sys.http", include_str!("../std/sys/http.mote")),
     ("sys.http_server", include_str!("../std/sys/http_server.mote")),
     ("sys.tls", include_str!("../std/sys/tls.mote")),
+    ("sys.gui", include_str!("../std/sys/gui.mote")),
     ("data.crypto", include_str!("../std/data/crypto.mote")),
-    ("data.sql", include_str!("../std/data/sql.mote")),
     ("time", include_str!("../std/time.mote")),
     ("date", include_str!("../std/date.mote")),
     ("data", include_str!("../std/data.mote")),
     ("data.json", include_str!("../std/data/json.mote")),
     ("dev", include_str!("../std/dev.mote")),
-    ("dev.log", include_str!("../std/dev/log.mote")),
     ("dev.args", include_str!("../std/dev/args.mote")),
-    ("data.toml", include_str!("../std/data/toml.mote")),
     ("data.base64", include_str!("../std/data/base64.mote")),
     ("data.uuid", include_str!("../std/data/uuid.mote")),
-    ("data.yaml", include_str!("../std/data/yaml.mote")),
-    ("data.compress", include_str!("../std/data/compress.mote")),
-    ("data.archive", include_str!("../std/data/archive.mote")),
     ("dev.libtools", include_str!("../std/dev/libtools.mote")),
     ("regex", include_str!("../std/regex.mote")),
     ("random", include_str!("../std/random.mote")),
@@ -97,6 +90,23 @@ pub(crate) fn group_members(segments: &[String]) -> Vec<(String, Vec<String>)> {
 pub(crate) fn moved_to(name: &str) -> Option<String> {
     let suffix = format!(".{name}");
     EMBEDDED_STD.iter().find(|(n, _)| n.ends_with(&suffix)).map(|(n, _)| format!("std.{n}"))
+}
+
+/// The package a `std` module became (`std.sys.ui` is the package `pane`), if it did.
+pub(crate) fn packaged_as(segments: &[String]) -> Option<&'static str> {
+    let path: Vec<&str> = segments.iter().map(String::as_str).collect();
+    match path.as_slice() {
+        ["std", "sys", "ui"] => Some("pane"),
+        ["std", "dev", "log"] | ["std", "log"] => Some("log"),
+        ["std", "sys", "path"] | ["std", "path"] => Some("path"),
+        ["std", "data", "toml"] | ["std", "toml"] => Some("toml"),
+        ["std", "data", "yaml"] | ["std", "yaml"] => Some("yaml"),
+        ["std", "data", "compress"] | ["std", "compress"] => Some("compress"),
+        ["std", "data", "archive"] | ["std", "archive"] => Some("archive"),
+        ["std", "data", "sql"] | ["std", "sql"] => Some("sqlite"),
+        ["std", "sys", "http"] | ["std", "http"] => Some("http"),
+        _ => None,
+    }
 }
 
 /// Resolves `import std.<name>` to an embedded id, or `None` when no such module is embedded.

@@ -1,0 +1,632 @@
+/// std.sys.gui — a CPU-drawn window of boxes, text, images and buttons, laid out with flexbox and grid. Explicit import.
+///
+/// A `Window` owns a tree of nodes. `add` makes a node, a `Style` says how it lays out and looks, `present` lays out and
+/// paints what changed. `headless` makes a window with no screen: its pixels read back with `pixel` and `png`.
+/// Colors are `0xRRGGBBAA` Ints; lengths are pixels unless a `Size` says percent.
+
+import std.prelude
+import { to_float, to_int } from std.math
+
+/// What a node is.
+pub enum Kind {
+    Box
+    Text
+    Image
+    Button
+    Input
+    Scroll
+}
+
+pub enum Display {
+    Flex
+    Grid
+    Block
+    Hidden
+}
+
+pub enum Position {
+    Relative
+    Absolute
+}
+
+pub enum Direction {
+    Row
+    Column
+    RowReverse
+    ColumnReverse
+}
+
+pub enum Align {
+    Start
+    End
+    Center
+    Stretch
+    SpaceBetween
+    SpaceAround
+    SpaceEvenly
+}
+
+pub enum Overflow {
+    Visible
+    Hidden
+    Scroll
+}
+
+pub enum TextAlign {
+    Left
+    Center
+    Right
+}
+
+/// A side or corner of a window, for `drag_resize`.
+pub enum Edge {
+    North
+    South
+    East
+    West
+    NorthEast
+    NorthWest
+    SouthEast
+    SouthWest
+}
+
+fn edge_code(e: Edge) -> Int {
+    match e {
+        Edge.North => { return 0 }
+        Edge.South => { return 1 }
+        Edge.East => { return 2 }
+        Edge.West => { return 3 }
+        Edge.NorthEast => { return 4 }
+        Edge.NorthWest => { return 5 }
+        Edge.SouthEast => { return 6 }
+        Edge.SouthWest => { return 7 }
+    }
+}
+
+/// A length that may be automatic or a share of the parent.
+pub enum Size {
+    Auto
+    Px(Float)
+    Pct(Float)
+}
+
+/// One grid row or column.
+pub enum Track {
+    Px(Float)
+    Fr(Float)
+    Auto
+    MinContent
+    MaxContent
+}
+
+/// A node of a window's tree; the root is `window.root()`.
+pub class Node {
+    pub id: Int
+}
+
+/// What a window tells the program, in order. `Click`, `Enter` and `Leave` name buttons and inputs; the pointer events name
+/// the node under the pointer, with its window position. `Wheel` is a wheel turn that scrolled nothing; `User` is a number from `post`.
+pub enum UiEvent {
+    Click(Node)
+    PointerDown(Node, Float, Float)
+    PointerUp(Node, Float, Float)
+    PointerMove(Node, Float, Float)
+    Enter(Node)
+    Leave(Node)
+    Wheel(Node, Float, Float)
+    Key(Key, Mods, Bool)
+    Changed(Node)
+    Submit(Node)
+    Resize(Int, Int)
+    User(Int)
+    Close
+}
+
+/// What the window system reports, for `Window.input`: positions are window pixels, wheel deltas are pixels of content moved.
+/// `Text` is text the user committed; a focused input inserts it.
+pub enum Input {
+    PointerMove(Float, Float)
+    PointerDown(Float, Float)
+    PointerUp(Float, Float)
+    PointerLeave
+    Wheel(Float, Float, Float, Float)
+    Key(Key, Mods, Bool)
+    Text(String)
+    Resize(Int, Int)
+    Close
+}
+
+/// A key: `Char` holds a Unicode code point.
+pub enum Key {
+    Char(Int)
+    Enter
+    Escape
+    Backspace
+    Delete
+    Tab
+    Up
+    Down
+    Left
+    Right
+    Home
+    End
+}
+
+/// The modifier keys held with a key.
+pub struct Mods {
+    pub shift: Bool
+    pub ctrl: Bool
+    pub alt: Bool
+    pub meta: Bool
+}
+
+/// The modifiers held: shift, control, alt, and meta (the command or windows key).
+pub fn mods(shift: Bool, ctrl: Bool, alt: Bool, meta: Bool) -> Mods {
+    return Mods { shift: shift, ctrl: ctrl, alt: alt, meta: meta }
+}
+
+/// No modifier held.
+pub fn no_mods() -> Mods { return Mods { shift: false, ctrl: false, alt: false, meta: false } }
+
+/// A style stored in a window, for `set_style` and for the `hover` and `pressed` styles of another.
+pub class StyleId {
+    pub id: Int
+}
+
+/// A node's placement and look; each method answers a changed copy.
+pub class Style {
+    fixed: List<Float>
+    col_tracks: List<Float>
+    row_tracks: List<Float>
+
+    fn put(self, at: Int, vals: List<Float>) -> Style {
+        var out: List<Float> = []
+        for v in self.fixed { out.push(v) }
+        var i = 0
+        while i < vals.len() {
+            out[at + i] = vals.get(i)
+            i = i + 1
+        }
+        return Style { fixed: out, col_tracks: self.col_tracks, row_tracks: self.row_tracks }
+    }
+
+    /// Flex, grid, block, or hidden.
+    pub fn display(self, d: Display) -> Style { return self.put(0, [display_code(d)]) }
+
+    pub fn position(self, p: Position) -> Style {
+        match p {
+            Position.Relative => { return self.put(1, [0.0]) }
+            Position.Absolute => { return self.put(1, [1.0]) }
+        }
+    }
+
+    /// The main axis of a flex box.
+    pub fn direction(self, d: Direction) -> Style { return self.put(2, [direction_code(d)]) }
+
+    /// Lets flex children wrap onto further lines.
+    pub fn wrap(self) -> Style { return self.put(3, [1.0]) }
+
+    /// How children sit across the main axis.
+    pub fn align_items(self, a: Align) -> Style { return self.put(4, [align_code(a)]) }
+
+    /// How this node sits across its parent's main axis, overriding the parent's `align_items`.
+    pub fn align_self(self, a: Align) -> Style { return self.put(5, [align_code(a)]) }
+
+    pub fn align_content(self, a: Align) -> Style { return self.put(6, [align_code(a)]) }
+
+    /// How children sit along the main axis.
+    pub fn justify(self, a: Align) -> Style { return self.put(7, [align_code(a)]) }
+
+    /// The space between children, in pixels.
+    pub fn gap(self, px: Float) -> Style { return self.put(8, [0.0, px, 0.0, px]) }
+
+    pub fn gap_xy(self, column: Float, row: Float) -> Style { return self.put(8, [0.0, column, 0.0, row]) }
+
+    /// How much of the free space this node takes, relative to its siblings.
+    pub fn grow(self, f: Float) -> Style { return self.put(12, [f]) }
+
+    pub fn shrink(self, f: Float) -> Style { return self.put(13, [f]) }
+
+    pub fn basis(self, s: Size) -> Style { return self.put(14, size_pair(s)) }
+
+    pub fn width(self, s: Size) -> Style { return self.put(16, size_pair(s)) }
+
+    pub fn height(self, s: Size) -> Style { return self.put(18, size_pair(s)) }
+
+    pub fn min_width(self, s: Size) -> Style { return self.put(20, size_pair(s)) }
+
+    pub fn min_height(self, s: Size) -> Style { return self.put(22, size_pair(s)) }
+
+    pub fn max_width(self, s: Size) -> Style { return self.put(24, size_pair(s)) }
+
+    pub fn max_height(self, s: Size) -> Style { return self.put(26, size_pair(s)) }
+
+    /// The same margin on every side, in pixels.
+    pub fn margin(self, px: Float) -> Style { return self.margin_sides(px, px, px, px) }
+
+    pub fn margin_sides(self, top: Float, right: Float, bottom: Float, left: Float) -> Style {
+        return self.put(28, [1.0, top, 1.0, right, 1.0, bottom, 1.0, left])
+    }
+
+    /// The same padding on every side, in pixels.
+    pub fn padding(self, px: Float) -> Style { return self.padding_sides(px, px, px, px) }
+
+    pub fn padding_sides(self, top: Float, right: Float, bottom: Float, left: Float) -> Style {
+        return self.put(36, [0.0, top, 0.0, right, 0.0, bottom, 0.0, left])
+    }
+
+    /// A border of `px` on every side, in `color`.
+    pub fn border(self, px: Float, color: Int) -> Style {
+        return self.put(44, [px, px, px, px]).put(63, [to_float(color)])
+    }
+
+    /// Where an absolute node sits, as distances from its parent's edges.
+    pub fn inset(self, top: Size, right: Size, bottom: Size, left: Size) -> Style {
+        return self.put(48, size_pair(top)).put(50, size_pair(right)).put(52, size_pair(bottom)).put(54, size_pair(left))
+    }
+
+    /// What happens to children that do not fit, horizontally then vertically.
+    pub fn overflow(self, x: Overflow, y: Overflow) -> Style { return self.put(56, [overflow_code(x), overflow_code(y)]) }
+
+    pub fn columns(self, tracks: List<Track>) -> Style {
+        return Style { fixed: self.fixed, col_tracks: track_list(tracks), row_tracks: self.row_tracks }
+    }
+
+    pub fn rows(self, tracks: List<Track>) -> Style {
+        return Style { fixed: self.fixed, col_tracks: self.col_tracks, row_tracks: track_list(tracks) }
+    }
+
+    /// The grid column a node starts in (counting from 1; 0 is automatic) and how many it spans.
+    pub fn grid_column(self, start: Int, span: Int) -> Style { return self.put(58, [to_float(start), to_float(span)]) }
+
+    pub fn grid_row(self, start: Int, span: Int) -> Style { return self.put(60, [to_float(start), to_float(span)]) }
+
+    pub fn background(self, color: Int) -> Style { return self.put(62, [to_float(color)]) }
+
+    pub fn radius(self, px: Float) -> Style { return self.put(64, [px]) }
+
+    /// From 0.0 (clear) to 1.0 (solid).
+    pub fn opacity(self, a: Float) -> Style { return self.put(65, [a]) }
+
+    /// The text color.
+    pub fn color(self, color: Int) -> Style { return self.put(66, [to_float(color)]) }
+
+    pub fn font_size(self, px: Float) -> Style { return self.put(67, [px]) }
+
+    /// 400 is regular; 700 and above is bold.
+    pub fn font_weight(self, w: Int) -> Style { return self.put(68, [to_float(w)]) }
+
+    /// In pixels; 0.0 is the font's own.
+    pub fn line_height(self, px: Float) -> Style { return self.put(69, [px]) }
+
+    pub fn text_align(self, a: TextAlign) -> Style { return self.put(70, [text_align_code(a)]) }
+
+    /// The style a node takes while the pointer is over it.
+    pub fn hover(self, s: StyleId) -> Style { return self.put(71, [to_float(s.id)]) }
+
+    /// The style a node takes while it is pressed.
+    pub fn pressed(self, s: StyleId) -> Style { return self.put(72, [to_float(s.id)]) }
+}
+
+/// A style with every setting at its default: a row-flex box with no size, no color and 16 px black text.
+pub fn style() -> Style {
+    let wire = __ui_default_style()
+    var fixed: List<Float> = []
+    var i = 0
+    while i < 73 {
+        fixed.push(wire.get(i))
+        i = i + 1
+    }
+    return Style { fixed: fixed, col_tracks: [0.0], row_tracks: [0.0] }
+}
+
+fn display_code(d: Display) -> Float {
+    match d {
+        Display.Flex => { return 0.0 }
+        Display.Grid => { return 1.0 }
+        Display.Block => { return 2.0 }
+        Display.Hidden => { return 3.0 }
+    }
+}
+
+fn direction_code(d: Direction) -> Float {
+    match d {
+        Direction.Row => { return 0.0 }
+        Direction.Column => { return 1.0 }
+        Direction.RowReverse => { return 2.0 }
+        Direction.ColumnReverse => { return 3.0 }
+    }
+}
+
+fn align_code(a: Align) -> Float {
+    match a {
+        Align.Start => { return 0.0 }
+        Align.End => { return 1.0 }
+        Align.Center => { return 2.0 }
+        Align.Stretch => { return 3.0 }
+        Align.SpaceBetween => { return 4.0 }
+        Align.SpaceAround => { return 5.0 }
+        Align.SpaceEvenly => { return 6.0 }
+    }
+}
+
+fn overflow_code(o: Overflow) -> Float {
+    match o {
+        Overflow.Visible => { return 0.0 }
+        Overflow.Hidden => { return 1.0 }
+        Overflow.Scroll => { return 2.0 }
+    }
+}
+
+fn text_align_code(a: TextAlign) -> Float {
+    match a {
+        TextAlign.Left => { return 0.0 }
+        TextAlign.Center => { return 1.0 }
+        TextAlign.Right => { return 2.0 }
+    }
+}
+
+fn size_pair(s: Size) -> List<Float> {
+    match s {
+        Size.Auto => { return [0.0, 0.0] }
+        Size.Px(v) => { return [1.0, v] }
+        Size.Pct(v) => { return [2.0, v] }
+    }
+}
+
+fn track_list(tracks: List<Track>) -> List<Float> {
+    var out: List<Float> = [to_float(tracks.len())]
+    for t in tracks {
+        match t {
+            Track.Px(v) => { out.push(0.0); out.push(v) }
+            Track.Fr(v) => { out.push(1.0); out.push(v) }
+            Track.Auto => { out.push(2.0); out.push(0.0) }
+            Track.MinContent => { out.push(3.0); out.push(0.0) }
+            Track.MaxContent => { out.push(4.0); out.push(0.0) }
+        }
+    }
+    return out
+}
+
+fn kind_code(k: Kind) -> Int {
+    match k {
+        Kind.Box => { return 0 }
+        Kind.Text => { return 1 }
+        Kind.Image => { return 2 }
+        Kind.Button => { return 3 }
+        Kind.Input => { return 4 }
+        Kind.Scroll => { return 5 }
+    }
+}
+
+/// A window of its own tree and pixels; it holds only an id.
+pub class Window {
+    id: Int
+
+    /// The node every other hangs from; it fills the window.
+    pub fn root(self) -> Node { return Node { id: 0 } }
+
+    /// Stores a style; the answer goes to `set_style`.
+    pub fn style(self, s: Style) -> Result<StyleId, Error> {
+        var wire: List<Float> = []
+        for v in s.fixed { wire.push(v) }
+        for v in s.col_tracks { wire.push(v) }
+        for v in s.row_tracks { wire.push(v) }
+        let id = __ui_style(self.id, wire)?
+        return Ok(StyleId { id: id })
+    }
+
+    /// A new last child of `parent`.
+    pub fn add(self, parent: Node, kind: Kind) -> Result<Node, Error> {
+        let id = __ui_add(self.id, parent.id, kind_code(kind))?
+        return Ok(Node { id: id })
+    }
+
+    /// Removes `node` and everything under it.
+    pub fn remove(self, node: Node) -> Result<Null, Error> { return __ui_remove(self.id, node.id) }
+
+    /// Moves `node` before its sibling `before`, or last when `before` is `None`.
+    pub fn move_before(self, node: Node, before: Node?) -> Result<Null, Error> {
+        match before {
+            Some(b) => { return __ui_move_before(self.id, node.id, b.id) }
+            None => { return __ui_move_before(self.id, node.id, -1) }
+        }
+    }
+
+    pub fn set_text(self, node: Node, text: String) -> Result<Null, Error> { return __ui_set_text(self.id, node.id, text) }
+
+    pub fn text(self, node: Node) -> Result<String, Error> { return __ui_text(self.id, node.id) }
+
+    pub fn set_style(self, node: Node, s: StyleId) -> Result<Null, Error> { return __ui_set_style(self.id, node.id, s.id) }
+
+    /// Shows a PNG in an image node, scaled to the node's box.
+    pub fn set_image(self, node: Node, png: Bytes) -> Result<Null, Error> { return __ui_set_image(self.id, node.id, png) }
+
+    /// Lays out and paints what changed; answers how many rectangles it repainted.
+    pub fn present(self) -> Result<Int, Error> { return __ui_present(self.id) }
+
+    /// The node's box as `[x, y, width, height]` after the last `present`.
+    pub fn rect(self, node: Node) -> Result<List<Float>, Error> { return __ui_rect(self.id, node.id) }
+
+    /// The front-most node under a point, or `None` outside every node.
+    pub fn hit(self, x: Float, y: Float) -> Result<Node?, Error> {
+        let id = __ui_hit(self.id, x, y)?
+        if id < 0 { return Ok(None) }
+        return Ok(Some(Node { id: id }))
+    }
+
+    /// Scrolls a node's content; answers whether it moved.
+    pub fn scroll(self, node: Node, dx: Float, dy: Float) -> Result<Bool, Error> { return __ui_scroll(self.id, node.id, dx, dy) }
+
+    pub fn resize(self, width: Int, height: Int) -> Result<Null, Error> { return __ui_resize(self.id, width, height) }
+
+    /// The pixel at `x`, `y` as `0xRRGGBBAA`, or -1 outside the window.
+    pub fn pixel(self, x: Int, y: Int) -> Result<Int, Error> { return __ui_pixel(self.id, x, y) }
+
+    /// The picture as a PNG.
+    pub fn png(self) -> Result<Bytes, Error> { return __ui_png(self.id) }
+
+    /// Feeds the window one input as the window system would; answers how many events it raised.
+    pub fn input(self, i: Input) -> Result<Int, Error> {
+        match i {
+            Input.PointerMove(x, y) => { return __ui_input(self.id, 0, x, y, 0.0, 0.0) }
+            Input.PointerDown(x, y) => { return __ui_input(self.id, 1, x, y, 0.0, 0.0) }
+            Input.PointerUp(x, y) => { return __ui_input(self.id, 2, x, y, 0.0, 0.0) }
+            Input.PointerLeave => { return __ui_input(self.id, 3, 0.0, 0.0, 0.0, 0.0) }
+            Input.Wheel(x, y, dx, dy) => { return __ui_input(self.id, 4, x, y, dx, dy) }
+            Input.Key(key, mods, down) => {
+                var held = 0.0
+                if down { held = 1.0 }
+                return __ui_input(self.id, 5, to_float(key_code(key)), to_float(mods_bits(mods)), held, 0.0)
+            }
+            Input.Text(text) => { return __ui_type(self.id, text) }
+            Input.Resize(w, h) => { return __ui_input(self.id, 6, to_float(w), to_float(h), 0.0, 0.0) }
+            Input.Close => { return __ui_input(self.id, 7, 0.0, 0.0, 0.0, 0.0) }
+        }
+    }
+
+    /// The node with the keyboard focus, if any; a press on a button or input gives it the focus.
+    pub fn focus(self) -> Result<Node?, Error> {
+        let id = __ui_focus(self.id)?
+        if id < 0 { return Ok(None) }
+        return Ok(Some(Node { id: id }))
+    }
+
+    /// Gives `node` the keyboard focus.
+    pub fn focus_on(self, node: Node) -> Result<Null, Error> { return __ui_focus_on(self.id, node.id) }
+
+    /// An input's caret and the other end of its selection, as character positions: `[caret, anchor]`.
+    pub fn selection(self, node: Node) -> Result<List<Int>, Error> { return __ui_selection(self.id, node.id) }
+
+    /// Queues `UiEvent.User(tag)`; any task may call it.
+    pub fn post(self, tag: Int) -> Result<Null, Error> { return __ui_post(self.id, tag) }
+
+    /// The window's events in order, ending when the window closes; a window has one reader.
+    pub fn events(self) -> Stream<UiEvent> { return decode_stream(__ui_events(self.id)) }
+
+    pub fn close(self) -> Result<Null, Error> { return __ui_close(self.id) }
+
+    /// Shows or hides the system frame (the title bar and borders) of a window on a display; a program that draws its own turns it off.
+    pub fn set_frame(self, on: Bool) -> Result<Null, Error> {
+        var arg = 0
+        if on { arg = 1 }
+        __ui_chrome(self.id, 5, arg)?
+        return Ok(null)
+    }
+
+    /// Starts moving the window with the pointer; call it while the button is down. A window with no display ignores it.
+    pub fn drag(self) -> Result<Null, Error> {
+        __ui_chrome(self.id, 0, 0)?
+        return Ok(null)
+    }
+
+    /// Starts resizing the window from `edge` with the pointer; call it while the button is down.
+    pub fn drag_resize(self, edge: Edge) -> Result<Null, Error> {
+        __ui_chrome(self.id, 1, edge_code(edge))?
+        return Ok(null)
+    }
+
+    pub fn minimize(self) -> Result<Null, Error> {
+        __ui_chrome(self.id, 2, 0)?
+        return Ok(null)
+    }
+
+    /// Maximizes the window, or restores it when it is maximized.
+    pub fn toggle_maximize(self) -> Result<Null, Error> {
+        __ui_chrome(self.id, 3, 0)?
+        return Ok(null)
+    }
+
+    pub fn maximized(self) -> Result<Bool, Error> {
+        let on = __ui_chrome(self.id, 4, 0)?
+        return Ok(on != 0)
+    }
+
+    /// The title the system shows for a window on a display.
+    pub fn set_title(self, title: String) -> Result<Null, Error> { return __ui_set_title(self.id, title) }
+}
+
+fn key_code(k: Key) -> Int {
+    match k {
+        Key.Char(c) => { return c }
+        Key.Enter => { return 13 }
+        Key.Escape => { return 27 }
+        Key.Backspace => { return 8 }
+        Key.Delete => { return 127 }
+        Key.Tab => { return 9 }
+        Key.Up => { return 63232 }
+        Key.Down => { return 63233 }
+        Key.Left => { return 63234 }
+        Key.Right => { return 63235 }
+        Key.Home => { return 63273 }
+        Key.End => { return 63275 }
+    }
+}
+
+fn key_from(code: Int) -> Key {
+    if code == 13 { return Key.Enter }
+    if code == 27 { return Key.Escape }
+    if code == 8 { return Key.Backspace }
+    if code == 127 { return Key.Delete }
+    if code == 9 { return Key.Tab }
+    if code == 63232 { return Key.Up }
+    if code == 63233 { return Key.Down }
+    if code == 63234 { return Key.Left }
+    if code == 63235 { return Key.Right }
+    if code == 63273 { return Key.Home }
+    if code == 63275 { return Key.End }
+    return Key.Char(code)
+}
+
+fn mods_bits(m: Mods) -> Int {
+    var bits = 0
+    if m.shift { bits = bits | 1 }
+    if m.ctrl { bits = bits | 2 }
+    if m.alt { bits = bits | 4 }
+    if m.meta { bits = bits | 8 }
+    return bits
+}
+
+fn mods_from(bits: Int) -> Mods {
+    return Mods { shift: (bits & 1) != 0, ctrl: (bits & 2) != 0, alt: (bits & 4) != 0, meta: (bits & 8) != 0 }
+}
+
+fn decode_stream(inbox: Receiver<List<Float>>) -> Stream<UiEvent> {
+    for raw in inbox {
+        yield decode_event(raw)
+    }
+}
+
+fn decode_event(raw: List<Float>) -> UiEvent {
+    let code = to_int(raw.get(0))
+    let node = Node { id: to_int(raw.get(1)) }
+    let a = raw.get(2)
+    let b = raw.get(3)
+    if code == 0 { return UiEvent.Click(node) }
+    if code == 1 { return UiEvent.PointerDown(node, a, b) }
+    if code == 2 { return UiEvent.PointerUp(node, a, b) }
+    if code == 3 { return UiEvent.PointerMove(node, a, b) }
+    if code == 4 { return UiEvent.Enter(node) }
+    if code == 5 { return UiEvent.Leave(node) }
+    if code == 6 { return UiEvent.Wheel(node, a, b) }
+    if code == 7 { return UiEvent.Key(key_from(to_int(a)), mods_from(to_int(b)), raw.get(4) != 0.0) }
+    if code == 8 { return UiEvent.Changed(node) }
+    if code == 9 { return UiEvent.Submit(node) }
+    if code == 10 { return UiEvent.Resize(to_int(a), to_int(b)) }
+    if code == 12 { return UiEvent.User(to_int(a)) }
+    return UiEvent.Close
+}
+
+/// A window on the display, `width` by `height` pixels. Only a pinned task (`std.task.pin`) may open, present and close it;
+/// without a display, or in a build without a window system, it is an `Err`. The window shows what `present` last painted,
+/// and repaints by itself when something under the pointer changes, so a `hover` style needs no `present`.
+pub fn open(title: String, width: Int, height: Int) -> Result<Window, Error> {
+    let id = __ui_open(title, width, height)?
+    return Ok(Window { id: id })
+}
+
+/// A window with no screen, `width` by `height` pixels (each 1 to 16384), for tests and pictures.
+pub fn headless(width: Int, height: Int) -> Result<Window, Error> {
+    let id = __ui_headless(width, height)?
+    return Ok(Window { id: id })
+}

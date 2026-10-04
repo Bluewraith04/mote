@@ -1,10 +1,14 @@
-//! `std.data.compress`, `std.data.archive` and `std.data.yaml`.
+//! The packages `compress`, `archive` and `yaml`.
+
+mod common;
 
 use std::process::Command;
 
 fn run(source: &str, tag: &str) -> String {
     let dir = std::env::temp_dir().join(format!("mote_compress_{}_{}", tag, std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
     std::fs::create_dir_all(&dir).unwrap();
+    common::install_native_packages(&dir, &["compress", "archive", "yaml"]);
     std::fs::write(dir.join("main.mote"), source).unwrap();
     let out = Command::new(env!("CARGO_BIN_EXE_mote")).arg("run").arg(dir.join("main.mote")).current_dir(&dir).output().unwrap();
     std::fs::remove_dir_all(&dir).ok();
@@ -17,7 +21,7 @@ fn lines(source: &str, tag: &str) -> Vec<String> {
     run(source, tag).lines().map(String::from).collect()
 }
 
-const COMPRESS_HEAD: &str = r#"import std.data.compress as compress
+const COMPRESS_HEAD: &str = r#"import compress as compress
 
 fn same(a: Bytes, b: Bytes) -> Bool {
     if a.len() != b.len() { return false }
@@ -99,8 +103,8 @@ fn main() {{
     assert_eq!(lines(&src, "bad"), ["true", "true", "true", "true", "true"]);
 }
 
-const ARCHIVE_HEAD: &str = r#"import std.data.archive as archive
-import { Entry } from std.data.archive
+const ARCHIVE_HEAD: &str = r#"import archive as archive
+import { Entry } from archive
 
 fn show(entries: List<Entry>) {
     for e in entries {
@@ -227,7 +231,7 @@ fn main() {{
     assert_eq!(lines(&src, "tree"), ["sub/ true 0", "sub/inner.txt false 5", "top.txt false 3", "inner", "top"]);
 }
 
-const YAML_HEAD: &str = r#"import std.data.yaml as yaml
+const YAML_HEAD: &str = r#"import yaml as yaml
 import std.data.json as json
 
 fn show(text: String) {

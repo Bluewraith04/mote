@@ -394,10 +394,3 @@ fn test_program_runs_scripted_processes_and_the_fake_logs_them() {
         .collect();
     assert_eq!(programs, [("git".to_string(), vec!["status".to_string()]), ("hg".to_string(), vec![])]);
 }
-
-#[test]
-fn test_program_uses_sql_in_memory_on_the_fake_platform_and_cannot_open_a_file() {
-    let source = "import std.data.sql as sql\n\nfn main() {\n    let db = sql.memory().unwrap()\n    let made = db.execute(\"CREATE TABLE t (n INTEGER)\").unwrap()\n    let one = db.execute(\"INSERT INTO t VALUES (?)\", [41]).unwrap()\n    let rows = db.query(\"SELECT n + 1 AS n FROM t\").unwrap()\n    println(rows.get(0).int(\"n\").unwrap())\n    println(sql.open(\"app.db\").is_err())\n}\n";
-    let ran = run("sql", source, FakePlatform::new(1), 1);
-    assert_eq!(ran.fake.stdout(), "42\ntrue\n");
-}

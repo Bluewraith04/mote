@@ -7,7 +7,7 @@ use std::sync::{Arc, Condvar, Mutex};
 
 use contracts::PlatformResult;
 
-use crate::sched::SchedState;
+use crate::sched::{SchedState, Wake};
 
 /// A blocking request's execution: runs on a pool thread, touches no heap.
 pub type OffloadWork = Box<dyn FnOnce() -> PlatformResult + Send>;
@@ -30,7 +30,7 @@ struct Inner {
     cv: Condvar,
     shutdown: AtomicBool,
     sched: Arc<Mutex<SchedState>>,
-    sched_cv: Arc<Condvar>,
+    wake: Arc<Wake>,
 }
 
 /// Lazily-grown detached thread pool; dropped with its `Runtime`.
@@ -72,19 +72,19 @@ impl Inner {
         st.offload_inflight -= 1;
         st.wake_or_note_early(task_id);
         drop(st);
-        self.sched_cv.notify_all();
+        self.wake.all();
     }
 }
 
 impl OffloadPool {
-    pub(crate) fn new(sched: Arc<Mutex<SchedState>>, sched_cv: Arc<Condvar>) -> Self {
+    pub(crate) fn new(sched: Arc<Mutex<SchedState>>, wake: Arc<Wake>) -> Self {
         OffloadPool {
             inner: Arc::new(Inner {
                 queue: Mutex::new(Queue { jobs: VecDeque::new(), idle: 0, threads: 0 }),
                 cv: Condvar::new(),
                 shutdown: AtomicBool::new(false),
                 sched,
-                sched_cv,
+                wake,
             }),
         }
     }

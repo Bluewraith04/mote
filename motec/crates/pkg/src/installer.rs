@@ -1,11 +1,10 @@
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use sha2::{Digest, Sha256};
 use crate::manifest::PackageManifest;
-use crate::mpk::MpkArchive;
-use crate::registry::{archive_checksum, hex};
+use crate::native::{archive_checksums, dir_checksums, host_triple};
 use crate::resolver::ResolvedPackage;
-use crate::semver::Version;
 
 /// Copies dependencies into `.mote_packages`.
 pub struct PackageInstaller {
@@ -43,56 +42,63 @@ impl PackageInstaller {
                 fs::remove_dir_all(&dst).map_err(|e| format!("Failed to clear '{}': {}", dst.display(), e))?;
             }
             copy_tree(&src, &dst)?;
+
+            let native = self.packages_dir.join(&pkg.name).join("native");
+            if native.exists() {
+                fs::remove_dir_all(&native).map_err(|e| format!("Failed to clear '{}': {}", native.display(), e))?;
+            }
+            let host = host_triple();
+            let from = self.local_source_dir(&pkg.source).map(|d| d.join("native").join(&host));
+            if let Some(from) = from.filter(|d| d.is_dir()) {
+                copy_tree(&from, &native.join(&host))?;
+            }
         }
 
         Ok(())
     }
 
-    /// Whether `.mote_packages/<name>` holds the archive with `checksum`.
-    pub(crate) fn has_archive(&self, name: &str, checksum: &str) -> bool {
-        fs::read_to_string(self.packages_dir.join(name).join(".checksum")).is_ok_and(|s| s.trim() == checksum)
+    /// The installed `mote.toml` of `name` when `.mote_packages/<name>` holds `source` with `checksum` and, for a package with native code, this machine's `native` checksum.
+    pub(crate) fn installed_git(&self, name: &str, source: &str, checksum: Option<&str>, native: &BTreeMap<String, String>) -> Option<PackageManifest> {
+        let dir = self.packages_dir.join(name);
+        let marked = fs::read_to_string(dir.join(".source")).is_ok_and(|s| s.trim() == source);
+        let intact = package_checksum(&dir).ok().is_some_and(|sum| checksum.is_none_or(|c| c == sum));
+        let installed = dir_checksums(&dir).unwrap_or_default();
+        let natives_intact = match native.get(&host_triple()) {
+            Some(sum) => installed.get(&host_triple()) == Some(sum) && installed.len() == 1,
+            None => native.is_empty() && installed.is_empty(),
+        };
+        if !(marked && intact && natives_intact) {
+            return None;
+        }
+        PackageManifest::from_file(&dir.join("mote.toml")).ok()
     }
 
-    /// Verifies `bytes` against `checksum`, then unpacks `mote.toml` and `src/` into `.mote_packages/<name>/`.
-    pub(crate) fn install_archive(&self, name: &str, version: &Version, checksum: &str, bytes: &[u8]) -> Result<(), String> {
-        let actual = archive_checksum(bytes);
-        if actual != checksum {
-            return Err(format!("{name} {version}: downloaded archive has checksum {actual}, expected {checksum}"));
+    /// The package in a git archive's `entries`, checked to be `name`, with the checksum of its `src/` tree and of each `native/<triple>/` tree.
+    pub(crate) fn check_git(&self, name: &str, entries: &[(String, Vec<u8>)]) -> Result<(PackageManifest, String, BTreeMap<String, String>), String> {
+        let toml = entries.iter().find(|(p, _)| p == "mote.toml").ok_or_else(|| format!("{name}: the repository has no mote.toml"))?;
+        let manifest = PackageManifest::from_toml_str(&String::from_utf8_lossy(&toml.1)).map_err(|e| format!("{name}: {e}"))?;
+        if manifest.package.name != name {
+            return Err(format!("{name}: the repository's mote.toml names the package {}", manifest.package.name));
         }
-        let entries = MpkArchive::decode(bytes).map_err(|e| format!("{name} {version}: {e}"))?;
-        if let Some((path, _)) = entries
-            .iter()
-            .find(|(p, _)| p.starts_with('/') || p.contains('\\') || p.split('/').any(|s| s.is_empty() || s == "." || s == ".."))
-        {
-            return Err(format!("{name} {version}: archive entry '{path}' is not a safe relative path"));
-        }
-        let toml = entries
-            .iter()
-            .find(|(p, _)| p == "mote.toml")
-            .ok_or_else(|| format!("{name} {version}: archive has no mote.toml"))?;
-        let manifest = PackageManifest::from_toml_str(&String::from_utf8_lossy(&toml.1))
-            .map_err(|e| format!("{name} {version}: {e}"))?;
-        if manifest.package.name != name || manifest.package.version != *version {
-            return Err(format!(
-                "{name} {version}: archive's mote.toml is {} {}",
-                manifest.package.name, manifest.package.version
-            ));
-        }
+        let files = entries.iter().filter_map(|(p, d)| Some((p.strip_prefix("src/")?.to_string(), d.as_slice()))).collect();
+        Ok((manifest, tree_checksum(files), archive_checksums(entries)))
+    }
 
-        let keep: Vec<_> = entries.into_iter().filter(|(p, _)| p == "mote.toml" || p.starts_with("src/")).collect();
-
+    /// Writes `entries` into `.mote_packages/<name>/` and marks them as `source`; only this machine's `native/<triple>/` is written.
+    pub(crate) fn install_git(&self, name: &str, source: &str, entries: &[(String, Vec<u8>)]) -> Result<(), String> {
         let dst = self.packages_dir.join(name);
         if dst.exists() {
             fs::remove_dir_all(&dst).map_err(|e| format!("Failed to clear '{}': {}", dst.display(), e))?;
         }
-        for (path, data) in &keep {
+        let host_native = format!("native/{}/", host_triple());
+        for (path, data) in entries.iter().filter(|(p, _)| !p.starts_with("native/") || p.starts_with(&host_native)) {
             let target = dst.join(path);
             if let Some(parent) = target.parent() {
                 fs::create_dir_all(parent).map_err(|e| format!("Failed to create '{}': {}", parent.display(), e))?;
             }
             fs::write(&target, data).map_err(|e| format!("Failed to write '{}': {}", target.display(), e))?;
         }
-        fs::write(dst.join(".checksum"), checksum).map_err(|e| format!("Failed to write checksum marker: {e}"))
+        fs::write(dst.join(".source"), source).map_err(|e| format!("Failed to write source marker: {e}"))
     }
 }
 
@@ -113,19 +119,35 @@ fn copy_tree(from: &Path, to: &Path) -> Result<(), String> {
 
 /// `sha256:<hex>` over every file under `dir/src`, by sorted relative path, name and contents.
 pub(crate) fn package_checksum(dir: &Path) -> Result<String, String> {
-    let src = dir.join("src");
-    let mut files = Vec::new();
-    collect_files(&src, "", &mut files)?;
+    dir_checksum(&dir.join("src"))
+}
+
+/// `sha256:<hex>` over every file under `root`, by sorted relative path, name and contents.
+pub(crate) fn dir_checksum(root: &Path) -> Result<String, String> {
+    let mut names = Vec::new();
+    collect_files(root, "", &mut names)?;
+    let mut contents = Vec::new();
+    for rel in &names {
+        contents.push(fs::read(root.join(rel)).map_err(|e| format!("Failed to read '{}': {}", rel, e))?);
+    }
+    Ok(tree_checksum(names.into_iter().zip(contents.iter().map(Vec::as_slice)).collect()))
+}
+
+/// `sha256:<hex>` over `files` (path under the tree, contents), sorted by path.
+pub(crate) fn tree_checksum(mut files: Vec<(String, &[u8])>) -> String {
     files.sort();
     let mut hasher = Sha256::new();
-    for rel in &files {
-        let bytes = fs::read(src.join(rel)).map_err(|e| format!("Failed to read '{}': {}", rel, e))?;
+    for (rel, bytes) in &files {
         hasher.update(rel.as_bytes());
         hasher.update([0]);
         hasher.update((bytes.len() as u64).to_le_bytes());
-        hasher.update(&bytes);
+        hasher.update(bytes);
     }
-    Ok(format!("sha256:{}", hex(&hasher.finalize())))
+    format!("sha256:{}", hex(&hasher.finalize()))
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 fn collect_files(dir: &Path, prefix: &str, out: &mut Vec<String>) -> Result<(), String> {

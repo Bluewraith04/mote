@@ -4,7 +4,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 
 use isa::value::{ObjectHeader, Value};
 
@@ -35,8 +35,10 @@ impl TaskShared {
 /// Everything the scheduler mutates as one unit, behind [`Runtime::sched`]'s single lock.
 #[derive(Default)]
 pub struct SchedState {
-    /// Ready tasks, oldest first.
+    /// Ready unpinned tasks, oldest first.
     pub run_queue: ReadyQueue,
+    /// Ready pinned tasks, oldest first.
+    pub home_queue: ReadyQueue,
     /// Tasks parked on `SCOPEEXIT`, `join` or a channel `send` / `recv`; scanned as GC roots.
     pub blocked: HashMap<u64, TaskContext>,
     pub(crate) free_pool: Vec<TaskContext>,
@@ -81,7 +83,93 @@ impl TaskStats {
     }
 }
 
-/// The ready queue; its length is mirrored in an atomic so `safepoint_poll` can ask "is anything waiting" without the `sched` lock.
+/// The condition variables idle threads wait on: one for the pool's workers, one for the home worker.
+#[derive(Default)]
+pub(crate) struct Wake {
+    pool: Condvar,
+    home: Condvar,
+}
+
+impl Wake {
+    /// Wakes one thread that can run a task with this `pinned` flag; a pinned wake also reaches the single-thread runs, which wait on the pool's condvar.
+    pub(crate) fn task(&self, pinned: bool) {
+        if pinned {
+            self.home.notify_one();
+            wake_home_loop();
+        }
+        self.pool.notify_one();
+    }
+
+    pub(crate) fn all(&self) {
+        self.home.notify_all();
+        self.pool.notify_all();
+        wake_home_loop();
+    }
+
+    /// Waits on the condvar `role` listens to.
+    fn wait<'a>(&self, st: std::sync::MutexGuard<'a, SchedState>, role: Role) -> std::sync::MutexGuard<'a, SchedState> {
+        let cv = if role == Role::Home { &self.home } else { &self.pool };
+        cv.wait(st).unwrap()
+    }
+}
+
+/// How often a busy home worker lets the window system run its events.
+const HOME_POLL_EVERY: std::time::Duration = std::time::Duration::from_millis(4);
+
+/// Pulls the home worker out of the window system's event loop, if it is waiting there.
+fn wake_home_loop() {
+    if let Some(hook) = contracts::home_loop() {
+        hook.wake();
+    }
+}
+
+thread_local! {
+    static HOME: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Whether this thread is the one `run_main_parallel` was called on.
+pub(crate) fn on_home_thread() -> bool {
+    HOME.with(std::cell::Cell::get)
+}
+
+/// Marks the current thread as the home thread until dropped.
+struct HomeThread;
+
+impl HomeThread {
+    fn enter() -> Self {
+        HOME.with(|h| h.set(true));
+        HomeThread
+    }
+}
+
+impl Drop for HomeThread {
+    fn drop(&mut self) {
+        HOME.with(|h| h.set(false));
+    }
+}
+
+/// Which tasks a worker thread may run.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Role {
+    /// Unpinned tasks only.
+    Pool,
+    /// Pinned tasks only: the thread that called `run_main_parallel`.
+    Home,
+    /// Every task: the single-thread runs.
+    Both,
+}
+
+impl Role {
+    fn runs(self, pinned: bool) -> bool {
+        match self {
+            Role::Pool => !pinned,
+            Role::Home => pinned,
+            Role::Both => true,
+        }
+    }
+}
+
+/// A ready queue; every queue adds to one shared counter so `safepoint_poll` can ask "is anything waiting" without the `sched` lock.
 #[derive(Default)]
 pub struct ReadyQueue {
     queue: VecDeque<TaskContext>,
@@ -89,20 +177,26 @@ pub struct ReadyQueue {
 }
 
 impl ReadyQueue {
+    fn sharing(len: Arc<AtomicUsize>) -> Self {
+        ReadyQueue { queue: VecDeque::new(), len }
+    }
+
     pub fn push_back(&mut self, task: TaskContext) {
         self.queue.push_back(task);
-        self.len.store(self.queue.len(), Ordering::Relaxed);
+        self.len.fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn pop_front(&mut self) -> Option<TaskContext> {
         let task = self.queue.pop_front();
-        self.len.store(self.queue.len(), Ordering::Relaxed);
+        if task.is_some() {
+            self.len.fetch_sub(1, Ordering::Relaxed);
+        }
         task
     }
 
     pub fn clear(&mut self) {
+        self.len.fetch_sub(self.queue.len(), Ordering::Relaxed);
         self.queue.clear();
-        self.len.store(0, Ordering::Relaxed);
     }
 
     pub fn is_empty(&self) -> bool {
@@ -119,11 +213,53 @@ impl ReadyQueue {
 }
 
 impl SchedState {
-    pub(crate) fn wake_or_note_early(&mut self, id: u64) {
-        if let Some(t) = self.blocked.remove(&id) {
-            self.run_queue.push_back(t);
+    /// Empty queues that share one ready counter.
+    pub(crate) fn new() -> Self {
+        let len = Arc::new(AtomicUsize::new(0));
+        SchedState {
+            run_queue: ReadyQueue::sharing(len.clone()),
+            home_queue: ReadyQueue::sharing(len),
+            ..SchedState::default()
+        }
+    }
+
+    /// Puts a ready task on the queue its `pinned` flag names; the caller wakes a thread with [`Wake::task`].
+    pub(crate) fn enqueue(&mut self, task: TaskContext) {
+        if task.pinned {
+            self.home_queue.push_back(task);
         } else {
-            self.woken_early.insert(id);
+            self.run_queue.push_back(task);
+        }
+    }
+
+    fn pop_for(&mut self, role: Role) -> Option<TaskContext> {
+        match role {
+            Role::Pool => self.run_queue.pop_front(),
+            Role::Home => self.home_queue.pop_front(),
+            Role::Both => self.run_queue.pop_front().or_else(|| self.home_queue.pop_front()),
+        }
+    }
+
+    fn has_work_for(&self, role: Role) -> bool {
+        match role {
+            Role::Pool => !self.run_queue.is_empty(),
+            Role::Home => !self.home_queue.is_empty(),
+            Role::Both => !self.run_queue.is_empty() || !self.home_queue.is_empty(),
+        }
+    }
+
+    /// Moves a parked task to its ready queue and returns whether it was pinned, or notes an early wake.
+    pub(crate) fn wake_or_note_early(&mut self, id: u64) -> Option<bool> {
+        match self.blocked.remove(&id) {
+            Some(t) => {
+                let pinned = t.pinned;
+                self.enqueue(t);
+                Some(pinned)
+            }
+            None => {
+                self.woken_early.insert(id);
+                None
+            }
         }
     }
 }
@@ -189,9 +325,10 @@ impl Runtime {
         let mut st = self.sched.lock().unwrap();
         st.registry.insert(task.task_id, Arc::clone(&task.shared));
         st.mem.peak_live = st.mem.peak_live.max(st.registry.len());
-        st.run_queue.push_back(task);
+        let pinned = task.pinned;
+        st.enqueue(task);
         drop(st);
-        self.sched_cv.notify_one();
+        self.wake.task(pinned);
     }
 
     /// Task and region measurements so far.
@@ -232,6 +369,7 @@ impl Runtime {
         t.shared = Arc::new(TaskShared::new(parent, scope_depth));
         t.handle = None;
         t.handoff = None;
+        t.pinned = false;
         t.task_id = task_id;
         t.budget = DEFAULT_REDUCTION_BUDGET;
         t.instrs_since_safepoint = 0;
@@ -247,6 +385,7 @@ impl Runtime {
         task.arena_saves.clear();
         task.saved_arena_bytes = 0;
         task.handle = None;
+        task.pinned = false;
         let task_id = task.task_id;
         let cancelled = task.shared.cancelled.load(Ordering::SeqCst);
         task.task_id = 0;
@@ -285,20 +424,18 @@ impl Runtime {
     pub(crate) fn unblock(&self, id: u64) {
         let mut st = self.sched.lock().unwrap();
         if let Some(t) = st.blocked.remove(&id) {
-            st.run_queue.push_back(t);
+            let pinned = t.pinned;
+            st.enqueue(t);
             drop(st);
-            self.sched_cv.notify_one();
+            self.wake.task(pinned);
         }
     }
 
     pub(crate) fn unblock_or_note_early(&self, id: u64) {
         let mut st = self.sched.lock().unwrap();
-        if let Some(t) = st.blocked.remove(&id) {
-            st.run_queue.push_back(t);
+        if let Some(pinned) = st.wake_or_note_early(id) {
             drop(st);
-            self.sched_cv.notify_one();
-        } else {
-            st.woken_early.insert(id);
+            self.wake.task(pinned);
         }
     }
 
@@ -306,7 +443,8 @@ impl Runtime {
     pub fn run_scheduled(&mut self) -> Result<(), String> {
         let done = AtomicBool::new(false);
         let result_slot: Mutex<Option<Result<TaskContext, String>>> = Mutex::new(None);
-        drive_loop(self, None, 1, &done, &result_slot);
+        let _home = HomeThread::enter();
+        drive_loop(self, Role::Both, None, 1, &done, &result_slot);
         Ok(())
     }
 
@@ -316,7 +454,8 @@ impl Runtime {
         self.schedule(main);
         let done = AtomicBool::new(false);
         let result_slot: Mutex<Option<Result<TaskContext, String>>> = Mutex::new(None);
-        drive_loop(self, Some(main_id), 1, &done, &result_slot);
+        let _home = HomeThread::enter();
+        drive_loop(self, Role::Both, Some(main_id), 1, &done, &result_slot);
         if self.exit_requested() {
             return Ok(self.finish_exited(result_slot));
         }
@@ -328,17 +467,20 @@ impl Runtime {
         Ok(finished)
     }
 
-    /// Runs `main` on `num_workers` OS threads that pull tasks from one shared, locked run queue.
+    /// Runs `main` on `num_workers` OS threads that pull tasks from one shared, locked run queue; the calling thread also runs the tasks that pinned themselves to it.
     pub fn run_main_parallel(&self, main: TaskContext, num_workers: usize) -> Result<TaskContext, String> {
         assert!(num_workers >= 1, "run_main_parallel: num_workers must be at least 1");
         let main_id = main.task_id;
         self.schedule(main);
         let done = AtomicBool::new(false);
         let result_slot: Mutex<Option<Result<TaskContext, String>>> = Mutex::new(None);
+        let threads = num_workers + 1;
         std::thread::scope(|scope| {
             for _ in 0..num_workers {
-                scope.spawn(|| drive_loop(self, Some(main_id), num_workers, &done, &result_slot));
+                scope.spawn(|| drive_loop(self, Role::Pool, Some(main_id), threads, &done, &result_slot));
             }
+            let _home = HomeThread::enter();
+            drive_loop(self, Role::Home, Some(main_id), threads, &done, &result_slot);
         });
         if self.exit_requested() {
             return Ok(self.finish_exited(result_slot));
@@ -381,6 +523,7 @@ impl Runtime {
         }
 
         st.run_queue.clear();
+        st.home_queue.clear();
         st.blocked.clear();
         st.detached_faults.clear();
         st.registry.clear();
@@ -486,7 +629,7 @@ impl Runtime {
     }
 
     fn release_resources(&self) {
-        use contracts::{PlatformRequest, RELEASE_DATABASE, RELEASE_FILE, RELEASE_GENERATOR, RELEASE_LIBRARY, RELEASE_SOCKET, RELEASE_TRANSACTION};
+        use contracts::{PlatformRequest, RELEASE_FILE, RELEASE_GENERATOR, RELEASE_LIBRARY, RELEASE_SOCKET};
         for r in self.heap.take_released() {
             let request = match r.kind {
                 RELEASE_GENERATOR => {
@@ -496,8 +639,6 @@ impl Runtime {
                 RELEASE_FILE => PlatformRequest::FileClose { id: r.key },
                 RELEASE_SOCKET => PlatformRequest::SocketClose { id: r.key },
                 RELEASE_LIBRARY => PlatformRequest::LibClose { lib: r.key },
-                RELEASE_DATABASE => PlatformRequest::SqlClose { id: r.key },
-                RELEASE_TRANSACTION => PlatformRequest::SqlEnd { tx: r.key, commit: false },
                 _ => continue,
             };
             if let Some(platform) = &self.platform {
@@ -509,19 +650,27 @@ impl Runtime {
 
 fn drive_loop(
     rt: &Runtime,
+    role: Role,
     main_id: Option<u64>,
-    num_workers: usize,
+    threads: usize,
     done: &AtomicBool,
     result_slot: &Mutex<Option<Result<TaskContext, String>>>,
 ) {
+    let mut last_poll = std::time::Instant::now();
     loop {
         if done.load(Ordering::SeqCst) {
             return;
         }
+        if role != Role::Pool && last_poll.elapsed() >= HOME_POLL_EVERY {
+            if let Some(hook) = contracts::home_loop().filter(|h| h.is_open()) {
+                hook.wait(Some(std::time::Duration::ZERO));
+            }
+            last_poll = std::time::Instant::now();
+        }
         let mut task = loop {
             rt.safepoint.enter();
             let mut st = rt.sched.lock().unwrap();
-            if let Some(t) = st.run_queue.pop_front() {
+            if let Some(t) = st.pop_for(role) {
                 break t;
             }
             rt.safepoint.leave();
@@ -532,7 +681,9 @@ fn drive_loop(
                 return;
             }
             st.idle_count += 1;
-            if st.idle_count == num_workers && st.offload_inflight == 0 && !rt.sources_can_wake(&st) {
+            let nothing_ready = st.run_queue.is_empty() && st.home_queue.is_empty();
+            let window_system = contracts::home_loop().filter(|h| h.is_open());
+            if st.idle_count == threads && nothing_ready && st.offload_inflight == 0 && !rt.sources_can_wake(&st) && window_system.is_none() {
                 let msg = if !st.blocked.is_empty() {
                     format!("deadlock: {} task(s) blocked, none runnable", st.blocked.len())
                 } else {
@@ -542,10 +693,17 @@ fn drive_loop(
                 done.store(true, Ordering::SeqCst);
                 st.idle_count -= 1;
                 drop(st);
-                rt.sched_cv.notify_all();
+                rt.wake.all();
                 return;
             }
-            st = rt.sched_cv.wait(st).unwrap();
+            st = match window_system.filter(|_| role != Role::Pool) {
+                Some(hook) => {
+                    drop(st);
+                    hook.wait(None);
+                    rt.sched.lock().unwrap()
+                }
+                None => rt.wake.wait(st, role),
+            };
             st.idle_count -= 1;
         };
         let checked_out_guard = CheckedOutGuard { rt };
@@ -561,8 +719,11 @@ fn drive_loop(
             match stepped {
                 Ok(VmStatus::Running) => {}
                 Ok(VmStatus::Yielded) => {
-                    let queue_has_work = !rt.sched.lock().unwrap().run_queue.is_empty();
-                    if !queue_has_work {
+                    if !role.runs(task.pinned) {
+                        rt.schedule(task);
+                        break;
+                    }
+                    if !rt.sched.lock().unwrap().has_work_for(role) {
                         continue;
                     }
                     rt.sched.lock().unwrap().context_switches += 1;
@@ -573,9 +734,10 @@ fn drive_loop(
                     let mut st = rt.sched.lock().unwrap();
                     let cancelled = !task.awaiting_platform && task.shared.cancelled.load(Ordering::SeqCst);
                     if st.woken_early.remove(&task.task_id) || cancelled {
-                        st.run_queue.push_back(task);
+                        let pinned = task.pinned;
+                        st.enqueue(task);
                         drop(st);
-                        rt.sched_cv.notify_one();
+                        rt.wake.task(pinned);
                     } else {
                         st.blocked.insert(task.task_id, task);
                     }
@@ -619,7 +781,7 @@ fn signal_done(rt: &Runtime, done: &AtomicBool) {
         let _st = rt.sched.lock().unwrap();
         done.store(true, Ordering::SeqCst);
     }
-    rt.sched_cv.notify_all();
+    rt.wake.all();
 }
 
 fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {

@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 use std::ffi::{c_char, c_int, c_void, CStr, CString};
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -75,9 +76,11 @@ enum Slot {
 
 pub(crate) struct DynLibs {
     allowed: AtomicBool,
+    packages: Mutex<Vec<(String, PathBuf)>>,
     next: AtomicI64,
-    libs: Mutex<HashMap<i64, Arc<Library>>>,
+    libs: Mutex<HashMap<i64, (Arc<Library>, PathBuf)>>,
     symbols: Mutex<HashMap<i64, Arc<Symbol>>>,
+    bound: Mutex<HashMap<(PathBuf, String, String), i64>>,
 }
 
 fn error(kind: PlatformErrorKind, message: impl Into<String>) -> PlatformError {
@@ -86,26 +89,61 @@ fn error(kind: PlatformErrorKind, message: impl Into<String>) -> PlatformError {
 
 impl DynLibs {
     pub(crate) fn new() -> Self {
-        DynLibs { allowed: AtomicBool::new(false), next: AtomicI64::new(1), libs: Mutex::new(HashMap::new()), symbols: Mutex::new(HashMap::new()) }
+        DynLibs {
+            allowed: AtomicBool::new(false),
+            packages: Mutex::new(Vec::new()),
+            next: AtomicI64::new(1),
+            libs: Mutex::new(HashMap::new()),
+            symbols: Mutex::new(HashMap::new()),
+            bound: Mutex::new(HashMap::new()),
+        }
     }
 
     pub(crate) fn set_allowed(&self, allowed: bool) {
         self.allowed.store(allowed, Ordering::SeqCst);
     }
 
+    /// The packages granted native access, each with the directory holding its libraries.
+    pub(crate) fn set_packages(&self, packages: Vec<(String, PathBuf)>) {
+        *self.packages.lock().unwrap() = packages;
+    }
+
     pub(crate) fn open(&self, path: &str) -> Result<i64, PlatformError> {
         if !self.allowed.load(Ordering::SeqCst) {
             return Err(error(PlatformErrorKind::PermissionDenied, "native libraries are off; run with --allow-native"));
         }
-        // SAFETY: loading runs the library's initialisers; `--allow-native` is the caller's consent to that.
+        self.load(Path::new(path))
+    }
+
+    /// Opens `name` from the directory of a granted package, with no `--allow-native`.
+    pub(crate) fn open_package(&self, package: &str, name: &str) -> Result<i64, PlatformError> {
+        let dir = self.packages.lock().unwrap().iter().find(|(p, _)| p == package).map(|(_, d)| d.clone());
+        let dir = dir.ok_or_else(|| error(PlatformErrorKind::PermissionDenied, format!("{package} is not granted native access")))?;
+        if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
+            return Err(error(PlatformErrorKind::InvalidData, format!("'{name}' is not a library name")));
+        }
+        if !dir.is_dir() {
+            return Err(error(PlatformErrorKind::NotFound, format!("the native directory {} is missing", dir.display())));
+        }
+        let file = format!("{}{name}{}", std::env::consts::DLL_PREFIX, std::env::consts::DLL_SUFFIX);
+        self.load(&dir.join(file))
+    }
+
+    fn load(&self, path: &Path) -> Result<i64, PlatformError> {
+        // SAFETY: loading runs the library's initialisers; `--allow-native` or a package grant is the caller's consent to that.
         let lib = unsafe { Library::new(path) }.map_err(|e| error(PlatformErrorKind::NotFound, e.to_string()))?;
         let id = self.next.fetch_add(1, Ordering::SeqCst);
-        self.libs.lock().unwrap().insert(id, Arc::new(lib));
+        self.libs.lock().unwrap().insert(id, (Arc::new(lib), path.to_path_buf()));
         Ok(id)
     }
 
+    /// One symbol per library path, name and signature, so binding the same function again adds nothing.
     pub(crate) fn symbol(&self, lib: i64, name: &str, signature: &str) -> Result<i64, PlatformError> {
-        let lib = self.libs.lock().unwrap().get(&lib).cloned().ok_or_else(|| error(PlatformErrorKind::InvalidData, "the library is closed"))?;
+        let (lib, path) = self.libs.lock().unwrap().get(&lib).cloned().ok_or_else(|| error(PlatformErrorKind::InvalidData, "the library is closed"))?;
+        let key = (path, name.to_string(), signature.to_string());
+        if let Some(id) = self.bound.lock().unwrap().get(&key) {
+            return Ok(*id);
+        }
         let (params, ret) = parse_signature(signature).map_err(|m| error(PlatformErrorKind::InvalidData, m))?;
         // SAFETY: only the address is taken here; the call site's signature is the caller's claim about it.
         let address = unsafe { lib.get::<*const c_void>(name.as_bytes()) }.map_err(|e| error(PlatformErrorKind::NotFound, e.to_string()))?;
@@ -113,6 +151,7 @@ impl DynLibs {
         let cif = Cif::new(params.iter().map(|k| k.ffi_type()), ret.ffi_type());
         let id = self.next.fetch_add(1, Ordering::SeqCst);
         self.symbols.lock().unwrap().insert(id, Arc::new(Symbol { _lib: lib, address, cif, params, ret }));
+        self.bound.lock().unwrap().insert(key, id);
         Ok(id)
     }
 
@@ -169,5 +208,22 @@ impl DynLibs {
                 Kind::Buffer => unreachable!("a buffer is never a result"),
             }
         })
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn binding_the_same_function_again_reuses_its_symbol() {
+        let libs = DynLibs::new();
+        libs.set_allowed(true);
+        let first = libs.open("libm.so.6").unwrap();
+        let second = libs.open("libm.so.6").unwrap();
+        let a = libs.symbol(first, "sin", "f>f").unwrap();
+        assert_eq!(libs.symbol(second, "sin", "f>f").unwrap(), a);
+        assert_ne!(libs.symbol(second, "cos", "f>f").unwrap(), a);
+        assert_eq!(libs.symbols.lock().unwrap().len(), 2);
     }
 }

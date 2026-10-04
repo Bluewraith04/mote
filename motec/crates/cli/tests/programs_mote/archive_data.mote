@@ -1,8 +1,8 @@
 /// A YAML config read into a derived type, bundled with its files into a.tar.gz and a.zip, and restored.
-import std.data.yaml as yaml
+import yaml as yaml
 import std.data.json as json
-import std.data.compress as compress
-import std.data.archive as archive
+import compress as compress
+import archive as archive
 import std.sys.fs as fs
 
 @derive(Json)

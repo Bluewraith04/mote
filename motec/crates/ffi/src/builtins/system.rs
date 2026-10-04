@@ -286,38 +286,6 @@ pub(super) fn process_run(ctx: &mut NativeCallContext<'_>) -> PlatformNative {
     Ok((PlatformRequest::RunProcess { program, args, env, stdin, cwd }, done))
 }
 
-pub(super) fn http_request(ctx: &mut NativeCallContext<'_>) -> PlatformNative {
-    let method = ctx.arg(0).and_then(|v| v.as_heap_string()).unwrap_or_default();
-    let url = ctx.arg(1).and_then(|v| v.as_heap_string()).unwrap_or_default();
-    let flat = string_list_arg(ctx, 2, "http(headers)")?;
-    let headers = flat.chunks(2).filter(|p| p.len() == 2).map(|p| (p[0].clone(), p[1].clone())).collect();
-    let input = ctx.arg(3).unwrap_or(Value::null());
-    if !is_bytes(input) {
-        return Err("http(body): body must be Bytes".to_string());
-    }
-    let (backing, len) = bytes_state(ctx, input)?;
-    let body = ctx.heap.read_bytes(backing, 0, len)?;
-    let timeout_millis = arg_int(ctx, 4).max(1) as u64;
-    let max_redirects = arg_int(ctx, 5).clamp(0, 100) as u32;
-    let max_body = arg_int(ctx, 6).max(0) as u64;
-    let target = url.clone();
-    let done: ContinuationFn = Box::new(move |c, result| match result {
-        Ok(PlatformResponse::Http { status, headers, body }) => {
-            let mut flat = Vec::with_capacity(headers.len() * 2 + 2);
-            flat.push(Value::int(status));
-            flat.push(alloc_bytes(c, &body)?);
-            for (name, value) in &headers {
-                flat.push(c.heap.alloc_string(name.as_bytes())?);
-                flat.push(c.heap.alloc_string(value.as_bytes())?);
-            }
-            Ok(alloc_list(c, &flat)?)
-        }
-        Ok(other) => Err(NativeError::from(format!("http: platform returned {other:?}"))),
-        Err(e) => Err(NativeError::failure(e.kind as i32, format!("{target}: {}", e.message))),
-    });
-    Ok((PlatformRequest::HttpRequest { method, url, headers, body, timeout_millis, max_redirects, max_body }, done))
-}
-
 pub(super) const INVALID_DATA: i32 = 2;
 
 pub(super) fn str_parse_int(ctx: &mut NativeCallContext<'_>) -> Result<Value, NativeError> {

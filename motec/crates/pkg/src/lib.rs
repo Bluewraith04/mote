@@ -10,9 +10,12 @@ pub mod lockfile;
 /// The `.mbc` bytecode container.
 pub mod mbc;
 pub mod mpk;
+/// Git as a package source.
+pub mod git;
 /// The `mote.toml` manifest.
 pub mod manifest;
-pub mod registry;
+/// Native libraries carried by packages.
+pub mod native;
 /// Dependency resolution.
 pub mod resolver;
 /// Versions and version requirements.
@@ -23,8 +26,8 @@ pub use cli::PackageManager;
 pub use installer::PackageInstaller;
 pub use lockfile::{LockedPackage, Lockfile};
 pub use mbc::MbcFile;
+pub use git::{Git, GitRef, Repo};
 pub use mpk::MpkArchive;
-pub use manifest::{DependencySpec, PackageManifest, PackageMeta, RegistryConfig, RunConfig};
-pub use registry::{IndexEntry, IndexFile, Registry};
+pub use manifest::{DependencySpec, PackageManifest, PackageMeta, RunConfig};
 pub use resolver::{AvailablePackage, DependencyResolver, ResolvedPackage};
 pub use semver::{Version, VersionConstraint, VersionOp, VersionReq};

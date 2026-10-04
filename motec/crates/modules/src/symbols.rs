@@ -8,6 +8,9 @@ use compiler::ast::Program;
 use crate::path::CanonicalModuleId;
 use crate::visibility::ModuleExports;
 
+/// The implicit prelude's module id; any other glob or definition of a name beats it.
+const PRELUDE: &str = "<std>/prelude";
+
 fn fnv1a(s: &str) -> u64 {
     s.bytes().fold(0xcbf2_9ce4_8422_2325, |h, b| (h ^ b as u64).wrapping_mul(0x0100_0000_01b3))
 }
@@ -177,7 +180,15 @@ impl ModuleScope {
             return Ok(());
         }
         if let Some(other) = self.glob_from.get(name) {
-            if other != from {
+            if from.as_str() == PRELUDE {
+                return Ok(());
+            }
+            let same_value = !as_value || self.value_bindings.get(name) == Some(&mangled);
+            let same_type = !as_type || self.type_bindings.get(name) == Some(&mangled);
+            if same_value && same_type {
+                return Ok(());
+            }
+            if other != from && other.as_str() != PRELUDE {
                 return Err(format!(
                     "`{}` is glob-imported into module '{}' from both '{}' and '{}' — import it explicitly to disambiguate",
                     name, self.module.display_path(), other.display_path(), from.display_path()

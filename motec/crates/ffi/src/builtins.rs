@@ -15,28 +15,77 @@ use runtime::{NativeCtx, NativeDispatchHook, PlatformResult, Runtime};
 
 use crate::native_call::{ContinuationFn, NativeCallContext, NativeFunctionRegistry, SourceSpec};
 
-mod archives;
 mod collections;
 mod crypto;
 mod formats;
 mod http_wire;
 mod libtools;
-mod sql;
 mod system;
 mod text_math;
-use self::archives::*;
+#[cfg(feature = "window")]
+mod os_window;
+mod window;
 use self::collections::*;
 use self::crypto::*;
 use self::formats::*;
 use self::http_wire::*;
 use self::libtools::*;
-use self::sql::*;
 use self::system::*;
 use self::text_math::*;
+use self::window::*;
+
+/// The core runtime: every native except the full and GUI groups.
+pub const TIER_LEAN: u8 = 0;
+/// Adds TLS.
+pub const TIER_FULL: u8 = 1;
+/// Adds the GUI.
+pub const TIER_GUI: u8 = 2;
 
 /// The registry of default built-ins, in `CALLNATIVE`-index order.
 pub fn registry() -> NativeFunctionRegistry {
+    build::<TIER_GUI>(&mut Vec::new())
+}
+
+/// The registry of a runtime without the GUI: same indices, but the GUI natives answer an error.
+pub fn full_registry() -> NativeFunctionRegistry {
+    build::<TIER_FULL>(&mut Vec::new())
+}
+
+/// The registry of a lean runtime: same indices, but every grouped native answers an error.
+pub fn lean_registry() -> NativeFunctionRegistry {
+    build::<TIER_LEAN>(&mut Vec::new())
+}
+
+/// The smallest tier whose runtime has every native in `table`.
+pub fn tier_of(table: &[String]) -> u8 {
+    let mut grouped = Vec::new();
+    build::<TIER_GUI>(&mut grouped);
+    table.iter().filter_map(|name| grouped.iter().find(|(n, _)| n == name)).map(|(_, tier)| *tier).max().unwrap_or(TIER_LEAN)
+}
+
+fn unavailable(_: &mut NativeCallContext) -> Result<Value, String> {
+    Err("this function is not part of this runtime".to_string())
+}
+
+/// Registers every native in order; one in a group above `TIER` takes its slot with [`unavailable`].
+fn build<const TIER: u8>(grouped: &mut Vec<(&'static str, u8)>) -> NativeFunctionRegistry {
     let r = NativeFunctionRegistry::new();
+    macro_rules! grouped {
+        ($tier:expr, $kind:ident, $name:literal, $func:path) => {
+            if TIER >= $tier {
+                grouped.push(($name, $tier));
+                r.$kind($name, $func);
+            } else {
+                r.register($name, unavailable);
+            }
+        };
+    }
+    macro_rules! heavy {
+        ($($rest:tt)*) => { grouped!(TIER_FULL, $($rest)*) };
+    }
+    macro_rules! gui {
+        ($($rest:tt)*) => { grouped!(TIER_GUI, $($rest)*) };
+    }
 
     r.register(
         "print",
@@ -208,8 +257,6 @@ pub fn registry() -> NativeFunctionRegistry {
         ctx.heap.release_on_collect(handle, arg_int(ctx, 1) as u8)?;
         Ok(Value::null())
     });
-    r.register_fallible("toml_parse", toml_parse);
-    r.register_fallible("toml_render", toml_render);
     r.register("base64_encode", base64_encode);
     r.register_fallible("base64_decode", base64_decode);
     r.register("uuid_v4", uuid_v4);
@@ -218,16 +265,6 @@ pub fn registry() -> NativeFunctionRegistry {
     r.register_fallible("uuid_from_bytes", uuid_from_bytes);
     r.register("uuid_bytes", uuid_bytes);
     r.register("uuid_version", uuid_version);
-    r.register_fallible("yaml_parse", yaml_parse);
-    r.register_fallible("yaml_render", yaml_render);
-    r.register("compress", compress);
-    r.register_fallible("decompress", decompress);
-    r.register_fallible("tar_pack", tar_pack);
-    r.register_fallible("tar_unpack", tar_unpack);
-    r.register_fallible("zip_pack", zip_pack);
-    r.register_fallible("zip_unpack", zip_unpack);
-    r.register_platform("http_request", http_request);
-    r.register("form_encode", form_encode);
     r.register_fallible("http_parse_request", http_parse_request);
     r.register_fallible("http_decode_chunked", http_decode_chunked);
     r.register("http_reason", http_reason);
@@ -243,30 +280,100 @@ pub fn registry() -> NativeFunctionRegistry {
     r.register_fallible("hex_decode", hex_decode);
     r.register_fallible("password_hash", password_hash);
     r.register_fallible("password_verify", password_verify);
-    r.register_platform("net_tcp_connect_tls", net_tcp_connect_tls);
-    r.register_platform("net_tcp_listen_tls", net_tcp_listen_tls);
-    r.register_fallible("tls_self_signed", tls_self_signed);
-    r.register_fallible("tls_check_identity", tls_check_identity);
-    r.register_platform("sql_open", sql_open);
-    r.register_platform("sql_run", sql_run);
-    r.register_platform("sql_begin", sql_begin);
-    r.register_platform("sql_end", sql_end);
-    r.register_platform("sql_close", sql_close);
+    heavy!(register_platform, "net_tcp_connect_tls", net_tcp_connect_tls);
+    heavy!(register_platform, "net_tcp_listen_tls", net_tcp_listen_tls);
+    heavy!(register_fallible, "tls_self_signed", tls_self_signed);
+    heavy!(register_fallible, "tls_check_identity", tls_check_identity);
+    gui!(register_fallible, "ui_headless", ui_headless);
+    gui!(register_fallible, "ui_close", ui_close);
+    gui!(register, "ui_default_style", ui_default_style);
+    gui!(register_fallible, "ui_style", ui_style);
+    gui!(register_fallible, "ui_add", ui_add);
+    gui!(register_fallible, "ui_remove", ui_remove);
+    gui!(register_fallible, "ui_set_text", ui_set_text);
+    gui!(register_fallible, "ui_text", ui_text);
+    gui!(register_fallible, "ui_set_style", ui_set_style);
+    gui!(register_fallible, "ui_set_image", ui_set_image);
+    gui!(register_fallible, "ui_present", ui_present);
+    gui!(register_fallible, "ui_rect", ui_rect);
+    gui!(register_fallible, "ui_hit", ui_hit);
+    gui!(register_fallible, "ui_scroll", ui_scroll);
+    gui!(register_fallible, "ui_resize", ui_resize);
+    gui!(register_fallible, "ui_pixel", ui_pixel);
+    gui!(register_fallible, "ui_png", ui_png);
+    gui!(register_fallible, "ui_input", ui_input);
+    gui!(register_fallible, "ui_post", ui_post);
+    gui!(register_source, "ui_events", ui_events);
+    gui!(register_fallible, "ui_type", ui_type);
+    gui!(register_fallible, "ui_focus", ui_focus);
+    gui!(register_fallible, "ui_focus_on", ui_focus_on);
+    gui!(register_fallible, "ui_selection", ui_selection);
+    gui!(register_fallible, "ui_open", ui_open);
+    r.register_fallible("libtools_open_package", libtools_open_package);
+    gui!(register_fallible, "ui_move_before", ui_move_before);
+    gui!(register_fallible, "ui_chrome", ui_chrome);
+    gui!(register_fallible, "ui_set_title", ui_set_title);
 
     r
 }
 
-static SYSTEM_PLATFORM: std::sync::LazyLock<Arc<platform::SystemPlatform>> =
+static FULL_PLATFORM: std::sync::LazyLock<Arc<platform::SystemPlatform>> =
     std::sync::LazyLock::new(|| Arc::new(platform::SystemPlatform::new(Vec::new())));
+
+static LEAN_PLATFORM: std::sync::LazyLock<Arc<platform::SystemPlatform>> =
+    std::sync::LazyLock::new(|| Arc::new(platform::SystemPlatform::lean(Vec::new())));
+
+/// What the setters chose, applied to the platform once one is installed.
+#[derive(Default)]
+struct Settings {
+    args: Option<Vec<String>>,
+    allow_native: Option<bool>,
+    native_packages: Option<Vec<(String, std::path::PathBuf)>>,
+    live: Option<Arc<platform::SystemPlatform>>,
+}
+
+static SETTINGS: std::sync::Mutex<Settings> =
+    std::sync::Mutex::new(Settings { args: None, allow_native: None, native_packages: None, live: None });
+
+/// Grants packages native access: each name with the directory its libraries are in.
+pub fn set_native_packages(packages: Vec<(String, std::path::PathBuf)>) {
+    let mut settings = SETTINGS.lock().unwrap();
+    if let Some(live) = &settings.live {
+        live.set_native_packages(packages.clone());
+    }
+    settings.native_packages = Some(packages);
+}
 
 /// Lets `std.dev.libtools` load native libraries (`--allow-native`); off by default.
 pub fn set_allow_native(allowed: bool) {
-    SYSTEM_PLATFORM.set_allow_native(allowed);
+    let mut settings = SETTINGS.lock().unwrap();
+    settings.allow_native = Some(allowed);
+    if let Some(live) = &settings.live {
+        live.set_allow_native(allowed);
+    }
 }
 
 /// Sets the answer of `std.sys.env.args()`; call once, before running a program.
 pub fn set_script_args(args: Vec<String>) {
-    SYSTEM_PLATFORM.set_args(args);
+    let mut settings = SETTINGS.lock().unwrap();
+    if let Some(live) = &settings.live {
+        live.set_args(args.clone());
+    }
+    settings.args = Some(args);
+}
+
+fn adopt(platform: &Arc<platform::SystemPlatform>) {
+    let mut settings = SETTINGS.lock().unwrap();
+    if let Some(args) = &settings.args {
+        platform.set_args(args.clone());
+    }
+    if let Some(allowed) = settings.allow_native {
+        platform.set_allow_native(allowed);
+    }
+    if let Some(packages) = &settings.native_packages {
+        platform.set_native_packages(packages.clone());
+    }
+    settings.live = Some(platform.clone());
 }
 
 fn ask(ctx: &NativeCallContext<'_>, request: PlatformRequest) -> Result<PlatformResponse, String> {
@@ -286,18 +393,37 @@ fn stream_of(fd: i64) -> StdStream {
 
 static BUILTINS: std::sync::LazyLock<NativeFunctionRegistry> = std::sync::LazyLock::new(registry);
 
+static FULL_BUILTINS: std::sync::LazyLock<NativeFunctionRegistry> = std::sync::LazyLock::new(full_registry);
+
+static LEAN_BUILTINS: std::sync::LazyLock<NativeFunctionRegistry> = std::sync::LazyLock::new(lean_registry);
+
 /// A [`NativeDispatchHook`] over the builtins, ready for `Runtime::set_native_dispatcher`.
 pub fn dispatch_hook() -> NativeDispatchHook {
     let registry = BUILTINS.clone();
     Arc::new(move |idx, heap: &mut dyn NativeCtx, args| registry.call(idx, args, heap))
 }
 
+fn wire(rt: &mut Runtime, platform: &Arc<platform::SystemPlatform>, registry: NativeFunctionRegistry) {
+    adopt(platform);
+    rt.set_platform(platform.clone());
+    let calls = registry.clone();
+    rt.set_native_dispatcher(Arc::new(move |idx, heap: &mut dyn NativeCtx, args| calls.call(idx, args, heap)));
+    rt.set_native_resolver(Arc::new(move |name| registry.get_by_name(name)));
+}
+
 /// Installs the system platform, the leaf dispatcher and the name resolver on `rt`.
 pub fn install(rt: &mut Runtime) {
-    rt.set_platform(SYSTEM_PLATFORM.clone());
-    rt.set_native_dispatcher(dispatch_hook());
-    let registry = BUILTINS.clone();
-    rt.set_native_resolver(Arc::new(move |name| registry.get_by_name(name)));
+    wire(rt, &FULL_PLATFORM, BUILTINS.clone());
+}
+
+/// Like [`install`], without the GUI natives; links none of their code.
+pub fn install_full(rt: &mut Runtime) {
+    wire(rt, &FULL_PLATFORM, FULL_BUILTINS.clone());
+}
+
+/// Like [`install`], without the full and GUI natives; links none of their code.
+pub fn install_lean(rt: &mut Runtime) {
+    wire(rt, &LEAN_PLATFORM, LEAN_BUILTINS.clone());
 }
 
 fn arg_int(ctx: &NativeCallContext<'_>, idx: usize) -> i64 {

@@ -8,12 +8,10 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use contracts::{PlatformError, PlatformErrorKind, PlatformRequest, PlatformResponse};
-use rustls::ServerConfig;
-use rustls_pki_types::CertificateDer;
 
+use crate::ext::{missing, Secure, ServerSettings, Tls};
 use crate::reactor::Pollable;
 use crate::system::io_error;
-use crate::tls::{self, Session};
 
 const MAX_READ: usize = 1 << 20;
 
@@ -26,16 +24,16 @@ pub(crate) enum Readiness {
 #[derive(Clone)]
 enum Socket {
     Stream(Arc<TcpStream>),
-    Tls(Arc<Session>),
+    Tls(Arc<dyn Secure>),
     Listener(Arc<TcpListener>),
-    TlsListener(Arc<TcpListener>, Arc<ServerConfig>),
+    TlsListener(Arc<TcpListener>, ServerSettings),
     Udp(Arc<UdpSocket>),
 }
 
 #[derive(Clone)]
 enum Stream {
     Plain(Arc<TcpStream>),
-    Tls(Arc<Session>),
+    Tls(Arc<dyn Secure>),
 }
 
 impl Stream {
@@ -78,11 +76,16 @@ impl Stream {
 pub(crate) struct SystemNet {
     sockets: Mutex<HashMap<i64, Socket>>,
     next_id: AtomicI64,
+    tls: &'static dyn Tls,
 }
 
 impl SystemNet {
-    pub(crate) fn new() -> Self {
-        SystemNet { sockets: Mutex::new(HashMap::new()), next_id: AtomicI64::new(1) }
+    pub(crate) fn new(tls: &'static dyn Tls) -> Self {
+        SystemNet { sockets: Mutex::new(HashMap::new()), next_id: AtomicI64::new(1), tls }
+    }
+
+    fn tls(&self) -> Result<&'static dyn Tls, PlatformError> {
+        if self.tls.present() { Ok(self.tls) } else { Err(missing("TLS")) }
     }
 
     fn insert(&self, socket: Socket) -> i64 {
@@ -110,10 +113,12 @@ impl SystemNet {
         }
     }
 
-    pub(crate) fn tls_connect(&self, host: &str, port: u16, extra: &[CertificateDer<'static>]) -> Result<i64, PlatformError> {
+    /// `trust_pem` holds extra certificates to trust, or is empty.
+    pub(crate) fn tls_connect(&self, host: &str, port: u16, trust_pem: &str) -> Result<i64, PlatformError> {
+        let tls = self.tls()?;
         let stream = TcpStream::connect(resolve(host, port)?.as_slice()).map_err(io_error)?;
-        let session = Session::client(Arc::new(stream), host, extra)?;
-        Ok(self.insert(Socket::Tls(Arc::new(session))))
+        let session = tls.client(Arc::new(stream), host, trust_pem)?;
+        Ok(self.insert(Socket::Tls(session)))
     }
 
     pub(crate) fn readiness(&self, request: &PlatformRequest) -> Readiness {
@@ -150,13 +155,13 @@ impl SystemNet {
                 let stream = TcpStream::connect(resolve(&host, port)?.as_slice()).map_err(io_error)?;
                 PlatformResponse::Int(self.insert(Socket::Stream(Arc::new(stream))))
             }
-            PlatformRequest::TlsConnect { host, port } => PlatformResponse::Int(self.tls_connect(&host, port, &[])?),
+            PlatformRequest::TlsConnect { host, port } => PlatformResponse::Int(self.tls_connect(&host, port, "")?),
             PlatformRequest::TcpListen { host, port } => {
                 let listener = TcpListener::bind(resolve(&host, port)?.as_slice()).map_err(io_error)?;
                 PlatformResponse::Int(self.insert(Socket::Listener(Arc::new(listener))))
             }
             PlatformRequest::TlsListen { host, port, cert_pem, key_pem } => {
-                let config = tls::server_config(&cert_pem, &key_pem)?;
+                let config = self.tls()?.server_settings(&cert_pem, &key_pem)?;
                 let listener = TcpListener::bind(resolve(&host, port)?.as_slice()).map_err(io_error)?;
                 PlatformResponse::Int(self.insert(Socket::TlsListener(Arc::new(listener), config)))
             }
@@ -167,8 +172,8 @@ impl SystemNet {
                 }
                 Socket::TlsListener(listener, config) => {
                     let (stream, _) = listener.accept().map_err(io_error)?;
-                    let session = Session::server(Arc::new(stream), config)?;
-                    PlatformResponse::Int(self.insert(Socket::Tls(Arc::new(session))))
+                    let session = self.tls()?.server(Arc::new(stream), &config)?;
+                    PlatformResponse::Int(self.insert(Socket::Tls(session)))
                 }
                 _ => return Err(other("socket is not a listener")),
             },

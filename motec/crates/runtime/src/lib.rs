@@ -1,6 +1,6 @@
 //! The register VM: interpreter, call frames, regions, scheduler and the offload pool.
 use std::ptr::NonNull;
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Mutex};
 
 use isa::encoding::Instruction;
 use isa::opcode::Opcode;
@@ -132,7 +132,7 @@ pub struct Runtime {
 
     /// The run queue, parked tasks, free pool and id counters behind one lock.
     pub sched: Arc<Mutex<sched::SchedState>>,
-    pub(crate) sched_cv: Arc<Condvar>,
+    pub(crate) wake: Arc<sched::Wake>,
     pub(crate) safepoint: Box<dyn contracts::SafepointCoordinator>,
     pub(crate) ready_len: Arc<std::sync::atomic::AtomicUsize>,
     exit_code: Mutex<Option<i32>>,
@@ -180,6 +180,8 @@ pub struct TaskContext {
     pub owned_senders: Vec<NonNull<ObjectHeader>>,
     /// A `send` on a rendezvous channel waiting to be taken: `(channel id, the take count that completes it)`.
     pub handoff: Option<(u64, u64)>,
+    /// Runs only on the home thread (`std.task.pin`).
+    pub pinned: bool,
 }
 
 // SAFETY: a task is owned by one worker at a time; its object pointers are heap addresses, not thread-affine.
@@ -204,6 +206,7 @@ impl Default for TaskContext {
             held_turns: Vec::new(),
             owned_senders: Vec::new(),
             handoff: None,
+            pinned: false,
         }
     }
 }
@@ -240,6 +243,7 @@ impl TaskContext {
             held_turns: Vec::new(),
             owned_senders: Vec::new(),
             handoff: None,
+            pinned: false,
         }
     }
 }
@@ -250,10 +254,10 @@ impl Runtime {
     }
 
     pub fn with_types(code_objects: Vec<CodeObject>, type_descriptors: Vec<TypeDescriptor>) -> Self {
-        let state = sched::SchedState::default();
+        let state = sched::SchedState::new();
         let ready_len = state.run_queue.len_handle();
         let sched = Arc::new(Mutex::new(state));
-        let sched_cv = Arc::new(Condvar::new());
+        let wake = Arc::new(sched::Wake::default());
         Runtime {
             code_objects,
             type_descriptors,
@@ -263,7 +267,7 @@ impl Runtime {
             source_files: Vec::new(),
             platform: None,
             gen_regions: arena::GeneratorRegions::default(),
-            offload: offload::OffloadPool::new(sched.clone(), sched_cv.clone()),
+            offload: offload::OffloadPool::new(sched.clone(), wake.clone()),
             heap: Box::new(alloc::LeakingHeap::default()),
             heap_id: mutator::next_heap_id(),
             heap_installed: false,
@@ -272,7 +276,7 @@ impl Runtime {
             intrinsic_types: IntrinsicTypeTable::new(),
             types: types::TypeInterner::default(),
             sched,
-            sched_cv,
+            wake,
             safepoint: Box::new(safepoint::StopTheWorld::new()),
             ready_len,
             exit_code: Mutex::new(None),

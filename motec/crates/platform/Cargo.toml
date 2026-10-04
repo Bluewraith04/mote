@@ -1,6 +1,6 @@
 [package]
 name = "platform"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 license = "MIT"
 
@@ -9,10 +9,8 @@ contracts = { path = "../contracts" }
 libffi = "5.2.0"
 libloading = "0.9.0"
 polling = "3.11.0"
-rusqlite = { version = "0.40.2", default-features = false, features = ["bundled", "cache"] }
 rustls = { version = "0.23.45", default-features = false, features = ["ring", "std", "tls12"] }
 rustls-pki-types = "1.15.1"
-ureq = "3.4.2"
 webpki-roots = "1.0.9"
 
 [target.'cfg(unix)'.dependencies]

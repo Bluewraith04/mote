@@ -1,13 +1,10 @@
-//! `std.sys.http` against a small local server, and on the fake platform.
+//! The package `http` against a small local server.
+
+mod common;
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpListener;
 use std::process::Command;
-use std::sync::Arc;
-
-use isa::value::TypeRegistry;
-use modules::MultiFileCompiler;
-use platform::FakePlatform;
 
 fn respond(path: &str, method: &str, headers: &[(String, String)], body: &[u8]) -> (u16, Vec<(String, String)>, Vec<u8>) {
     let header = |name: &str| headers.iter().find(|(k, _)| k == name).map(|(_, v)| v.clone()).unwrap_or_default();
@@ -83,9 +80,11 @@ fn serve() -> u16 {
 
 fn run(source: &str, tag: &str) -> Vec<String> {
     let dir = std::env::temp_dir().join(format!("mote_http_{}_{}", tag, std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
     std::fs::create_dir_all(&dir).unwrap();
+    common::install_native_packages(&dir, &["http"]);
     std::fs::write(dir.join("main.mote"), source).unwrap();
-    let out = Command::new(env!("CARGO_BIN_EXE_mote")).arg("run").arg(dir.join("main.mote")).output().unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_mote")).arg("run").arg(dir.join("main.mote")).current_dir(&dir).output().unwrap();
     std::fs::remove_dir_all(&dir).ok();
     let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
     assert!(out.status.success(), "{text}");
@@ -93,7 +92,7 @@ fn run(source: &str, tag: &str) -> Vec<String> {
 }
 
 fn program(port: u16, body: &str) -> String {
-    format!("import std.sys.http as http\nimport std.data.json as json\n\nlet BASE = \"http://127.0.0.1:{port}\"\n\nfn main() {{\n{body}}}\n")
+    format!("import http as http\nimport std.data.json as json\n\nlet BASE = \"http://127.0.0.1:{port}\"\n\nfn main() {{\n{body}}}\n")
 }
 
 #[test]
@@ -230,7 +229,7 @@ fn limits_and_failures_are_errors() {
 
 #[test]
 fn query_strings_percent_encode_in_order() {
-    let src = "import std.sys.http as http
+    let src = "import http as http
 
 fn main() {
     println(http.query({\"q\": \"a b\", \"x\": \"1&2=3\", \"é\": \"ü\"}))
@@ -238,59 +237,4 @@ fn main() {
 }
 ";
     assert_eq!(run(src, "query"), ["q=a+b&x=1%262%3D3&%C3%A9=%C3%BC", ""]);
-}
-
-#[test]
-fn a_group_import_reaches_http() {
-    let src = "import std.sys
-
-fn main() {
-    println(sys.http.query({\"a\": \"b\"}))
-}
-";
-    assert_eq!(run(src, "group"), ["a=b"]);
-}
-
-#[test]
-fn the_fake_platform_scripts_responses_and_logs_requests() {
-    let source = "import std.sys.http as http
-
-fn main() -> Int {
-    let r = http.request(\"POST\", \"https://api.test/v1/items\").header(\"X-Key\", \"k\").text(\"hi\").send().unwrap()
-    let etag = r.header(\"etag\").unwrap()
-    println(\"${r.status} ${r.text().unwrap()} ${etag}\")
-    match http.get(\"https://api.test/nowhere\") {
-        Ok(x) => { println(\"ok\") }
-        Err(e) => { println(\"error\") }
-    }
-    return 0
-}
-";
-    let dir = std::env::temp_dir().join(format!("mote_http_fake_{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    let main_file = dir.join("main.mote");
-    std::fs::write(&main_file, source).unwrap();
-    let compiled = MultiFileCompiler::new(dir.clone()).compile_program(&main_file).unwrap();
-    let mut registry = TypeRegistry::new();
-    for t in &compiled.type_descriptors {
-        let _ = registry.register(t.clone(), None);
-    }
-    let fake = Arc::new(FakePlatform::new(1).with_http("https://api.test/v1/items", 201, &[("ETag", "\"v1\"")], b"made"));
-    let mut rt = runtime::Runtime::with_type_registry(compiled.code_objects, &registry);
-    ffi::builtins::install(&mut rt);
-    rt.set_native_table(&compiled.native_table).unwrap();
-    rt.set_platform(fake.clone());
-    rt.run_entry_on(1).unwrap();
-    std::fs::remove_dir_all(dir).ok();
-    assert_eq!(fake.stdout(), "201 made \"v1\"\nerror\n");
-    let log = fake.http_log();
-    assert_eq!(log.len(), 2);
-    match &log[0] {
-        contracts::PlatformRequest::HttpRequest { method, url, headers, body, timeout_millis, max_redirects, .. } => {
-            assert_eq!((method.as_str(), url.as_str(), body.as_slice()), ("POST", "https://api.test/v1/items", b"hi".as_slice()));
-            assert!(headers.contains(&("x-key".to_string(), "k".to_string())));
-            assert_eq!((*timeout_millis, *max_redirects), (30_000, 10));
-        }
-        other => panic!("{other:?}"),
-    }
 }

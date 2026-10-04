@@ -10,14 +10,10 @@ use contracts::{
 
 use crate::fake_net::FakeNet;
 use crate::net::is_socket_request;
-use crate::sql::{is_sql_request, SystemSql};
-
-type CannedHttp = (i64, Vec<(String, String)>, Vec<u8>);
 
 /// A deterministic platform: a virtual clock that moves only when told, seeded entropy, captured output.
 pub struct FakePlatform {
     state: Mutex<FakeState>,
-    sql: SystemSql,
 }
 
 struct FakeState {
@@ -36,8 +32,6 @@ struct FakeState {
     handles: BTreeMap<i64, FakeFile>,
     processes: BTreeMap<String, ProcessOutput>,
     process_log: Vec<PlatformRequest>,
-    http: BTreeMap<String, CannedHttp>,
-    http_log: Vec<PlatformRequest>,
     local_offset: i64,
     next_handle: i64,
     net: FakeNet,
@@ -50,7 +44,6 @@ fn not_found(path: &str) -> PlatformError {
 impl FakePlatform {
     pub fn new(seed: u64) -> Self {
         FakePlatform {
-            sql: SystemSql::new(),
             state: Mutex::new(FakeState {
                 wall_millis: 1_700_000_000_000,
                 mono_nanos: 0,
@@ -67,8 +60,6 @@ impl FakePlatform {
                 handles: BTreeMap::new(),
                 processes: BTreeMap::new(),
                 process_log: Vec::new(),
-                http: BTreeMap::new(),
-                http_log: Vec::new(),
                 local_offset: 0,
                 next_handle: 0,
                 net: FakeNet::new(),
@@ -102,18 +93,6 @@ impl FakePlatform {
         let output = ProcessOutput { status, stdout: stdout.to_vec(), stderr: stderr.to_vec() };
         self.state.lock().unwrap().processes.insert(program.to_string(), output);
         self
-    }
-
-    /// Scripts the answer to `HttpRequest` for `url` (any method); an unscripted url is `NotFound`.
-    pub fn with_http(self, url: &str, status: i64, headers: &[(&str, &str)], body: &[u8]) -> Self {
-        let headers = headers.iter().map(|(k, v)| (k.to_ascii_lowercase(), v.to_string())).collect();
-        self.state.lock().unwrap().http.insert(url.to_string(), (status, headers, body.to_vec()));
-        self
-    }
-
-    /// Every `HttpRequest` so far, in order.
-    pub fn http_log(&self) -> Vec<PlatformRequest> {
-        self.state.lock().unwrap().http_log.clone()
     }
 
     /// Scripts the machine's zone as a fixed offset in seconds east of UTC; the default is UTC.
@@ -202,13 +181,6 @@ impl FakePlatform {
 
 impl FakePlatform {
     fn run(&self, request: PlatformRequest) -> Result<PlatformResponse, PlatformError> {
-        if let PlatformRequest::SqlOpen { path } = &request
-            && path != ":memory:" {
-                return Err(PlatformError { kind: PlatformErrorKind::Unsupported, message: "the fake platform opens only :memory: databases".into() });
-            }
-        if is_sql_request(&request) {
-            return self.sql.request(request);
-        }
         let mut st = self.state.lock().unwrap();
         Ok(match request {
             PlatformRequest::WallClockMillis => PlatformResponse::Int(st.wall_millis),
@@ -266,13 +238,8 @@ impl FakePlatform {
                 let PlatformRequest::RunProcess { program, .. } = run else { unreachable!() };
                 PlatformResponse::Process(st.processes.get(&program).cloned().ok_or_else(|| not_found(&program))?)
             }
-            req @ PlatformRequest::HttpRequest { .. } => {
-                st.http_log.push(req.clone());
-                let PlatformRequest::HttpRequest { url, .. } = req else { unreachable!() };
-                let (status, headers, body) = st.http.get(&url).cloned().ok_or_else(|| not_found(&url))?;
-                PlatformResponse::Http { status, headers, body }
-            }
             PlatformRequest::LibOpen { .. }
+            | PlatformRequest::LibOpenPackage { .. }
             | PlatformRequest::LibSymbol { .. }
             | PlatformRequest::LibCall { .. }
             | PlatformRequest::LibClose { .. } => {
@@ -299,7 +266,9 @@ impl Platform for FakePlatform {
     }
 
     fn open_source(&self, request: SourceRequest, sink: EventSink) -> Result<SourceHandle, PlatformError> {
-        let SourceRequest::Timer { period_nanos } = request;
+        let SourceRequest::Timer { period_nanos } = request else {
+            return Err(PlatformError { kind: PlatformErrorKind::Other, message: "not a platform source".to_string() });
+        };
         let stopped = Arc::new(AtomicBool::new(false));
         let mut st = self.state.lock().unwrap();
         let period = period_nanos.max(1) as i64;

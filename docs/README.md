@@ -24,9 +24,9 @@ Names in the [prelude](std/prelude.md) need no import.
 | Group | Modules |
 |---|---|
 | Core | [prelude](std/prelude.md), [error](std/error.md), [collections](std/collections.md), [iter](std/iter.md), [stream](std/stream.md), [string](std/string.md), [math](std/math.md), [regex](std/regex.md), [time](std/time.md), [date](std/date.md), [random](std/random.md), [task](std/task.md), [test](std/test.md) |
-| `std.data` | [json](std/json.md), [toml](std/toml.md), [yaml](std/yaml.md), [base64](std/base64.md), [uuid](std/uuid.md), [compress](std/compress.md), [archive](std/archive.md), [crypto](std/crypto.md), [sql](std/sql.md) |
-| `std.sys` | [io](std/io.md), [fs](std/fs.md), [path](std/path.md), [env](std/env.md), [process](std/process.md), [net](std/net.md), [http](std/http.md), [http_server](std/http_server.md), [tls](std/tls.md) |
-| `std.dev` | [log](std/log.md), [args](std/args.md), [libtools](std/libtools.md) |
+| `std.data` | [json](std/json.md), [base64](std/base64.md), [uuid](std/uuid.md), [crypto](std/crypto.md) |
+| `std.sys` | [io](std/io.md), [fs](std/fs.md), [env](std/env.md), [process](std/process.md), [net](std/net.md), [http_server](std/http_server.md), [tls](std/tls.md), [gui](std/gui.md) |
+| `std.dev` | [args](std/args.md), [libtools](std/libtools.md) |
 | `std.experimental` | [types](std/experimental-types.md) |
 
 Every `mote` example in these pages is run by the test suite, and its printed output is checked.

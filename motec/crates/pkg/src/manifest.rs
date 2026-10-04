@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
+use crate::git::{GitRef, Repo};
 use crate::semver::Version;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -33,7 +34,12 @@ pub enum DependencySpec {
     Detailed {
         version: Option<String>,
         path: Option<String>,
-        url: Option<String>,
+        git: Option<String>,
+        tag: Option<String>,
+        branch: Option<String>,
+        rev: Option<String>,
+        /// Grants the package's native libraries to the run.
+        native: Option<bool>,
     },
 }
 
@@ -51,6 +57,30 @@ impl DependencySpec {
             DependencySpec::Detailed { path, .. } => path.as_deref(),
         }
     }
+
+    /// Whether `native = true` grants the package its native libraries.
+    pub fn native(&self) -> bool {
+        matches!(self, DependencySpec::Detailed { native: Some(true), .. })
+    }
+
+    /// The git repository and ref of a `git` dependency; `None` for any other.
+    pub fn git(&self) -> Result<Option<(Repo, GitRef)>, String> {
+        let DependencySpec::Detailed { git: Some(git), tag, branch, rev, .. } = self else { return Ok(None) };
+        let repo = Repo::parse(git)?;
+        let r = GitRef::from_fields(tag.as_deref(), branch.as_deref(), rev.as_deref())?;
+        Ok(Some((repo, r)))
+    }
+
+    /// A `git` dependency pinned to a tag, branch or commit.
+    pub fn from_git(repo: &Repo, r: &GitRef) -> Self {
+        let (mut tag, mut branch, mut rev) = (None, None, None);
+        match r {
+            GitRef::Tag(t) => tag = Some(t.clone()),
+            GitRef::Branch(b) => branch = Some(b.clone()),
+            GitRef::Rev(c) => rev = Some(c.clone()),
+        }
+        DependencySpec::Detailed { version: None, path: None, git: Some(repo.spec()), tag, branch, rev, native: None }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -59,8 +89,6 @@ pub struct PackageManifest {
     pub package: PackageMeta,
     #[serde(default)]
     pub dependencies: BTreeMap<String, DependencySpec>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub registry: Option<RegistryConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub run: Option<RunConfig>,
 }
@@ -71,12 +99,6 @@ pub struct RunConfig {
     /// The heap limit, such as `2GiB` or `unlimited`.
     #[serde(default, rename = "max-heap", skip_serializing_if = "Option::is_none")]
     pub max_heap: Option<String>,
-}
-
-/// `[registry]`: where registry dependencies are fetched from.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RegistryConfig {
-    pub url: String,
 }
 
 impl PackageManifest {

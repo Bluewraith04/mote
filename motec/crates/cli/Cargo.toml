@@ -1,6 +1,6 @@
 [package]
 name = "cli"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 license = "MIT"
 
@@ -10,7 +10,7 @@ runtime = { path = "../runtime" }
 gc = { path = "../gc" }
 contracts = { path = "../contracts" }
 platform = { path = "../platform" }
-ffi = { path = "../ffi" }
+ffi = { path = "../ffi", default-features = false }
 compiler = { path = "../compiler" }
 modules = { path = "../modules" }
 pkg = { path = "../pkg" }
@@ -19,7 +19,22 @@ pkg = { path = "../pkg" }
 name = "mote"
 path = "src/main.rs"
 
+[[bin]]
+name = "mote-rt"
+path = "src/rt.rs"
+
+[[bin]]
+name = "mote-rt-full"
+path = "src/rt_full.rs"
+
+[[bin]]
+name = "mote-rt-gui"
+path = "src/rt_gui.rs"
+
 [features]
+default = ["gui"]
+# Windows on a display.
+gui = ["ffi/window"]
 # Prints memory events to stderr as they happen.
 mem-trace = ["contracts/mem-trace"]
 

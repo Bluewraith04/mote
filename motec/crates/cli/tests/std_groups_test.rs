@@ -19,7 +19,7 @@ fn a_group_opens_its_members_as_a_namespace() {
 
 fn main() {
     println(data.base64.encode(\"hi\".bytes()))
-    println(data.json.to_text(data.yaml.parse(\"a: [1, 2]\").unwrap()).unwrap())
+    println(data.json.to_text(data.json.parse(\"{\\\"a\\\": [1, 2]}\").unwrap()).unwrap())
     println(data.uuid.v4().version())
 }
 ";
@@ -32,25 +32,25 @@ fn a_group_can_be_renamed() {
 
 fn main() {
     println(os.fs.exists(\"/no/such/path/here\"))
-    println(os.path.join(\"a\", \"b\"))
 }
 ";
-    assert_eq!(run(src, "renamed"), "false\na/b\n");
+    assert_eq!(run(src, "renamed"), "false\n");
 }
 
 #[test]
 fn members_import_by_name_from_the_group_or_by_path() {
-    let src = "import { json, toml } from std.data
+    let src = "import { json, uuid } from std.data
 import std.data.base64 as b64
 import { Json } from std.data.json
 
 fn main() {
-    let j: Json = toml.parse(\"a = 1\").unwrap()
+    let j: Json = json.parse(\"{\\\"a\\\": 1}\").unwrap()
     println(json.to_text(j).unwrap())
+    println(uuid.v7().version())
     println(b64.encode(\"a\".bytes()))
 }
 ";
-    assert_eq!(run(src, "by_name"), "{\"a\":1}\nYQ==\n");
+    assert_eq!(run(src, "by_name"), "{\"a\":1}\n7\nYQ==\n");
 }
 
 #[test]

@@ -21,6 +21,12 @@ pub(super) fn libtools_open(ctx: &mut NativeCallContext<'_>) -> Result<Value, Na
     id_answer(ctx.heap.platform()?.execute(PlatformRequest::LibOpen { path }))
 }
 
+pub(super) fn libtools_open_package(ctx: &mut NativeCallContext<'_>) -> Result<Value, NativeError> {
+    let package = text_arg(ctx, 0, "libtools open_package")?;
+    let name = text_arg(ctx, 1, "libtools open_package")?;
+    id_answer(ctx.heap.platform()?.execute(PlatformRequest::LibOpenPackage { package, name }))
+}
+
 pub(super) fn libtools_symbol(ctx: &mut NativeCallContext<'_>) -> Result<Value, NativeError> {
     let lib = arg_int(ctx, 0);
     let name = text_arg(ctx, 1, "libtools bind")?;

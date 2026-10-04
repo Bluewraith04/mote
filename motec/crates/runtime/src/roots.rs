@@ -80,6 +80,9 @@ pub(crate) fn scan_roots(rt: &Runtime, running: &mut TaskContext, visitor: &mut 
         for task in sched.run_queue.iter_mut() {
             scan_task_roots(task, &rt.code_objects, visitor);
         }
+        for task in sched.home_queue.iter_mut() {
+            scan_task_roots(task, &rt.code_objects, visitor);
+        }
         for task in sched.blocked.values_mut() {
             scan_task_roots(task, &rt.code_objects, visitor);
         }

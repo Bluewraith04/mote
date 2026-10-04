@@ -16,11 +16,10 @@ Commands:
   test [--filter text]       Run the package's tests
        [--schedule-seed n]   Vary where tasks switch (one worker); a failure prints the seed
   init [name] [--lib]        Create a package
-  add <name>                 Add a dependency
+  add <git url>[@ref]        Add a dependency from a git repository (github:user/repo works too)
   remove <name>              Remove a dependency
   install [--locked]         Install dependencies
   package                    Create a .mpk archive
-  publish                    Publish the package
   version                    Print the version
   help                       Print this message
 
@@ -106,9 +105,7 @@ fn execute_compiled(compiled: compiler::CompiledProgram, gc: gc::GCConfig, worke
             }
             process::exit(code)
         }
-        Ok(_status) => {
-            print_gc_summary(&rt);
-        }
+        Ok(_status) => {}
         Err(e) => {
             eprintln!("Runtime error: {}", e);
             report_seed_on_failure();
@@ -228,8 +225,14 @@ fn discover_package_or_exit(verb: &str) -> (PathBuf, pkg::PackageManifest) {
     }
 }
 
+/// Lets the run open the native libraries of the packages `mote.toml` in `root` grants.
+fn grant_natives(root: &Path) {
+    ffi::builtins::set_native_packages(pkg::native::grants(root));
+}
+
 fn run_package_entry(gc: gc::GCConfig, workers: usize) {
     let (root, manifest) = discover_package_or_exit("run");
+    grant_natives(&root);
     if let Some(value) = manifest.run.and_then(|run| run.max_heap) {
         let _ = MANIFEST_MAX_HEAP.set(value);
     }
@@ -242,57 +245,14 @@ fn run_package_entry(gc: gc::GCConfig, workers: usize) {
     }
 }
 
-fn print_gc_summary(rt: &runtime::Runtime) {
-    if let Some(s) = rt.gc_stats() {
-        if s.collections > 0 {
-            println!(
-                "GC: {} collection(s), {} bytes reclaimed, {} live object(s).",
-                s.collections, s.bytes_freed, s.live_objects
-            );
-        }
-    }
-}
-
 fn main() {
-    if let Some(payload_res) = pkg::StandaloneBundler::detect_and_read_payload() {
-        match payload_res {
-            Ok(compiled) => {
-                ffi::builtins::set_script_args(env::args().collect());
-                ffi::builtins::set_allow_native(env_allows_native());
-                let mut registry = isa::value::TypeRegistry::new();
-                for t in &compiled.type_descriptors {
-                    let _ = registry.register(t.clone(), None);
-                }
-                let global_count = compiled.global_count as usize;
-                let mut rt = runtime::Runtime::with_type_registry(compiled.code_objects, &registry);
-                rt.set_sources(compiled.sources);
-                rt.set_global_count(global_count);
-                cli::builtins::install(&mut rt);
-                rt.set_native_table(&compiled.native_table).expect("native table");
-                rt.set_heap(gc::build_gc_engine(&gc::GCConfig::default().with_max_heap(heap_limit())));
-                if let Err(e) = cli::limits::apply(&mut rt) {
-                    eprintln!("Error: {e}");
-                    process::exit(1);
-                }
-                let workers = cli::resolve_workers(None, env::var(cli::WORKERS_ENV).ok().as_deref())
-                    .unwrap_or_else(|e| {
-                        eprintln!("Error: {e}");
-                        process::exit(1);
-                    });
-                match rt.run_entry_on(workers).map(|_| rt.status()) {
-                    Ok(runtime::VmStatus::Exited(code)) => process::exit(code),
-                    Ok(_val) => process::exit(0),
-                    Err(e) => {
-                        eprintln!("Runtime error: {}", e);
-                        process::exit(1);
-                    }
-                }
-            }
-            Err(e) => {
-                eprintln!("Error executing standalone payload: {}", e);
-                process::exit(1);
-            }
+    match cli::standalone::attached() {
+        Some(Ok(compiled)) => cli::standalone::run::<{ cli::builtins::TIER_GUI }>(compiled),
+        Some(Err(e)) => {
+            eprintln!("Error executing standalone payload: {}", e);
+            process::exit(1);
         }
+        None => {}
     }
 
     let args: Vec<String> = env::args().collect();
@@ -329,6 +289,7 @@ fn main() {
                 .and_then(|pos| args.get(pos + 1))
                 .map(PathBuf::from);
             let entry_file = args.get(2).filter(|a| !a.starts_with('-'));
+            let tier_of = cli::builtins::tier_of;
 
             let (result, output_exe): (Result<(), String>, PathBuf) = match entry_file {
                 Some(entry_file) => {
@@ -339,7 +300,7 @@ fn main() {
                         .to_string();
                     let out = explicit_out.clone().unwrap_or_else(|| Path::new("dist").join(exe_name(&stem)));
                     (
-                        ensure_parent(&out).and_then(|()| pkg::StandaloneBundler::bundle(Path::new(entry_file), &out)),
+                        ensure_parent(&out).and_then(|()| pkg::StandaloneBundler::bundle(Path::new(entry_file), &out, &tier_of)),
                         out,
                     )
                 }
@@ -347,8 +308,12 @@ fn main() {
                     let (root, manifest) = discover_package_or_exit("build");
                     let out = explicit_out.clone().unwrap_or_else(|| root.join("dist").join(exe_name(&manifest.package.name)));
                     let r = pkg::PackageManager::compile_program(&root)
-                        .and_then(|(_p, compiled)| {
-                            pkg::StandaloneBundler::bundle_program(&compiled, &out)
+                        .and_then(|(_p, compiled)| pkg::StandaloneBundler::bundle_program(&compiled, &out, &tier_of))
+                        .and_then(|()| pkg::native::copy_libraries(&root, &out))
+                        .map(|count| {
+                            if count > 0 {
+                                println!("Copied native libraries of {count} package(s) to {}", pkg::native::lib_dir(&out).display());
+                            }
                         });
                     (r, out)
                 }
@@ -452,15 +417,6 @@ fn main() {
                 }
             }
         }
-        "publish" => {
-            match pkg::PackageManager::publish(Path::new(".")) {
-                Ok(msg) => println!("{}", msg),
-                Err(e) => {
-                    eprintln!("Error publishing package: {}", e);
-                    process::exit(1);
-                }
-            }
-        }
         "run" => {
             if args.len() < 3 {
                 run_package_entry(gc, workers);
@@ -472,6 +428,7 @@ fn main() {
 
             if filename.ends_with(".mote") {
                 let root_dir = file_path.parent().unwrap_or(Path::new(".")).to_path_buf();
+                grant_natives(&root_dir);
                 let mut compiler = modules::MultiFileCompiler::new(root_dir);
                 match compiler.compile_program(&file_path) {
                     Ok(compiled) => execute_compiled(compiled, gc.clone(), workers),
@@ -481,6 +438,7 @@ fn main() {
                     }
                 }
             } else if filename.ends_with(".mbc") {
+                grant_natives(file_path.parent().unwrap_or(Path::new(".")));
                 match pkg::MbcFile::read(&file_path) {
                     Ok(compiled) => execute_compiled(compiled, gc.clone(), workers),
                     Err(e) => {
@@ -497,9 +455,7 @@ fn main() {
                     }
                 };
                 match cli::run_source(&source) {
-                    Ok((rt, _task)) => {
-                        print_gc_summary(&rt);
-                    }
+                    Ok(_) => {}
                     Err(e) => {
                         eprintln!("Runtime error: {}", e);
                         process::exit(1);
@@ -512,6 +468,7 @@ fn main() {
             let has_file = args.get(2).is_some_and(|a| !a.starts_with('-'));
             if !has_file {
                 let (root, manifest) = discover_package_or_exit("test");
+                grant_natives(&root);
                 let entry = manifest.entry_path(&root);
                 if !entry.is_file() {
                     eprintln!(
@@ -538,6 +495,7 @@ fn main() {
                 process::exit(1);
             }
             let root_dir = file_path.parent().unwrap_or(Path::new(".")).to_path_buf();
+            grant_natives(&root_dir);
             let mut compiler = modules::MultiFileCompiler::new(root_dir);
             match compiler.compile_program_for_test(&file_path, filter_ref) {
                 Ok(compiled) => execute_compiled(compiled, gc.clone(), workers),
@@ -660,9 +618,7 @@ fn main() {
                     }
                 };
                 match cli::run_source(&source) {
-                    Ok((rt, _task)) => {
-                        print_gc_summary(&rt);
-                    }
+                    Ok(_) => {}
                     Err(e) => {
                         eprintln!("Runtime error: {}", e);
                         process::exit(1);

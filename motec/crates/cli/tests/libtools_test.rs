@@ -17,6 +17,9 @@ void bump(void) { count++; }
 int64_t total(void) { return count; }
 int64_t nap(int64_t ms) { usleep(ms * 1000); return ms; }
 int64_t six(int64_t a, int64_t b, int64_t c, int64_t d, int64_t e, int64_t f) { return a + b + c + d + e + f; }
+int64_t reverse(const char *in, int64_t n, char *out, int64_t cap) { if (n > cap) return n; for (int64_t i = 0; i < n; i++) out[i] = in[n - 1 - i]; return n; }
+int64_t slow_fill(char *out, int64_t n) { usleep(300000); for (int64_t i = 0; i < n; i++) out[i] = (char)(97 + i % 26); return n; }
+int64_t reject(const char *in, int64_t n, char *out, int64_t cap) { const char *m = \"bad input\"; for (int64_t i = 0; i < 9 && i < cap; i++) out[i] = m[i]; return -1; }
 ";
 
 fn have_cc() -> bool {
@@ -139,6 +142,161 @@ fn test_a_buffer_is_filled_by_c() {
          \x20   println(buf[3])"
     );
     assert_eq!(run(&body, "buffer"), "4\n65\n68\n");
+}
+
+fn bytes_convention_body(lib: &str, bind: &str) -> String {
+    format!(
+        "    let lib = open(\"{lib}\")?\n\
+         \x20   let reverse = {bind}<(Bytes, Int, Bytes, Int) -> Int>(lib, \"reverse\")?\n\
+         \x20   let reject = {bind}<(Bytes, Int, Bytes, Int) -> Int>(lib, \"reject\")?\n\
+         \x20   let input = \"hello\".bytes()\n\
+         \x20   var out = Bytes(2)\n\
+         \x20   var n = reverse(input, input.len(), out, out.len())\n\
+         \x20   println(n)\n\
+         \x20   if n > out.len() {{\n\
+         \x20       out = Bytes(n)\n\
+         \x20       n = reverse(input, input.len(), out, out.len())\n\
+         \x20   }}\n\
+         \x20   println(out.slice(0, n).decode())\n\
+         \x20   let empty = Bytes()\n\
+         \x20   println(reverse(empty, 0, out, out.len()))\n\
+         \x20   let msg = Bytes(32)\n\
+         \x20   let code = reject(input, input.len(), msg, msg.len())\n\
+         \x20   println(code)\n\
+         \x20   println(msg.slice(0, 9).decode())"
+    )
+}
+
+#[test]
+fn test_bytes_in_and_bytes_out_need_no_pointer_type() {
+    if !have_cc() {
+        return;
+    }
+    let lib = lib_literal(&build_lib("bytes_convention"));
+    let out = run(&bytes_convention_body(&lib, "bind"), "bytes_convention");
+    assert_eq!(out, "5\nolleh\n0\n-1\nbad input\n");
+}
+
+#[test]
+fn test_the_bytes_convention_holds_on_a_helper_thread() {
+    if !have_cc() {
+        return;
+    }
+    let lib = lib_literal(&build_lib("bytes_blocking"));
+    let out = run(&bytes_convention_body(&lib, "bind_blocking"), "bytes_blocking");
+    assert_eq!(out, "5\nolleh\n0\n-1\nbad input\n");
+}
+
+#[test]
+fn test_a_buffer_survives_collections_while_c_writes_to_it() {
+    if !have_cc() {
+        return;
+    }
+    let lib = lib_literal(&build_lib("bytes_gc"));
+    let body = format!(
+        "    let lib = open(\"{lib}\")?\n\
+         \x20   let slow_fill = bind_blocking<(Bytes, Int) -> Int>(lib, \"slow_fill\")?\n\
+         \x20   let churn = spawn {{\n\
+         \x20       var total = 0\n\
+         \x20       for i in 0..200000 {{\n\
+         \x20           let xs = [i, i + 1, i + 2]\n\
+         \x20           total += xs.len()\n\
+         \x20       }}\n\
+         \x20       total\n\
+         \x20   }}\n\
+         \x20   let buf = Bytes(40)\n\
+         \x20   println(slow_fill(buf, 40))\n\
+         \x20   println(buf[0])\n\
+         \x20   println(buf[27])\n\
+         \x20   println(churn.join()?)"
+    );
+    let (ok, text) = mote("run", &body, "bytes_gc", &["--allow-native", "--workers", "1", "--mem-stats"], &[]);
+    assert!(ok, "{text}");
+    assert!(text.starts_with("40\n97\n98\n600000\n"), "{text}");
+    assert!(text.contains("mem.gc.collections = ") && !text.contains("mem.gc.collections = 0\n"), "{text}");
+}
+
+/// A package `app` with a granted path dependency `cl` carrying `libmotecl` for this machine; `main` is the body of `fn main()`.
+fn native_app(tag: &str, main: &str) -> PathBuf {
+    let root = std::env::temp_dir().join(format!("mote_libtools_pkg_{tag}_{}", std::process::id()));
+    std::fs::remove_dir_all(&root).ok();
+    let native = root.join("app/cl/native").join(pkg::native::host_triple());
+    std::fs::create_dir_all(&native).unwrap();
+    std::fs::create_dir_all(root.join("app/cl/src")).unwrap();
+    std::fs::create_dir_all(root.join("app/src")).unwrap();
+    let lib = build_lib(tag);
+    let name = format!("{}motecl{}", std::env::consts::DLL_PREFIX, std::env::consts::DLL_SUFFIX);
+    std::fs::copy(&lib, native.join(name)).unwrap();
+    std::fs::remove_dir_all(lib.parent().unwrap()).ok();
+    std::fs::write(root.join("app/cl/mote.toml"), "[package]\nname = \"cl\"\nversion = \"1.0.0\"\n").unwrap();
+    std::fs::write(root.join("app/cl/src/lib.mote"), "pub fn v() -> Int { return 1 }\n").unwrap();
+    std::fs::write(
+        root.join("app/mote.toml"),
+        "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[dependencies]\ncl = { path = \"cl\", native = true }\n",
+    )
+    .unwrap();
+    let source = format!("import {{ open_package, bind }} from std.dev.libtools\n\nfn main() {{\n{main}\n}}\n");
+    std::fs::write(root.join("app/src/main.mote"), source).unwrap();
+    root.join("app")
+}
+
+fn mote_in(dir: &Path, args: &[&str]) -> (bool, String) {
+    let out = Command::new(env!("CARGO_BIN_EXE_mote")).args(args).current_dir(dir).output().unwrap();
+    (out.status.success(), format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)))
+}
+
+const ADD_FROM_PACKAGE: &str = "    match open_package(\"cl\", \"motecl\") {\n        Ok(lib) => {\n            let add = bind<(Int, Int) -> Int>(lib, \"add_i\")?\n            println(add(40, 2))\n        }\n        Err(e) => { println(e.message) }\n    }";
+
+#[test]
+fn test_a_granted_package_opens_its_library_without_the_flag() {
+    if !have_cc() {
+        return;
+    }
+    let app = native_app("pkg_run", ADD_FROM_PACKAGE);
+    let (ok, text) = mote_in(&app, &["install"]);
+    assert!(ok, "{text}");
+    let (ok, text) = mote_in(&app, &["run"]);
+    assert!(ok, "{text}");
+    assert_eq!(text, "42\n");
+    std::fs::remove_dir_all(app.parent().unwrap()).ok();
+}
+
+#[test]
+fn test_a_built_program_finds_its_libraries_in_the_lib_directory() {
+    if !have_cc() {
+        return;
+    }
+    let app = native_app("pkg_build", ADD_FROM_PACKAGE);
+    let (ok, text) = mote_in(&app, &["install"]);
+    assert!(ok, "{text}");
+    let (ok, text) = mote_in(&app, &["build"]);
+    assert!(ok, "{text}");
+    let lib_file = format!("{}motecl{}", std::env::consts::DLL_PREFIX, std::env::consts::DLL_SUFFIX);
+    assert!(app.join("dist/app.lib/cl").join(&lib_file).is_file(), "{text}");
+
+    let exe = app.join("dist").join(format!("app{}", std::env::consts::EXE_SUFFIX));
+    let elsewhere = std::env::temp_dir();
+    let out = Command::new(&exe).current_dir(&elsewhere).output().unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "42\n");
+
+    std::fs::remove_dir_all(app.join("dist/app.lib")).unwrap();
+    let out = Command::new(&exe).current_dir(&elsewhere).output().unwrap();
+    let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    assert!(!text.contains("42"), "a program without its .lib directory cannot open the library: {text}");
+    assert!(text.contains("cl is not granted native access"), "{text}");
+    std::fs::remove_dir_all(app.parent().unwrap()).ok();
+}
+
+#[test]
+fn test_a_package_that_is_not_granted_cannot_open_a_library() {
+    let app = native_app("pkg_denied", "    match open_package(\"other\", \"motecl\") {\n        Ok(_) => { println(\"opened\") }\n        Err(e) => { println(e.message) }\n    }");
+    let (ok, text) = mote_in(&app, &["install"]);
+    assert!(ok, "{text}");
+    let (ok, text) = mote_in(&app, &["run"]);
+    assert!(ok, "{text}");
+    assert_eq!(text, "other is not granted native access\n");
+    std::fs::remove_dir_all(app.parent().unwrap()).ok();
 }
 
 #[test]

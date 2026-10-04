@@ -59,7 +59,7 @@ fn every_builtin_interface_declaration_names_a_registry_native() {
     let decls = compiler::builtin_natives::decls();
     assert!(decls.len() > 25, "the interface file parsed: {}", decls.len());
     for decl in decls {
-        if matches!(decl.name.as_str(), "__task_any" | "assert" | "assert_eq") {
+        if matches!(decl.name.as_str(), "__task_any" | "__task_pin" | "assert" | "assert_eq") {
             continue;
         }
         let name = compiler::builtin_natives::registry_name(&decl.name);

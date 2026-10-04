@@ -1,12 +1,15 @@
-//! `std.sys.path` through `mote run`.
+//! The `path` package through `mote run`.
+
+mod common;
 
 use std::process::Command;
 
 fn run(name: &str, body: &str) -> String {
     let dir = std::env::temp_dir().join(format!("mote_path_{name}_{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
+    common::install_package(&dir, "path");
     let source = format!(
-        "import std.sys.path as path\n\nfn show(o: Option<String>) {{\n    match o {{\n        Some(v) => {{ println(v) }}\n        None => {{ println(\"none\") }}\n    }}\n}}\n{body}"
+        "import path\n\nfn show(o: Option<String>) {{\n    match o {{\n        Some(v) => {{ println(v) }}\n        None => {{ println(\"none\") }}\n    }}\n}}\n{body}"
     );
     std::fs::write(dir.join("main.mote"), source).unwrap();
     let out = Command::new(env!("CARGO_BIN_EXE_mote")).arg("run").arg(dir.join("main.mote")).output().unwrap();

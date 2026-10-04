@@ -20,7 +20,7 @@ fn run(body: &str, tag: &str) -> Vec<String> {
     std::fs::remove_dir_all(&dir).ok();
     let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
     assert!(out.status.success(), "{text}");
-    text.lines().filter(|l| !l.starts_with("GC:")).map(String::from).collect()
+    text.lines().map(String::from).collect()
 }
 
 fn allocations(source: &str, tag: &str) -> usize {
@@ -44,7 +44,7 @@ fn run_with(defs: &str, body: &str, tag: &str) -> Vec<String> {
     std::fs::remove_dir_all(&dir).ok();
     let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
     assert!(out.status.success(), "{text}");
-    text.lines().filter(|l| !l.starts_with("GC:")).map(String::from).collect()
+    text.lines().map(String::from).collect()
 }
 
 fn objects_with(defs: &str, body: &str, tag: &str) -> usize {
@@ -231,7 +231,7 @@ fn run_src(source: &str, tag: &str) -> Vec<String> {
     std::fs::remove_dir_all(&dir).ok();
     let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
     assert!(out.status.success(), "{text}");
-    text.lines().filter(|l| !l.starts_with("GC:")).map(String::from).collect()
+    text.lines().map(String::from).collect()
 }
 
 fn user_objects(source: &str, tag: &str) -> usize {

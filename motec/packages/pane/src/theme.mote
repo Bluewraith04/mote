@@ -1,0 +1,204 @@
+/// pane.theme — the colors and shapes every element takes its look from, with three presets.
+
+import std.sys.gui as gui
+import { min } from std.math
+
+/// What an element is for; the theme gives each role its look.
+pub enum Role {
+    Plain
+    Text
+    Heading(Float)
+    Button
+    Input
+    Item
+    Chosen
+    Check
+    Checked
+    Bar
+    Caption
+    CaptionClose
+    Dot(Int)
+}
+
+fn tint(c: Int, pct: Int) -> Int {
+    let r = min(255, ((c >> 24) & 0xff) * pct / 100)
+    let g = min(255, ((c >> 16) & 0xff) * pct / 100)
+    let b = min(255, ((c >> 8) & 0xff) * pct / 100)
+    return (r << 24) | (g << 16) | (b << 8) | (c & 0xff)
+}
+
+/// The colors (`0xRRGGBBAA`) and corner radius of a window; `light`, `dark` and `contrast` are the presets.
+pub class Theme {
+    var fg: Int
+    var back: Int
+    var panel: Int
+    var soft: Int
+    var line: Int
+    var brand: Int
+    var on_brand: Int
+    var round: Float
+    pub var hover: Int
+    pub var press: Int
+
+    fn copy(self) -> Theme {
+        return Theme { fg: self.fg, back: self.back, panel: self.panel, soft: self.soft, line: self.line, brand: self.brand, on_brand: self.on_brand, round: self.round, hover: self.hover, press: self.press }
+    }
+
+    /// The text color.
+    pub fn ink(self, c: Int) -> Theme {
+        var t = self.copy()
+        t.fg = c
+        return t
+    }
+
+    /// The window's background.
+    pub fn page(self, c: Int) -> Theme {
+        var t = self.copy()
+        t.back = c
+        return t
+    }
+
+    /// The fill of inputs and checkboxes.
+    pub fn surface(self, c: Int) -> Theme {
+        var t = self.copy()
+        t.panel = c
+        return t
+    }
+
+    /// The fill of choices that are not selected.
+    pub fn quiet(self, c: Int) -> Theme {
+        var t = self.copy()
+        t.soft = c
+        return t
+    }
+
+    /// The border of inputs and checkboxes.
+    pub fn border(self, c: Int) -> Theme {
+        var t = self.copy()
+        t.line = c
+        return t
+    }
+
+    /// The color of buttons and of the selected choice.
+    pub fn accent(self, c: Int) -> Theme {
+        var t = self.copy()
+        t.brand = c
+        return t
+    }
+
+    /// The text color on the accent.
+    pub fn accent_ink(self, c: Int) -> Theme {
+        var t = self.copy()
+        t.on_brand = c
+        return t
+    }
+
+    /// The corner radius of buttons, inputs and choices, in pixels.
+    pub fn radius(self, px: Float) -> Theme {
+        var t = self.copy()
+        t.round = px
+        return t
+    }
+
+    /// How much a pressable color is scaled under the pointer and when pressed, in percent; under 100 darkens, over 100 lightens.
+    pub fn shading(self, hover_pct: Int, press_pct: Int) -> Theme {
+        var t = self.copy()
+        t.hover = hover_pct
+        t.press = press_pct
+        return t
+    }
+
+    /// The color a pressable role is filled with, or -1 for a role that is not pressable.
+    pub fn fill(self, role: Role) -> Int {
+        match role {
+            Role.Button => { return self.brand }
+            Role.Chosen => { return self.brand }
+            Role.Item => { return self.soft }
+            Role.Caption => { return self.soft }
+            Role.CaptionClose => { return self.soft }
+            Role.Dot(c) => { return c }
+            _ => { return -1 }
+        }
+    }
+
+    /// The color a pressable role takes under the pointer; the close caption goes red.
+    pub fn hover_of(self, role: Role, fill: Int) -> Int {
+        match role {
+            Role.CaptionClose => { return 0xe81123ff }
+            _ => { return tint(fill, self.hover) }
+        }
+    }
+
+    /// The color a pressable role takes when pressed.
+    pub fn press_of(self, role: Role, fill: Int) -> Int {
+        match role {
+            Role.CaptionClose => { return 0xb30f1cff }
+            _ => { return tint(fill, self.press) }
+        }
+    }
+
+    /// The style of a role before an element's own modifiers.
+    pub fn look(self, role: Role) -> gui.Style {
+        let base = gui.style().color(self.fg).shrink(0.0)
+        match role {
+            Role.Plain => { return gui.style().shrink(0.0) }
+            Role.Text => { return base.font_size(16.0) }
+            Role.Heading(px) => { return base.font_size(px).font_weight(700) }
+            Role.Button => {
+                return base.color(self.on_brand).background(self.brand).radius(self.round).padding_sides(8.0, 16.0, 8.0, 16.0).align_self(gui.Align.Start)
+            }
+            Role.Input => {
+                return base.width(gui.Size.Pct(100.0)).height(gui.Size.Px(38.0)).padding(8.0).border(1.0, self.line).radius(self.round).background(self.panel)
+            }
+            Role.Item => {
+                return base.background(self.soft).radius(self.round).padding_sides(8.0, 12.0, 8.0, 12.0).align_self(gui.Align.Stretch)
+            }
+            Role.Chosen => {
+                return base.color(self.on_brand).background(self.brand).radius(self.round).padding_sides(8.0, 12.0, 8.0, 12.0).align_self(gui.Align.Stretch)
+            }
+            Role.Check => {
+                return base.width(gui.Size.Px(20.0)).height(gui.Size.Px(20.0)).border(2.0, self.line).radius(self.round / 2.0).background(self.panel)
+            }
+            Role.Checked => {
+                return base.width(gui.Size.Px(20.0)).height(gui.Size.Px(20.0)).border(2.0, self.brand).radius(self.round / 2.0).background(self.brand)
+            }
+            Role.Bar => {
+                return base.direction(gui.Direction.Row).align_items(gui.Align.Center).height(gui.Size.Px(36.0)).background(self.soft)
+            }
+            Role.Caption => {
+                return base.font_size(16.0).width(gui.Size.Px(46.0)).height(gui.Size.Px(36.0)).background(self.soft).align_items(gui.Align.Center).justify(gui.Align.Center).text_align(gui.TextAlign.Center)
+            }
+            Role.CaptionClose => {
+                return base.font_size(16.0).width(gui.Size.Px(46.0)).height(gui.Size.Px(36.0)).background(self.soft).align_items(gui.Align.Center).justify(gui.Align.Center).text_align(gui.TextAlign.Center)
+            }
+            Role.Dot(c) => {
+                return base.width(gui.Size.Px(13.0)).height(gui.Size.Px(13.0)).radius(7.0).background(c)
+            }
+        }
+    }
+
+    /// The style of the window's root: a padded column on the page color.
+    pub fn root(self) -> gui.Style {
+        return gui.style().direction(gui.Direction.Column).width(gui.Size.Pct(100.0)).height(gui.Size.Pct(100.0)).padding(16.0).background(self.back)
+    }
+
+    /// The style of the window's root when pane draws the title bar: a column with no padding, so the bar reaches the edges.
+    pub fn framed_root(self) -> gui.Style {
+        return gui.style().direction(gui.Direction.Column).width(gui.Size.Pct(100.0)).height(gui.Size.Pct(100.0)).background(self.back)
+    }
+}
+
+/// Dark text on a light page, a blue accent; the default.
+pub fn light() -> Theme {
+    return Theme { fg: 0x1f2937ff, back: 0xf4f5f7ff, panel: 0xffffffff, soft: 0xe5e7ebff, line: 0xc4c9d0ff, brand: 0x2563ebff, on_brand: 0xffffffff, round: 6.0, hover: 90, press: 78 }
+}
+
+/// Light text on a dark page, a lighter blue accent.
+pub fn dark() -> Theme {
+    return Theme { fg: 0xe5e7ebff, back: 0x111827ff, panel: 0x1f2937ff, soft: 0x374151ff, line: 0x4b5563ff, brand: 0x3b82f6ff, on_brand: 0xffffffff, round: 6.0, hover: 115, press: 135 }
+}
+
+/// White on black with a yellow accent and square corners, for legibility.
+pub fn contrast() -> Theme {
+    return Theme { fg: 0xffffffff, back: 0x000000ff, panel: 0x000000ff, soft: 0x262626ff, line: 0xffffffff, brand: 0xffd60aff, on_brand: 0x000000ff, round: 2.0, hover: 85, press: 70 }
+}

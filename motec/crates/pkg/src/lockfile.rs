@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 use crate::resolver::ResolvedPackage;
@@ -12,6 +13,9 @@ pub struct LockedPackage {
     pub source: String,
     #[serde(default)]
     pub checksum: Option<String>,
+    /// For a package with native libraries: the checksum of each `native/<triple>/` directory.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub native: BTreeMap<String, String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -40,6 +44,7 @@ impl Lockfile {
                 version: r.version.clone(),
                 source: r.source.clone(),
                 checksum: None,
+                native: BTreeMap::new(),
             })
             .collect();
         Self::new(pkgs)

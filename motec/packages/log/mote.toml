@@ -1,0 +1,8 @@
+[package]
+name = "log"
+version = "0.1.0"
+authors = ["Mote"]
+edition = "2026"
+entry = "src/lib.mote"
+
+[dependencies]

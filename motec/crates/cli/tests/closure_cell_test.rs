@@ -25,6 +25,12 @@ fn a_returned_counter_keeps_its_state() {
 }
 
 #[test]
+fn a_captured_local_wins_over_a_function_of_the_same_name() {
+    let src = "fn at(x: Int) -> Int {\n    return x\n}\nfn make(n: Int) -> () -> Int {\n    let at = n + 1\n    return || { return at }\n}\nfn main() {\n    println(make(4)())\n    println(at(2))\n}\n";
+    assert_eq!(run(src, "shadow_fn"), "5\n2\n");
+}
+
+#[test]
 fn nested_lambdas_share_one_cell() {
     let src = "fn main() {\n    var total = 0\n    let outer = || {\n        let inner = || { total += 5 }\n        inner()\n        total += 1\n    }\n    outer()\n    println(total)\n}\n";
     assert_eq!(run(src, "nested"), "6\n");

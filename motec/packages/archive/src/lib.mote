@@ -1,0 +1,167 @@
+/// archive — tar and zip over a Rust library the package carries.
+///
+/// An archive is read or written whole as `Bytes`, as a list of `Entry`. A directory is an entry whose name ends in `/`.
+/// Names must stay inside the archive's own directory: no leading `/`, no `\`, no `..`. Unpacking stops with an `Err` past 1 GiB.
+
+import std.sys.fs as fs
+import { open_package, bind } from std.dev.libtools
+
+/// A file (its `data`) or a directory (a name ending in `/`, empty `data`) in an archive.
+pub class Entry {
+    pub name: String
+    pub data: Bytes
+
+    pub fn is_dir(self) -> Bool { return self.name.ends_with("/") }
+}
+
+/// A file entry.
+pub fn file(name: String, data: Bytes) -> Entry {
+    return Entry { name: name, data: data }
+}
+
+/// A directory entry; the trailing `/` is added.
+pub fn dir(name: String) -> Entry {
+    return Entry { name: name + "/", data: Bytes() }
+}
+
+fn text_of(b: Bytes) -> String {
+    match b.decode() {
+        Some(s) => { return s }
+        None => { return "" }
+    }
+}
+
+fn fail(out: Bytes, n: Int) -> Error {
+    var shown = 0 - n
+    if shown > out.len() { shown = out.len() }
+    return Error.new(ErrorKind.InvalidData, text_of(out.slice(0, shown)))
+}
+
+/// The entries as frames: `<name length> <data length>\n`, the name, then the data.
+fn frames(entries: List<Entry>) -> Bytes {
+    var out = Bytes()
+    for e in entries {
+        out.extend((e.name.len().to_string() + " " + e.data.len().to_string() + "\n" + e.name).bytes())
+        out.extend(e.data)
+    }
+    return out
+}
+
+fn entries_of(b: Bytes) -> List<Entry> {
+    var out: List<Entry> = []
+    var at = 0
+    while at < b.len() {
+        var name_len = 0
+        while b[at] != 32 {
+            name_len = name_len * 10 + (b[at] - 48)
+            at = at + 1
+        }
+        at = at + 1
+        var data_len = 0
+        while b[at] != 10 {
+            data_len = data_len * 10 + (b[at] - 48)
+            at = at + 1
+        }
+        at = at + 1
+        out.push(Entry { name: text_of(b.slice(at, at + name_len)), data: b.slice(at + name_len, at + name_len + data_len) })
+        at = at + name_len + data_len
+    }
+    return out
+}
+
+/// Calls the library function `name` on `input` (with `level` when it takes one), calling again with a larger buffer when the answer did not fit.
+fn run(name: String, input: Bytes, level: Int) -> Result<Bytes, Error> {
+    let lib = open_package("archive", "mote_archive")?
+    var out = Bytes(input.len() + 4096)
+    var n = 0
+    if level < 0 {
+        let f = bind<(Bytes, Int, Bytes, Int) -> Int>(lib, name)?
+        n = f(input, input.len(), out, out.len())
+        if n > out.len() {
+            out = Bytes(n)
+            n = f(input, input.len(), out, out.len())
+        }
+    } else {
+        let f = bind<(Bytes, Int, Bytes, Int, Int) -> Int>(lib, name)?
+        n = f(input, input.len(), out, out.len(), level)
+        if n > out.len() {
+            out = Bytes(n)
+            n = f(input, input.len(), out, out.len(), level)
+        }
+    }
+    if n < 0 { return Err(fail(out, n)) }
+    return Ok(out.slice(0, n))
+}
+
+/// A tar archive of `entries`; times are zero, so the same entries give the same bytes.
+pub fn pack_tar(entries: List<Entry>) -> Result<Bytes, Error> {
+    return run("mote_tar_pack", frames(entries), -1)
+}
+
+/// The files and directories of a tar archive; links and devices are skipped.
+pub fn unpack_tar(b: Bytes) -> Result<List<Entry>, Error> {
+    let flat = run("mote_tar_unpack", b, -1)?
+    return Ok(entries_of(flat))
+}
+
+/// A zip archive of `entries`, deflated at level 6.
+pub fn pack_zip(entries: List<Entry>) -> Result<Bytes, Error> {
+    return run("mote_zip_pack", frames(entries), 6)
+}
+
+/// The files and directories of a zip archive.
+pub fn unpack_zip(b: Bytes) -> Result<List<Entry>, Error> {
+    let flat = run("mote_zip_unpack", b, -1)?
+    return Ok(entries_of(flat))
+}
+
+fn bad_name(name: String) -> Bool {
+    if name.len() == 0 || name.starts_with("/") || name.contains("\\") { return true }
+    for part in name.split("/") {
+        if part == ".." { return true }
+    }
+    return false
+}
+
+fn collect(root: String, prefix: String, var out: List<Entry>) -> Result<Null, Error> {
+    for name in fs.list_dir(root + "/" + prefix)? {
+        let rel = prefix + name
+        let info = fs.stat(root + "/" + rel)?
+        if info.is_dir() {
+            out.push(dir(rel))
+            collect(root, rel + "/", out)?
+        } else {
+            out.push(file(rel, fs.read_bytes(root + "/" + rel)?))
+        }
+    }
+    return Ok(null)
+}
+
+/// Every file and directory under `path` as entries named relative to it, in sorted order, directories before their contents.
+pub fn read_dir(path: String) -> Result<List<Entry>, Error> {
+    var out: List<Entry> = []
+    collect(path, "", out)?
+    return Ok(out)
+}
+
+/// Writes `entries` under `dir_path`, creating it and any directories; an unsafe name is an `Err` and nothing after it is written.
+pub fn extract(entries: List<Entry>, dir_path: String) -> Result<Null, Error> {
+    for e in entries {
+        if bad_name(e.name) { return Err(Error.new(ErrorKind.InvalidData, "unsafe entry name ${e.name}")) }
+    }
+    fs.create_dir_all(dir_path)?
+    for e in entries {
+        let target = dir_path + "/" + e.name
+        if e.is_dir() {
+            fs.create_dir_all(target)?
+        } else {
+            let slash = target.rfind("/")
+            match slash {
+                Some(at) => { fs.create_dir_all(target.slice(0, at))? }
+                None => {}
+            }
+            fs.write_bytes(target, e.data)?
+        }
+    }
+    return Ok(null)
+}

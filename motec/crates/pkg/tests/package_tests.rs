@@ -161,7 +161,7 @@ fn test_package_manager_cli_commands() {
     assert!(temp.join("src").join("main.mote").exists());
 
     let err = PackageManager::add_dependency(&temp, "logger@^1.0.0").unwrap_err();
-    assert!(err.contains("no registry is configured") && err.contains("MOTE_REGISTRY"), "{err}");
+    assert!(err.contains("not a git repository"), "{err}");
     let manifest = PackageManifest::from_file(&temp.join("mote.toml")).unwrap();
     assert!(!manifest.dependencies.contains_key("logger"));
 
@@ -173,7 +173,6 @@ fn test_package_manager_cli_commands() {
     assert!(bytecode_artifact.exists());
 
     assert!(PackageManager::package(&temp).unwrap().ends_with("dist/test-project-0.1.0.mpk"));
-    assert!(PackageManager::publish(&temp).is_err());
 
     fs::remove_dir_all(temp).ok();
 }
@@ -249,7 +248,7 @@ fn test_bundle_program_embeds_a_prebuilt_program() {
 
     let (_mbc, compiled) = PackageManager::compile_program(&temp).unwrap();
     let out = temp.join("app.bin");
-    pkg::StandaloneBundler::bundle_program(&compiled, &out).unwrap();
+    pkg::StandaloneBundler::bundle_program(&compiled, &out, &|_| 0).unwrap();
     assert!(out.exists());
 
     let raw = fs::read(&out).unwrap();

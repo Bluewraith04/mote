@@ -1,10 +1,14 @@
-//! `std.data.toml`.
+//! The package `toml`.
+
+mod common;
 
 use std::process::Command;
 
 fn run(source: &str, tag: &str) -> String {
     let dir = std::env::temp_dir().join(format!("mote_toml_{}_{}", tag, std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
     std::fs::create_dir_all(&dir).unwrap();
+    common::install_native_packages(&dir, &["toml"]);
     std::fs::write(dir.join("main.mote"), source).unwrap();
     let out = Command::new(env!("CARGO_BIN_EXE_mote")).arg("run").arg(dir.join("main.mote")).output().unwrap();
     std::fs::remove_dir_all(&dir).ok();
@@ -30,7 +34,7 @@ fn lit(s: &str) -> String {
     out
 }
 
-const HEAD: &str = r#"import std.data.toml as toml
+const HEAD: &str = r#"import toml as toml
 import std.data.json as json
 
 fn show(src: String) {

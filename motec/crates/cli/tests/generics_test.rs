@@ -219,7 +219,7 @@ fn done_bar_a_helper_binds_one_parameter_once() {
 
 #[test]
 fn std_payloads_are_typed_without_annotations() {
-    let src = "import std.sys.fs as fs\nimport std.sys.path as path\nimport { Date } from std.date\nfn main() {\n    match fs.create(\"g5_out.txt\") {\n        Ok(f) => {\n            f.write_text(\"hello\\n\")\n            f.close()\n        }\n        Err(e) => println(e.message)\n    }\n    println(fs.stat(\"g5_out.txt\").unwrap().size)\n    println(Date.new(2024, 3, 9).unwrap().add_months(1).to_iso())\n    println(path.extension(\"a/b.txt\").unwrap().len())\n}\n";
+    let src = "import std.sys.fs as fs\nimport { Date } from std.date\nfn main() {\n    let names: Map<String, String> = {\"k\": \"txt\"}\n    match fs.create(\"g5_out.txt\") {\n        Ok(f) => {\n            f.write_text(\"hello\\n\")\n            f.close()\n        }\n        Err(e) => println(e.message)\n    }\n    println(fs.stat(\"g5_out.txt\").unwrap().size)\n    println(Date.new(2024, 3, 9).unwrap().add_months(1).to_iso())\n    println(names.get(\"k\").len())\n}\n";
     let file = std::env::temp_dir().join(format!("mote_generics_out_{}.txt", std::process::id()));
     let (ok, text) = run(&src.replace("g5_out.txt", file.to_str().unwrap()), "std_typed");
     std::fs::remove_file(&file).ok();

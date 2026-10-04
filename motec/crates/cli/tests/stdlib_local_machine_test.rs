@@ -1,17 +1,20 @@
 //! Builds a directory, writes a script, runs it as a child, streams its output back through a file handle and cleans up.
 #![cfg(unix)]
 
+mod common;
+
 use std::process::Command;
 
 #[test]
 fn a_program_drives_the_local_machine() {
     let dir = std::env::temp_dir().join(format!("mote_phase_d_{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
+    common::install_package(&dir, "path");
     let work = dir.join("work");
     let source = format!(
         r#"import std.sys.fs
 import std.sys.io
-import std.sys.path as path
+import path
 import std.sys.process as process
 import {{ File, Stat }} from std.sys.fs
 import {{ Output }} from std.sys.process

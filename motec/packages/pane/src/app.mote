@@ -1,0 +1,315 @@
+/// pane.app — draws a view on a window, redraws it after each event, and runs it.
+
+import std.task as task
+import std.sys.gui as gui
+import .element
+import .theme
+import .chrome
+
+/// What the window holds for an element: its node, key, the text and image the view last gave it, the children under it and the handlers last given.
+/// An input is rewritten only when the view's text changed, so typing the state has not yet heard of survives a redraw.
+class Mounted<S> {
+    node: gui.Node
+    kind: gui.Kind
+    key: String
+    shown: String
+    png: Bytes
+    kids: List<Mounted<S>>
+    click: List<(var S) -> Null>
+    change: List<(var S, String) -> Null>
+    submit: List<(var S) -> Null>
+    act: element.Action
+}
+
+fn has_text(k: gui.Kind) -> Bool { return k == gui.Kind.Text || k == gui.Kind.Button || k == gui.Kind.Input }
+
+fn look_id<S>(win: gui.Window, th: theme.Theme, e: element.Element<S>) -> Result<gui.StyleId, Error> {
+    var look = th.look(e.role)
+    var fill = th.fill(e.role)
+    if e.fill >= 0 {
+        fill = e.fill
+        look = look.background(fill)
+    }
+    for f in e.edits { look = f(look) }
+    if fill < 0 { return win.style(look) }
+    let hover = win.style(look.background(th.hover_of(e.role, fill)))?
+    let held = win.style(look.background(th.press_of(e.role, fill)))?
+    return win.style(look.hover(hover).pressed(held))
+}
+
+fn update<S>(win: gui.Window, th: theme.Theme, m: Mounted<S>, e: element.Element<S>) -> Result<Mounted<S>, Error> {
+    win.set_style(m.node, look_id(win, th, e)?)?
+    if has_text(e.kind) && (e.kind != gui.Kind.Input || e.text != m.shown) { win.set_text(m.node, e.text)? }
+    if e.kind == gui.Kind.Image && e.png != m.png { win.set_image(m.node, e.png)? }
+    let kids = sync(win, th, m.node, e.kids, m.kids)?
+    return Ok(Mounted { node: m.node, kind: e.kind, key: e.id, shown: e.text, png: e.png, kids: kids, click: e.click, change: e.change, submit: e.submit, act: e.act })
+}
+
+fn build<S>(win: gui.Window, th: theme.Theme, parent: gui.Node, e: element.Element<S>) -> Result<Mounted<S>, Error> {
+    let node = win.add(parent, e.kind)?
+    return update(win, th, Mounted { node: node, kind: e.kind, key: e.id, shown: "", png: Bytes(0), kids: [], click: [], change: [], submit: [], act: element.Action.Nothing }, e)
+}
+
+/// The index of the old child a new one continues: the one with its key, or the unkeyed one at its own position, of the same kind.
+fn match_old<S>(k: element.Element<S>, at: Int, old: List<Mounted<S>>, keyed: Map<String, Int>, used: List<Bool>) -> Int {
+    if k.id != "" {
+        let j = keyed.get_or(k.id, -1)
+        if j >= 0 && !used.get(j) && old.get(j).kind == k.kind { return j }
+        return -1
+    }
+    if at < old.len() && old.get(at).key == "" && !used.get(at) && old.get(at).kind == k.kind { return at }
+    return -1
+}
+
+fn same_order(a: List<Int>, b: List<Int>) -> Bool {
+    var i = 0
+    while i < a.len() {
+        if a.get(i) != b.get(i) { return false }
+        i = i + 1
+    }
+    return true
+}
+
+fn sync<S>(win: gui.Window, th: theme.Theme, parent: gui.Node, kids: List<element.Element<S>>, old: List<Mounted<S>>) -> Result<List<Mounted<S>>, Error> {
+    var keyed: Map<String, Int> = {}
+    var used: List<Bool> = []
+    var i = 0
+    while i < old.len() {
+        if old.get(i).key != "" { keyed.set(old.get(i).key, i) }
+        used.push(false)
+        i = i + 1
+    }
+    var pick: List<Int> = []
+    i = 0
+    while i < kids.len() {
+        let j = match_old(kids.get(i), i, old, keyed, used)
+        if j >= 0 { used.set(j, true) }
+        pick.push(j)
+        i = i + 1
+    }
+    var current: List<Int> = []
+    i = 0
+    while i < old.len() {
+        if used.get(i) { current.push(old.get(i).node.id) } else { win.remove(old.get(i).node)? }
+        i = i + 1
+    }
+    var out: List<Mounted<S>> = []
+    var order: List<Int> = []
+    i = 0
+    while i < kids.len() {
+        let j = pick.get(i)
+        if j >= 0 {
+            out.push(update(win, th, old.get(j), kids.get(i))?)
+        } else {
+            out.push(build(win, th, parent, kids.get(i))?)
+            current.push(out.get(i).node.id)
+        }
+        order.push(out.get(i).node.id)
+        i = i + 1
+    }
+    if !same_order(current, order) {
+        i = out.len() - 1
+        while i >= 0 {
+            if i == out.len() - 1 { win.move_before(out.get(i).node, None)? } else { win.move_before(out.get(i).node, Some(out.get(i + 1).node))? }
+            i = i - 1
+        }
+    }
+    return Ok(out)
+}
+
+/// The mounted elements from a root down to the node `id`, or none.
+fn chain<S>(ms: List<Mounted<S>>, id: Int) -> List<Mounted<S>> {
+    for m in ms {
+        if m.node.id == id { return [m] }
+        let inner = chain(m.kids, id)
+        if inner.len() > 0 {
+            var out = [m]
+            for x in inner { out.push(x) }
+            return out
+        }
+    }
+    return []
+}
+
+/// A view on a window: where the state comes from, the function that draws it, and what is on screen.
+pub class App<S> {
+    win: gui.Window
+    var state: S
+    fetch: List<() -> S>
+    apply: List<((var S) -> Null) -> Null>
+    view: (S) -> element.Element<S>
+    th: theme.Theme
+    ch: chrome.Chrome
+    title: String
+    var roots: List<Mounted<S>>
+
+    /// The window the app draws in, for `std.sys.gui` calls such as `png` and `input`.
+    pub fn window(self) -> gui.Window { return self.win }
+
+    /// Draws the view of the current state.
+    pub fn render(var self) -> Result<Null, Error> {
+        let draw = self.view
+        var content: List<element.Element<S>> = []
+        for pull in self.fetch { content.push(draw(pull())) }
+        if content.len() == 0 { content.push(draw(self.state)) }
+        let root = chrome.frame(self.ch, self.title, content.get(0))
+        self.roots = sync(self.win, self.th, self.win.root(), root, self.roots)?
+        self.win.present()?
+        return Ok(null)
+    }
+
+    fn handle(var self, h: (var S) -> Null) {
+        if self.apply.len() > 0 {
+            let run_on = self.apply.get(0)
+            run_on(h)
+        } else {
+            h(self.state)
+        }
+    }
+
+    /// Handles one window event and redraws; answers `false` once the window closes.
+    pub fn step(var self, e: gui.UiEvent) -> Result<Bool, Error> {
+        match e {
+            gui.UiEvent.Click(n) => {
+                let up = chain(self.roots, n.id)
+                var i = up.len() - 1
+                while i >= 0 {
+                    let hs = up.get(i).click
+                    if hs.len() > 0 {
+                        for h in hs { self.handle(h) }
+                        break
+                    }
+                    match up.get(i).act {
+                        element.Action.Minimize => {
+                            self.win.minimize()?
+                            break
+                        }
+                        element.Action.Maximize => {
+                            self.win.toggle_maximize()?
+                            break
+                        }
+                        element.Action.Close => {
+                            self.win.close()?
+                            return Ok(false)
+                        }
+                        _ => { }
+                    }
+                    i = i - 1
+                }
+            }
+            gui.UiEvent.PointerDown(n, x, y) => {
+                let up = chain(self.roots, n.id)
+                var i = up.len() - 1
+                while i >= 0 {
+                    match up.get(i).act {
+                        element.Action.Move => {
+                            self.win.drag()?
+                            break
+                        }
+                        element.Action.Resize(edge) => {
+                            self.win.drag_resize(edge_of(edge))?
+                            break
+                        }
+                        _ => { }
+                    }
+                    i = i - 1
+                }
+                return Ok(true)
+            }
+            gui.UiEvent.PointerUp(n, x, y) => { return Ok(true) }
+            gui.UiEvent.PointerMove(n, x, y) => { return Ok(true) }
+            gui.UiEvent.Changed(n) => {
+                let typed = self.win.text(n)?
+                let up = chain(self.roots, n.id)
+                if up.len() > 0 {
+                    for h in up.get(up.len() - 1).change { self.handle(|var s| { h(s, typed) }) }
+                }
+            }
+            gui.UiEvent.Submit(n) => {
+                let up = chain(self.roots, n.id)
+                if up.len() > 0 {
+                    for h in up.get(up.len() - 1).submit { self.handle(h) }
+                }
+            }
+            gui.UiEvent.Close => {
+                self.win.close()?
+                return Ok(false)
+            }
+            _ => { }
+        }
+        self.render()?
+        return Ok(true)
+    }
+
+    /// Handles events until the window closes.
+    pub fn run(var self) -> Result<Null, Error> {
+        for e in self.win.events() {
+            let open = self.step(e)?
+            if !open { return Ok(null) }
+        }
+        return Ok(null)
+    }
+}
+
+/// An app on a window you made, drawn once in the `light` theme; drive it with `step` or `run`.
+pub fn mount<S>(win: gui.Window, state: S, view: (S) -> element.Element<S>) -> Result<App<S>, Error> {
+    return mount_themed(win, state, view, theme.light())
+}
+
+/// As `mount`, in the theme `th`.
+pub fn mount_themed<S>(win: gui.Window, state: S, view: (S) -> element.Element<S>, th: theme.Theme) -> Result<App<S>, Error> {
+    return mount_chrome(win, state, view, th, chrome.system(), "")
+}
+
+/// As `mount_themed`, with the frame `ch`; `title` is what a bar drawn by pane shows, and the system frame is turned off when pane draws one.
+pub fn mount_chrome<S>(win: gui.Window, state: S, view: (S) -> element.Element<S>, th: theme.Theme, ch: chrome.Chrome, title: String) -> Result<App<S>, Error> {
+    return start(win, state, view, th, ch, title, [], [])
+}
+
+/// An app whose state comes from `fetch` before each draw and is changed by handing a handler to `apply`, with `own` as the state until then; `pane.shared` builds on it.
+pub fn mount_source<S>(win: gui.Window, own: S, view: (S) -> element.Element<S>, th: theme.Theme, fetch: () -> S, apply: ((var S) -> Null) -> Null) -> Result<App<S>, Error> {
+    return start(win, own, view, th, chrome.system(), "", [fetch], [apply])
+}
+
+fn start<S>(win: gui.Window, state: S, view: (S) -> element.Element<S>, th: theme.Theme, ch: chrome.Chrome, title: String, fetch: List<() -> S>, apply: List<((var S) -> Null) -> Null>) -> Result<App<S>, Error> {
+    if ch.drawn() {
+        win.set_frame(false)?
+        win.set_style(win.root(), win.style(th.framed_root())?)?
+    } else {
+        win.set_style(win.root(), win.style(th.root())?)?
+    }
+    var app = App { win: win, state: state, fetch: fetch, apply: apply, view: view, th: th, ch: ch, title: title, roots: [] }
+    app.render()?
+    return Ok(app)
+}
+
+fn edge_of(code: Int) -> gui.Edge {
+    match code {
+        0 => { return gui.Edge.North }
+        1 => { return gui.Edge.South }
+        2 => { return gui.Edge.East }
+        3 => { return gui.Edge.West }
+        4 => { return gui.Edge.NorthEast }
+        5 => { return gui.Edge.NorthWest }
+        6 => { return gui.Edge.SouthEast }
+        _ => { return gui.Edge.SouthWest }
+    }
+}
+
+/// Opens a window and runs `view` over `state` until the window closes; the state is a class whose fields the handlers change.
+pub fn run<S>(title: String, state: S, view: (S) -> element.Element<S>, width: Int = 480, height: Int = 640) -> Result<Null, Error> {
+    return run_chrome(title, state, view, theme.light(), chrome.system(), width, height)
+}
+
+/// As `run`, in the theme `th`.
+pub fn run_themed<S>(title: String, state: S, view: (S) -> element.Element<S>, th: theme.Theme, width: Int = 480, height: Int = 640) -> Result<Null, Error> {
+    return run_chrome(title, state, view, th, chrome.system(), width, height)
+}
+
+/// As `run_themed`, with the frame `ch`: the system's own or a title bar pane draws.
+pub fn run_chrome<S>(title: String, state: S, view: (S) -> element.Element<S>, th: theme.Theme, ch: chrome.Chrome, width: Int = 480, height: Int = 640) -> Result<Null, Error> {
+    task.pin()
+    let win = gui.open(title, width, height)?
+    var app = mount_chrome(win, state, view, th, ch, title)?
+    return app.run()
+}

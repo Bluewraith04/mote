@@ -30,14 +30,22 @@ impl Runtime {
         overflow: Overflow,
         decode: SourceDecode,
     ) -> Result<Value, String> {
-        let platform = self.platform.clone().ok_or("no platform installed")?;
+        let platform = match request {
+            SourceRequest::Custom(_) => None,
+            _ => Some(self.platform.clone().ok_or("no platform installed")?),
+        };
         let (sink, queue) = event_queue(capacity.max(1), overflow);
         let (channel, channel_id, state) = self.register_source(queue, decode);
-        match platform.open_source(request, sink) {
+        let started = match (request, platform) {
+            (SourceRequest::Custom(start), _) => (start.0)(sink),
+            (request, Some(platform)) => platform.open_source(request, sink).map_err(|e| e.message),
+            (_, None) => Err("no platform installed".to_string()),
+        };
+        match started {
             Ok(handle) => *state.handle.lock().unwrap() = Some(handle),
-            Err(e) => {
+            Err(message) => {
                 self.sources.lock().unwrap().remove(&channel_id);
-                return Err(e.message);
+                return Err(message);
             }
         }
         Ok(channel)
@@ -47,7 +55,7 @@ impl Runtime {
         let mut channel = alloc_channel(self, queue.capacity());
         // SAFETY: `alloc_channel` initialised every slot.
         let channel_id = unsafe { channel.as_mut().get_field(CHAN_SLOT_ID) }.as_uint().unwrap_or(0);
-        let (sched, cv) = (self.sched.clone(), self.sched_cv.clone());
+        let (sched, wake) = (self.sched.clone(), self.wake.clone());
         queue.set_waker(Arc::new(move || {
             let mut st = sched.lock().unwrap();
             let waiting: Vec<u64> = st.recv_waiters.remove(&channel_id).into_iter().flatten().collect();
@@ -55,7 +63,7 @@ impl Runtime {
                 st.wake_or_note_early(id);
             }
             drop(st);
-            cv.notify_all();
+            wake.all();
         }));
         let state = Arc::new(SourceState { queue, handle: Mutex::new(None), decode });
         self.sources.lock().unwrap().insert(channel_id, state.clone());

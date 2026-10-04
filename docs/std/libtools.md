@@ -17,6 +17,7 @@ This prints `1024.0`. The run must allow native libraries: `mote run --allow-nat
 | Function | Answers |
 |---|---|
 | `open(path)` | `Result<Library, Error>` |
+| `open_package(package, name)` | `Result<Library, Error>`; loads `lib<name>.so` (`.dylib`, `.dll`) that a package granted `native = true` carries, with no flag |
 | `bind<F>(lib, name)` | `Result<F, Error>`; a call runs on the scheduler's worker, about 1 µs |
 | `bind_blocking<F>(lib, name)` | the same, but a call runs on a helper thread while the task waits, about 60 µs |
 | `lib.close()` | drops the handle; bound functions keep working |
@@ -31,5 +32,7 @@ This prints `1024.0`. The run must allow native libraries: `mote run --allow-nat
 | `String` | `const char *`; as a result, copied out of the returned `char *` |
 | `Bytes` | `char *`, which C may write up to `len` |
 | `Null` | `void`, as a result only |
+
+A function shaped `fn(in, in_len, out, out_cap) -> Int` needs no pointer type: the caller allocates `out` as `Bytes(n)`, C writes into it and returns the length written, a length above `out_cap` (call again with a bigger buffer) or a negative error code with the message in `out`. The buffer stays valid for the whole call, `bind_blocking` included.
 
 Not supported: narrow or sized C types (write a small C wrapper over `int64_t` and `double`), pointer results, structs by value, variadic functions, callbacks into Mote, and Windows. The call is not checked: a wrong signature is undefined behaviour. A `bind` call that blocks holds its worker, so use `bind_blocking` for anything that may block. Cancelling a task takes effect once the C call returns.

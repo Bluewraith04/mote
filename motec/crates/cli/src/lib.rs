@@ -11,6 +11,7 @@ pub mod builtins;
 pub mod limits;
 pub mod memreport;
 pub mod memstats;
+pub mod standalone;
 
 pub use assembler::{Assembler, AssembledProgram};
 pub use parser::Parser;

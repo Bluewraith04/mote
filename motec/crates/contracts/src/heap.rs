@@ -52,9 +52,6 @@ pub const RELEASE_FILE: u8 = 1;
 pub const RELEASE_SOCKET: u8 = 2;
 pub const RELEASE_LIBRARY: u8 = 3;
 pub const RELEASE_GENERATOR: u8 = 4;
-/// A SQL database (the key is its id) or an open SQL transaction (the key is its token).
-pub const RELEASE_DATABASE: u8 = 5;
-pub const RELEASE_TRANSACTION: u8 = 6;
 
 /// A resource whose owning object the collector found unreachable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

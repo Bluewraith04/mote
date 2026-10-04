@@ -19,7 +19,7 @@ fn run(name: &str, source: &str) -> String {
     let out = Command::new(env!("CARGO_BIN_EXE_mote")).arg("run").arg(dir.join("main.mote")).output().unwrap();
     std::fs::remove_dir_all(&dir).ok();
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
-    String::from_utf8_lossy(&out.stdout).lines().filter(|l| !l.starts_with("GC:")).collect::<Vec<_>>().join("\n")
+    String::from_utf8_lossy(&out.stdout).lines().collect::<Vec<_>>().join("\n")
 }
 
 fn region_sites(name: &str, source: &str) -> usize {

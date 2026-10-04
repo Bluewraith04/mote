@@ -1,0 +1,410 @@
+/// sql — SQLite databases over a Rust library the package carries.
+///
+/// A `Database` holds only an id; one connection serves every task, a call at a time. A call runs on a helper thread while
+/// its task waits. Nothing closes a database or rolls back a transaction for you: use `with` (`with db = open(path)! { ... }`)
+/// or call `close()`. A value is a `Cell` (an Int, Float, String or Bytes) or `None` for SQL NULL.
+
+import std.math as math
+import std.string as strings
+import { open_package, bind, bind_blocking } from std.dev.libtools
+
+/// A non-null SQL value.
+pub type Cell = Int | Float | String | Bytes
+
+/// What an `execute` did: the rows it changed and the row id of the last insert on the connection.
+pub class Changes {
+    pub changed: Int
+    pub last_id: Int
+}
+
+/// One result row, its cells in column order.
+pub class Row {
+    names: List<String>
+    cells: List<Cell?>
+
+    /// The columns' names.
+    pub fn columns(self) -> List<String> { return self.names }
+
+    /// The cell in column `i`, counting from 0.
+    pub fn at(self, i: Int) -> Result<Cell?, Error> {
+        if i < 0 || i >= self.cells.len() {
+            return Err(Error.new(ErrorKind.NotFound, "no column ${i}"))
+        }
+        return Ok(self.cells.get(i))
+    }
+
+    /// The cell in the column called `name`.
+    pub fn get(self, name: String) -> Result<Cell?, Error> {
+        var i = 0
+        while i < self.names.len() {
+            if self.names.get(i) == name { return Ok(self.cells.get(i)) }
+            i = i + 1
+        }
+        return Err(Error.new(ErrorKind.NotFound, "no column ${name}"))
+    }
+
+    /// Whether the cell in `name` is NULL.
+    pub fn is_null(self, name: String) -> Result<Bool, Error> {
+        match self.get(name)? {
+            Some(v) => { return Ok(false) }
+            None => { return Ok(true) }
+        }
+    }
+
+    /// The cell in `name` as an Int; an `Err` for NULL or another type.
+    pub fn int(self, name: String) -> Result<Int, Error> {
+        match self.get(name)? {
+            Some(v) => {
+                match v {
+                    n: Int => { return Ok(n) }
+                    _ => { return Err(wrong(name, "an Int")) }
+                }
+            }
+            None => { return Err(wrong(name, "an Int")) }
+        }
+    }
+
+    /// The cell in `name` as a Float (an Int converts); an `Err` for NULL or another type.
+    pub fn float(self, name: String) -> Result<Float, Error> {
+        match self.get(name)? {
+            Some(v) => {
+                match v {
+                    f: Float => { return Ok(f) }
+                    n: Int => { return Ok(math.to_float(n)) }
+                    _ => { return Err(wrong(name, "a Float")) }
+                }
+            }
+            None => { return Err(wrong(name, "a Float")) }
+        }
+    }
+
+    /// The cell in `name` as a String; an `Err` for NULL or another type.
+    pub fn text(self, name: String) -> Result<String, Error> {
+        match self.get(name)? {
+            Some(v) => {
+                match v {
+                    s: String => { return Ok(s) }
+                    _ => { return Err(wrong(name, "a String")) }
+                }
+            }
+            None => { return Err(wrong(name, "a String")) }
+        }
+    }
+
+    /// The cell in `name` as Bytes; an `Err` for NULL or another type.
+    pub fn bytes(self, name: String) -> Result<Bytes, Error> {
+        match self.get(name)? {
+            Some(v) => {
+                match v {
+                    b: Bytes => { return Ok(b) }
+                    _ => { return Err(wrong(name, "Bytes")) }
+                }
+            }
+            None => { return Err(wrong(name, "Bytes")) }
+        }
+    }
+}
+
+fn wrong(name: String, want: String) -> Error {
+    return Error.new(ErrorKind.InvalidData, "column ${name} is not ${want}")
+}
+
+fn text_of(b: Bytes) -> String {
+    match b.decode() {
+        Some(s) => { return s }
+        None => { return "" }
+    }
+}
+
+fn kind_of(name: String) -> ErrorKind {
+    if name == "NotFound" { return ErrorKind.NotFound }
+    if name == "PermissionDenied" { return ErrorKind.PermissionDenied }
+    if name == "InvalidData" { return ErrorKind.InvalidData }
+    if name == "AlreadyExists" { return ErrorKind.AlreadyExists }
+    if name == "TimedOut" { return ErrorKind.TimedOut }
+    return ErrorKind.Other
+}
+
+/// The library's `<kind> <message>` answer as an `Err` labelled `label`.
+fn fail(label: String, out: Bytes, n: Int) -> Error {
+    var shown = 0 - n
+    if shown > out.len() { shown = out.len() }
+    let text = text_of(out.slice(0, shown))
+    match text.find(" ") {
+        Some(at) => { return Error.new(kind_of(text.slice(0, at)), "${label}: ${text.slice(at + 1, text.len())}") }
+        None => { return Error.new(ErrorKind.Other, "${label}: ${text}") }
+    }
+}
+
+/// Calls the library function `name` on `input` on a helper thread and answers the text it wrote.
+fn call(label: String, name: String, input: Bytes) -> Result<Bytes, Error> {
+    let lib = open_package("sqlite", "mote_sqlite")?
+    let f = bind_blocking<(Bytes, Int, Bytes, Int) -> Int>(lib, name)?
+    let out = Bytes(4096)
+    let n = f(input, input.len(), out, out.len())
+    if n < 0 { return Err(fail(label, out, n)) }
+    return Ok(out.slice(0, n))
+}
+
+/// An id or token the library answered.
+fn id_of(b: Bytes) -> Result<Int, Error> {
+    return strings.parse_int(text_of(b))
+}
+
+/// A reader over the library's answer: lines of numbers and typed cells.
+class Cursor {
+    b: Bytes
+    var at: Int
+
+    /// An Int ending at a space or newline, which it passes.
+    fn number(var self) -> Int {
+        var sign = 1
+        if self.b[self.at] == 45 {
+            sign = 0 - 1
+            self.at = self.at + 1
+        }
+        var n = 0
+        while self.b[self.at] != 10 && self.b[self.at] != 32 {
+            n = n * 10 + sign * (self.b[self.at] - 48)
+            self.at = self.at + 1
+        }
+        self.at = self.at + 1
+        return n
+    }
+
+    fn line(var self) -> String {
+        let start = self.at
+        while self.b[self.at] != 10 { self.at = self.at + 1 }
+        self.at = self.at + 1
+        return text_of(self.b.slice(start, self.at - 1))
+    }
+
+    /// The bytes of a `<len>\n<bytes>` frame.
+    fn frame(var self) -> Bytes {
+        let n = self.number()
+        let out = self.b.slice(self.at, self.at + n)
+        self.at = self.at + n
+        return out
+    }
+
+    fn done(self) -> Bool { return self.at >= self.b.len() }
+
+    fn float(var self) -> Float {
+        let t = self.line()
+        if t == "inf" { return math.inf() }
+        if t == "-inf" { return 0.0 - math.inf() }
+        if t == "NaN" { return math.nan() }
+        match strings.parse_float(t) {
+            Ok(f) => { return f }
+            Err(e) => { return math.nan() }
+        }
+    }
+
+    fn cell(var self) -> Cell? {
+        let tag = self.b[self.at]
+        self.at = self.at + 1
+        if tag == 110 {
+            self.at = self.at + 1
+            return None
+        }
+        if tag == 105 { return Some(self.number()) }
+        if tag == 102 { return Some(self.float()) }
+        if tag == 115 { return Some(text_of(self.frame())) }
+        return Some(self.frame())
+    }
+
+    fn name(var self) -> String {
+        self.at = self.at + 1
+        return text_of(self.frame())
+    }
+}
+
+fn put(var out: Bytes, c: Cell?) {
+    match c {
+        Some(v) => {
+            match v {
+                n: Int => { out.extend(("i" + n.to_string() + "\n").bytes()) }
+                f: Float => { out.extend(("f" + f.to_string() + "\n").bytes()) }
+                s: String => {
+                    out.extend(("s" + s.len().to_string() + "\n").bytes())
+                    out.extend(s.bytes())
+                }
+                b: Bytes => {
+                    out.extend(("b" + b.len().to_string() + "\n").bytes())
+                    out.extend(b)
+                }
+            }
+        }
+        None => { out.extend("n\n".bytes()) }
+    }
+}
+
+/// Runs `sql` (`mode` 0 executes, 1 queries, 2 only checks it) and answers the library's result.
+fn run(db: Int, tx: Int, mode: Int, sql: String, params: List<Cell?>) -> Result<Cursor, Error> {
+    var input = Bytes()
+    input.extend((db.to_string() + " " + tx.to_string() + " " + mode.to_string() + "\n" + sql.len().to_string() + "\n").bytes())
+    input.extend(sql.bytes())
+    for p in params { put(input, p) }
+    let head = Cursor { b: call("sql", "mote_sqlite_run", input)?, at: 0 }
+    let ticket = head.number()
+    let size = head.number()
+    let lib = open_package("sqlite", "mote_sqlite")?
+    let take = bind<(Int, Bytes, Int) -> Int>(lib, "mote_sqlite_take")?
+    let out = Bytes(size)
+    let n = take(ticket, out, size)
+    if n < 0 { return Err(fail("sql", out, n)) }
+    return Ok(Cursor { b: out, at: 0 })
+}
+
+fn changes(db: Int, tx: Int, sql: String, params: List<Cell?>) -> Result<Changes, Error> {
+    let c = run(db, tx, 0, sql, params)?
+    let changed = c.number()
+    return Ok(Changes { changed: changed, last_id: c.number() })
+}
+
+fn rows(db: Int, tx: Int, sql: String, params: List<Cell?>) -> Result<List<Row>, Error> {
+    var names: List<String> = []
+    var out: List<Row> = []
+    let c = run(db, tx, 1, sql, params)?
+    let changed = c.number()
+    let last = c.number()
+    let count = c.number()
+    var i = 0
+    while i < count {
+        names.push(c.name())
+        i = i + 1
+    }
+    while !c.done() {
+        var cells: List<Cell?> = []
+        var j = 0
+        while j < count {
+            cells.push(c.cell())
+            j = j + 1
+        }
+        out.push(Row { names: names, cells: cells })
+    }
+    return Ok(out)
+}
+
+fn statement(db: Int, tx: Int, sql: String) -> Result<Statement, Error> {
+    let none: List<Cell?> = []
+    var names: List<String> = []
+    let c = run(db, tx, 2, sql, none)?
+    let params = c.number()
+    let last = c.number()
+    let count = c.number()
+    var i = 0
+    while i < count {
+        names.push(c.name())
+        i = i + 1
+    }
+    return Ok(Statement { db: db, tx: tx, sql: sql, count: params, names: names })
+}
+
+/// A statement checked once and run many times; the connection keeps its prepared form.
+pub class Statement {
+    db: Int
+    tx: Int
+    sql: String
+    count: Int
+    names: List<String>
+
+    /// How many `?` parameters it takes.
+    pub fn param_count(self) -> Int { return self.count }
+
+    /// The names of the columns it answers; none for a statement that returns no rows.
+    pub fn columns(self) -> List<String> { return self.names }
+
+    pub fn execute(self, params: List<Cell?> = []) -> Result<Changes, Error> {
+        return changes(self.db, self.tx, self.sql, params)
+    }
+
+    pub fn query(self, params: List<Cell?> = []) -> Result<List<Row>, Error> {
+        return rows(self.db, self.tx, self.sql, params)
+    }
+}
+
+fn end(id: Int, commit: Bool, label: String) -> Result<Null, Error> {
+    var flag = 0
+    if commit { flag = 1 }
+    call(label, "mote_sqlite_end", (id.to_string() + " " + flag.to_string()).bytes())?
+    return Ok(null)
+}
+
+/// An open transaction: its statements run as one unit, and no other task's call runs on the database until it
+/// ends. Closed without `commit()`, it rolls back, so `with t = db.begin()! {... t.commit()! }` is safe. One that is never
+/// closed keeps every other task's call waiting, and each gives up after 30 s.
+pub class Transaction {
+    id: Int
+    db: Int
+
+    pub fn execute(self, sql: String, params: List<Cell?> = []) -> Result<Changes, Error> {
+        return changes(self.db, self.id, sql, params)
+    }
+
+    pub fn query(self, sql: String, params: List<Cell?> = []) -> Result<List<Row>, Error> {
+        return rows(self.db, self.id, sql, params)
+    }
+
+    pub fn prepare(self, sql: String) -> Result<Statement, Error> {
+        return statement(self.db, self.id, sql)
+    }
+
+    /// Makes the changes permanent and ends the transaction.
+    pub fn commit(self) -> Result<Null, Error> {
+        return end(self.id, true, "sql commit")
+    }
+
+    /// Undoes the changes and ends the transaction.
+    pub fn rollback(self) -> Result<Null, Error> {
+        return end(self.id, false, "sql rollback")
+    }
+
+    /// Rolls back if the transaction is still open; nothing after a commit.
+    pub fn close(self) -> Result<Null, Error> {
+        return end(self.id, false, "sql rollback")
+    }
+}
+
+/// A SQLite database.
+pub class Database {
+    id: Int
+
+    /// Runs a statement that returns no rows; `?` in `sql` takes `params` in order.
+    pub fn execute(self, sql: String, params: List<Cell?> = []) -> Result<Changes, Error> {
+        return changes(self.id, 0, sql, params)
+    }
+
+    /// Runs a statement and answers every row it returns.
+    pub fn query(self, sql: String, params: List<Cell?> = []) -> Result<List<Row>, Error> {
+        return rows(self.id, 0, sql, params)
+    }
+
+    /// Checks `sql` now and answers a statement to run again.
+    pub fn prepare(self, sql: String) -> Result<Statement, Error> {
+        return statement(self.id, 0, sql)
+    }
+
+    /// Starts a transaction, waiting while another task's is open (30 s at most).
+    pub fn begin(self) -> Result<Transaction, Error> {
+        let token = id_of(call("sql begin", "mote_sqlite_begin", self.id.to_string().bytes())?)?
+        return Ok(Transaction { id: token, db: self.id })
+    }
+
+    /// Closes the database; a transaction still open on it is dropped.
+    pub fn close(self) -> Result<Null, Error> {
+        call("sql close", "mote_sqlite_close", self.id.to_string().bytes())?
+        return Ok(null)
+    }
+}
+
+/// Opens the database file at `path`, creating it if it is missing. Foreign keys are enforced.
+pub fn open(path: String) -> Result<Database, Error> {
+    let id = id_of(call("sql open", "mote_sqlite_open", path.bytes())?)?
+    return Ok(Database { id: id })
+}
+
+/// A new database in memory, private to this handle and gone when it closes.
+pub fn memory() -> Result<Database, Error> {
+    return open(":memory:")
+}

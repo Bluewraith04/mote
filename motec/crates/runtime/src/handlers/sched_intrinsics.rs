@@ -37,6 +37,7 @@ pub fn dispatch(
         SHARED_COMMIT_INTRINSIC => super::shared_cell::shared_commit(rt, task, dest, args_start),
         SHARED_WAIT_INTRINSIC => super::shared_cell::shared_wait(rt, task, dest, args_start),
         TASK_IS_READY_INTRINSIC => is_ready(rt, task, dest, args_start),
+        TASK_PIN_INTRINSIC => pin(task, dest, args_start),
         _ => Err(format!("CALLINTRINSIC: unknown intrinsic {func_idx}")),
     }
 }
@@ -127,6 +128,21 @@ fn is_ready(rt: &Runtime, task: &mut TaskContext, dest: usize, args_start: usize
     task.registers[dest] = if status == STATUS_PENDING { Value::false_() } else { Value::true_() };
     task.pc += 1;
     Ok(VmStatus::Running)
+}
+
+/// `std.task.pin` / `unpin` / `is_pinned`: a change of mode yields so the scheduler moves the task to its new queue.
+fn pin(task: &mut TaskContext, dest: usize, args_start: usize) -> Result<VmStatus, String> {
+    let mode = task.registers[args_start].as_int().ok_or_else(|| "task.pin: mode is not an Int".to_string())?;
+    let wanted = match mode {
+        PIN_OFF => false,
+        PIN_ON => true,
+        _ => task.pinned,
+    };
+    let moved = wanted != task.pinned;
+    task.pinned = wanted;
+    task.registers[dest] = if wanted { Value::true_() } else { Value::false_() };
+    task.pc += 1;
+    Ok(if moved { VmStatus::Yielded } else { VmStatus::Running })
 }
 
 fn cancel(rt: &Runtime, task: &mut TaskContext, dest: usize, args_start: usize) -> Result<VmStatus, String> {

@@ -3,12 +3,32 @@
 use std::collections::VecDeque;
 use std::sync::{Arc, Condvar, Mutex};
 
-/// What a source produces; the runtime opens it through [`crate::Platform::open_source`].
+/// What a source produces; the runtime opens it through [`crate::Platform::open_source`], except a custom one it starts itself.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SourceRequest {
     /// `Int(n)` for the nth tick, every `period_nanos`.
     Timer { period_nanos: u64 },
+    /// A source the native supplies, started with the queue's sink.
+    Custom(CustomSource),
 }
+
+/// Starts a source: given the sink, answers the handle that stops it.
+#[derive(Clone)]
+pub struct CustomSource(pub Arc<dyn Fn(EventSink) -> Result<SourceHandle, String> + Send + Sync>);
+
+impl std::fmt::Debug for CustomSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("CustomSource")
+    }
+}
+
+impl PartialEq for CustomSource {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl Eq for CustomSource {}
 
 /// Owned event data; a source thread never allocates a GC object.
 #[derive(Clone, Debug, PartialEq)]

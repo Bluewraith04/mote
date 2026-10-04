@@ -1,0 +1,15 @@
+/// pane.checkbox — a box and a label that flip together.
+
+import std.sys.gui as gui
+import .element
+import .theme
+
+/// A checkbox beside `label`, filled when `checked`; clicking either runs `on_change(state, !checked)`.
+pub fn checkbox<S>(label: String, checked: Bool, on_change: (var S, Bool) -> Null) -> element.Element<S> {
+    var role = theme.Role.Check
+    if checked { role = theme.Role.Checked }
+    let mark: element.Element<S> = element.element(gui.Kind.Box, role, "", [])
+    let words: element.Element<S> = element.element(gui.Kind.Text, theme.Role.Text, label, [])
+    let row: element.Element<S> = element.element(gui.Kind.Button, theme.Role.Plain, "", [mark, words])
+    return row.style(|s| s.direction(gui.Direction.Row).gap(8.0).align_items(gui.Align.Center)).on_click(|var s| { on_change(s, !checked) })
+}

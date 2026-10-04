@@ -9,6 +9,7 @@ const COMPOSITION_ROOT: &str = "cli";
 const KNOWN_VIOLATIONS: &[(&str, &str, &str, &str)] = &[
     ("ffi", "runtime", "dependencies", "A1/A4: natives implement contracts, not the runtime"),
     ("ffi", "platform", "dependencies", "N2: natives are resolved by name and the composition root supplies the platform"),
+    ("ffi", "gui", "dependencies", "G3: the window natives drive the gui crate"),
     ("ffi", "cli", "dev-dependencies", "A0 follow-up: the cli-level test moves into cli"),
     ("modules", "compiler", "dependencies", "A7: compiler stage contracts"),
     ("pkg", "compiler", "dependencies", "A7: compiler stage contracts"),

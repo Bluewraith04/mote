@@ -25,6 +25,13 @@ pub const TASK_IS_READY_INTRINSIC: u8 = 12;
 pub const CHANNEL_SENDER_INTRINSIC: u8 = 13;
 /// `tx.clone()`: another `Sender` of the same channel, owned by the calling task.
 pub const SENDER_CLONE_INTRINSIC: u8 = 14;
+/// `std.task.pin` / `unpin` / `is_pinned`: the argument is a `PIN_*` mode; the answer is whether the task is pinned afterwards.
+pub const TASK_PIN_INTRINSIC: u8 = 15;
+
+/// `TASK_PIN_INTRINSIC` modes.
+pub const PIN_OFF: i64 = 0;
+pub const PIN_ON: i64 = 1;
+pub const PIN_QUERY: i64 = 2;
 
 /// How a value becomes a sealed version.
 pub const SEAL_COPY: i64 = 0;
@@ -34,7 +41,7 @@ pub const SEAL_IN_PLACE: i64 = 1;
 pub const SEAL_CLAIM: i64 = 2;
 
 /// Intrinsic names, indexed by id.
-pub const INTRINSIC_NAMES: [&str; 15] = [
+pub const INTRINSIC_NAMES: [&str; 16] = [
     "task.join",
     "task.cancel",
     "channel.new",
@@ -50,6 +57,7 @@ pub const INTRINSIC_NAMES: [&str; 15] = [
     "task.is_ready",
     "channel.sender",
     "sender.clone",
+    "task.pin",
 ];
 
 /// The id of the intrinsic named `name`.

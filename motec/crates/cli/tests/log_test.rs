@@ -1,10 +1,13 @@
-//! `std.dev.log`.
+//! The `log` package.
+
+mod common;
 
 use std::process::Command;
 
 fn run_env(source: &str, env: &[(&str, &str)], tag: &str) -> (bool, String, String) {
     let dir = std::env::temp_dir().join(format!("mote_log_{}_{}", tag, std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
+    common::install_package(&dir, "log");
     std::fs::write(dir.join("main.mote"), source).unwrap();
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_mote"));
     cmd.arg("run").arg(dir.join("main.mote")).env_remove("MOTE_LOG");
@@ -28,7 +31,7 @@ fn raw_lines(source: &str, env: &[(&str, &str)], tag: &str) -> Vec<String> {
     err.lines().map(String::from).collect()
 }
 
-const HEAD: &str = "import std.dev.log as log\n";
+const HEAD: &str = "import log\n";
 
 const LOGGING: &str = include_str!("programs_mote/logging.mote");
 

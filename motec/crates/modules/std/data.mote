@@ -1,11 +1,6 @@
-/// std.data — the data formats and codecs as one group: `import std.data` gives `data.json`, `data.yaml`, and so on.
+/// std.data — the data formats and codecs as one group: `import std.data` gives `data.json`, `data.base64`, and so on.
 
 import std.data.json as json
-import std.data.toml as toml
-import std.data.yaml as yaml
 import std.data.base64 as base64
 import std.data.uuid as uuid
-import std.data.compress as compress
-import std.data.archive as archive
 import std.data.crypto as crypto
-import std.data.sql as sql

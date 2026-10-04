@@ -1,13 +1,16 @@
 //! `std.sys.fs` directories and metadata through `mote run` on a real directory.
 
+mod common;
+
 use std::process::Command;
 
 fn run(name: &str, body: &str) -> String {
     let dir = std::env::temp_dir().join(format!("mote_fsdir_{name}_{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
+    common::install_package(&dir, "path");
     let work = dir.join("work");
     let source = format!(
-        "import std.sys.fs\nimport std.sys.io\nimport std.sys.path as path\nimport {{ Stat }} from std.sys.fs\n\nlet root = \"{}\"\n{body}",
+        "import std.sys.fs\nimport std.sys.io\nimport path\nimport {{ Stat }} from std.sys.fs\n\nlet root = \"{}\"\n{body}",
         work.display()
     );
     std::fs::write(dir.join("main.mote"), source).unwrap();

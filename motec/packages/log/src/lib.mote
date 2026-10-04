@@ -1,0 +1,187 @@
+/// log — leveled, structured logging on one process-wide logger.
+///
+/// `log.info("login", {"user": "ann"})`. The settings live in a `Shared` cell, so every task logs the same way;
+/// a `Shared` cannot hold a function, which is why an output is data (`Output`), not a sink.
+
+import { Json, member, to_text } from std.data.json
+import { now_utc, pad_int } from std.date
+import { get_var } from std.sys.env
+import { stderr } from std.sys.io
+import { append } from std.sys.fs
+import { is_finite } from std.math
+
+/// In order of severity; `Off` is a threshold only, and silences everything.
+pub enum Level {
+    Debug
+    Info
+    Warn
+    Error
+    Off
+}
+
+pub enum Format {
+    Text
+    Json
+}
+
+pub enum Output {
+    Stderr
+    File(String)
+}
+
+/// What a record's field may hold; a struct that derives `Json` goes in as `x.to_json()`.
+pub type Field = String | Int | Float | Bool | Json
+
+class Config {
+    var level: Level
+    var forced: Level?
+    var format: Format
+    var output: Output
+    var fields: Map<String, Field>
+}
+
+fn rank(l: Level) -> Int {
+    match l {
+        Level.Debug => { return 0 }
+        Level.Info => { return 1 }
+        Level.Warn => { return 2 }
+        Level.Error => { return 3 }
+        Level.Off => { return 4 }
+    }
+}
+
+fn level_name(l: Level) -> String {
+    match l {
+        Level.Debug => { return "debug" }
+        Level.Info => { return "info" }
+        Level.Warn => { return "warn" }
+        Level.Error => { return "error" }
+        Level.Off => { return "off" }
+    }
+}
+
+fn parse_level(s: String) -> Level? {
+    let name = s.to_lower().trim()
+    if name == "debug" { return Level.Debug }
+    if name == "info" { return Level.Info }
+    if name == "warn" { return Level.Warn }
+    if name == "error" { return Level.Error }
+    if name == "off" { return Level.Off }
+    return null
+}
+
+fn initial() -> Config {
+    var forced: Level? = null
+    match get_var("MOTE_LOG") {
+        Some(v) => { forced = parse_level(v) }
+        None => {}
+    }
+    return Config { level: Level.Info, forced: forced, format: Format.Text, output: Output.Stderr, fields: {} }
+}
+
+var STATE = Shared(initial())
+
+pub fn set_level(level: Level) { STATE.update(|c| { c.level = level }) }
+
+pub fn set_format(format: Format) { STATE.update(|c| { c.format = format }) }
+
+pub fn set_output(output: Output) { STATE.update(|c| { c.output = output }) }
+
+/// Fields added to every record, in place of any set before.
+pub fn set_fields(fields: Map<String, Field>) { STATE.update(|c| { c.fields = fields }) }
+
+fn field_text(v: Field) -> String {
+    match v {
+        s: String => {
+            if s.is_empty() || s.contains(" ") || s.contains("=") || s.contains("\"") || s.contains("\n") {
+                return to_text(Json.Str(s)).unwrap()
+            }
+            return s
+        }
+        n: Int => { return n.to_string() }
+        f: Float => { return f.to_string() }
+        b: Bool => { return b.to_string() }
+        j: Json => {
+            match to_text(j) {
+                Ok(t) => { return t }
+                Err(e) => { return "?" }
+            }
+        }
+    }
+}
+
+fn field_json(v: Field) -> Json {
+    match v {
+        s: String => { return Json.Str(s) }
+        n: Int => { return Json.Int(n) }
+        f: Float => {
+            if is_finite(f) { return Json.Float(f) }
+            return Json.Str(f.to_string())
+        }
+        b: Bool => { return Json.Bool(b) }
+        j: Json => { return j }
+    }
+}
+
+fn timestamp() -> String {
+    let t = now_utc()
+    return t.format("%Y-%m-%dT%H:%M:%S") + "." + pad_int(t.nano / 1000000, 3) + "Z"
+}
+
+fn render_text(level: Level, msg: String, fields: Map<String, Field>) -> String {
+    var out = timestamp() + " " + level_name(level).to_upper() + " " + msg
+    for k in fields.keys() {
+        out = out + " " + k + "=" + field_text(fields.get(k))
+    }
+    return out
+}
+
+fn render_json(level: Level, msg: String, fields: Map<String, Field>) -> String {
+    var members = [member("time", Json.Str(timestamp())), member("level", Json.Str(level_name(level))), member("msg", Json.Str(msg))]
+    for k in fields.keys() {
+        var key = k
+        if k == "time" || k == "level" || k == "msg" { key = k + "_" }
+        members.push(member(key, field_json(fields.get(k))))
+    }
+    match to_text(Json.Object(members)) {
+        Ok(t) => { return t }
+        Err(e) => { return render_text(level, msg, fields) }
+    }
+}
+
+fn write_to_file(path: String, line: String) {
+    match append(path) {
+        Ok(f) => {
+            let written = f.write_text(line + "\n")
+            let closed = f.close()
+        }
+        Err(e) => {}
+    }
+}
+
+fn emit(level: Level, msg: String, fields: Map<String, Field>) {
+    let c = STATE.get()
+    var threshold = c.level
+    if c.forced != null { threshold = c.forced.unwrap() }
+    if rank(level) < rank(threshold) { return }
+    var all: Map<String, Field> = {}
+    for k in c.fields.keys() { all.set(k, c.fields.get(k)) }
+    for k in fields.keys() { all.set(k, fields.get(k)) }
+    var line = ""
+    match c.format {
+        Format.Text => { line = render_text(level, msg, all) }
+        Format.Json => { line = render_json(level, msg, all) }
+    }
+    match c.output {
+        Output.Stderr => { stderr().write_line(line) }
+        Output.File(path) => { write_to_file(path, line) }
+    }
+}
+
+pub fn debug(msg: String, fields: Map<String, Field> = {}) { emit(Level.Debug, msg, fields) }
+
+pub fn info(msg: String, fields: Map<String, Field> = {}) { emit(Level.Info, msg, fields) }
+
+pub fn warn(msg: String, fields: Map<String, Field> = {}) { emit(Level.Warn, msg, fields) }
+
+pub fn error(msg: String, fields: Map<String, Field> = {}) { emit(Level.Error, msg, fields) }

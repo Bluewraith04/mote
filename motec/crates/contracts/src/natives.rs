@@ -166,6 +166,11 @@ pub trait NativeCtx {
 
     /// A new zeroed object of the struct `desc` (a field's embedded struct), which must outlive the object.
     fn alloc_struct(&mut self, desc: &TypeDescriptor) -> Result<Value, String>;
+
+    /// Whether this call runs on the program's main thread, which window-system calls need; true unless the task is on a pool worker.
+    fn on_home_thread(&self) -> bool {
+        true
+    }
 }
 
 /// A heapless [`NativeCtx`] for testing natives: scalars and the platform work, allocation and slot access fail.

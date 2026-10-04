@@ -10,6 +10,8 @@ Every `.mote` file is a module. A path names a file without its extension.
 | `import .sub.worker` | `sub/worker.mote` |
 | `import ..util` | `util.mote` one directory up |
 | `import std.iter as it` | a standard-library module under the name `it` |
+| `import pane` | a dependency package, the names its `src/lib.mote` exports |
+| `import pane.nav` | another file of that package, `src/nav.mote`, used as `nav.f()` |
 | `import { compute } from .helper` | one name, used bare |
 | `import { helper as ha } from .a` | one name under another name |
 
@@ -21,18 +23,18 @@ Everyday modules sit directly under `std`: `string`, `math`, `collections`, `ite
 
 | Group | Members |
 |---|---|
-| `std.data` | `json`, `toml`, `yaml`, `base64`, `uuid`, `compress`, `archive`, `crypto`, `sql` |
-| `std.sys` | `io`, `fs`, `path`, `env`, `process`, `net`, `http`, `http_server`, `tls` |
+| `std.data` | `json`, `base64`, `uuid`, `crypto` |
+| `std.sys` | `io`, `fs`, `env`, `process`, `net`, `http_server`, `tls`, `gui` |
 | `std.dev` | `log`, `args`, `libtools` |
 
-A member is imported as `import std.data.json as json`, as the whole group (`import std.data`, used as `data.json.parse(t)`), or by name (`import { json, yaml } from std.data`).
+A member is imported as `import std.data.json as json`, as the whole group (`import std.data`, used as `data.json.parse(t)`), or by name (`import { json, base64 } from std.data`).
 
 ```mote
 import std.data
 import { fs } from std.sys
 
 fn main() {
-    let doc = data.yaml.parse("name: demo\nports: [80, 443]")!
+    let doc = data.json.parse("{\"name\": \"demo\", \"ports\": [80, 443]}")!
     println(data.json.to_text(doc)!)
     println(fs.exists("/no/such/path"))
 }
