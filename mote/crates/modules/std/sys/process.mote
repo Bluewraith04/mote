@@ -1,0 +1,33 @@
+/// std.sys.process — run a child to completion and capture its output.
+/// No shell: `program` is looked up on PATH and `args` are passed as given.
+
+import { * } from std.prelude
+
+/// A finished child; `status` is its exit code, `-1` if a signal ended it.
+pub class Output {
+    pub status: Int
+    pub stdout: Bytes
+    pub stderr: Bytes
+
+    pub fn success(self) -> Bool { return self.status == 0 }
+
+    /// The captured stdout as text; `None` if it is not UTF-8.
+    pub fn stdout_text(self) -> Option<String> { return self.stdout.decode() }
+
+    pub fn stderr_text(self) -> Option<String> { return self.stderr.decode() }
+}
+
+/// Runs `program args...` with the inherited environment and an empty stdin.
+pub fn run(program: String, args: List<String>) -> Result<Output, Error> {
+    let env: List<String> = []
+    return run_with(program, args, env, Bytes(), "")
+}
+
+/// `env` is `KEY=VALUE` overrides; `stdin` is written then closed; an empty `cwd` inherits.
+pub fn run_with(program: String, args: List<String>, env: List<String>, stdin: Bytes, cwd: String) -> Result<Output, Error> {
+    let p = __process_run(program, args, env, stdin, cwd)?
+    return Ok(Output { status: p.get(0), stdout: p.get(1), stderr: p.get(2) })
+}
+
+/// Ends the process with `code`.
+pub fn exit(code: Int) { __process_exit(code) }

@@ -1,0 +1,30 @@
+[package]
+name = "compiler"
+version = "0.1.2"
+edition = "2024"
+license = "MIT"
+
+[dependencies]
+isa = { path = "../isa" }
+contracts = { path = "../contracts" }
+colored = "2.1"
+logos = "0.14"
+serde = { version = "1.0", features = ["derive"] }
+
+[dev-dependencies]
+runtime = { path = "../runtime" }
+gc = { path = "../gc" }
+ffi = { path = "../ffi" }
+criterion = { version = "0.5", default-features = false }
+
+[[test]]
+name = "lexer_tests"
+path = "tests/lexer_tests.rs"
+
+[[test]]
+name = "parser_tests"
+path = "tests/parser_tests.rs"
+
+[[test]]
+name = "compiler_tests"
+path = "tests/compiler_tests.rs"

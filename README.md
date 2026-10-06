@@ -32,16 +32,15 @@ fn main() {
 
 | Part | Where |
 |---|---|
-| Lexer, parser, type checker, code generator | `motec/crates/compiler`, `motec/crates/modules` |
-| Instruction set and value layout | `motec/crates/isa` |
-| Register VM, task scheduler | `motec/crates/runtime` |
-| Mark-sweep garbage collector | `motec/crates/gc` |
-| Native calls, I/O, networking, clocks | `motec/crates/ffi`, `motec/crates/platform` |
-| Packages from git or a path, lockfile, bundler | `motec/crates/pkg` |
-| The `mote` command | `motec/crates/cli` |
-| Standard library, written in Mote | `motec/crates/modules/std` |
-| Packages that ship with the repository (`pane`, `sqlite`, `http`, `toml`, `yaml`, `compress`, `archive`, `log`, `path`) | `motec/packages` |
-| Window and drawing library | `motec/crates/gui` |
+| Lexer, parser, type checker, code generator | `mote/crates/compiler`, `mote/crates/modules` |
+| Instruction set and value layout | `mote/crates/isa` |
+| Register VM, task scheduler | `mote/crates/runtime` |
+| Mark-sweep garbage collector | `mote/crates/gc` |
+| Native calls, I/O, networking, clocks | `mote/crates/ffi`, `mote/crates/platform` |
+| Packages from git or a path, lockfile, bundler | `mote/crates/pkg` |
+| The `mote` command | `mote/crates/cli` |
+| Standard library, written in Mote | `mote/crates/modules/std` |
+| Window and drawing library | `mote/crates/gui` |
 | Tree-sitter grammar and Zed extension | `editors/` |
 
 The language has structs, classes, enums, generics with trait bounds, optionals and `Result`, closures, generators, modules, and tasks with channels. Types are checked at compile time; `Any` exists as an explicit escape hatch. Memory is managed by the compiler and a tracing collector.
@@ -53,7 +52,7 @@ The standard library covers collections, strings, regex, dates, JSON, hashing, f
 Rust (2024 edition) is required.
 
 ```sh
-cd motec
+cd mote
 cargo build --release
 cargo test --workspace
 cargo install --path crates/cli

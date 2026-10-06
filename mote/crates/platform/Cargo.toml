@@ -1,0 +1,20 @@
+[package]
+name = "platform"
+version = "0.1.2"
+edition = "2024"
+license = "MIT"
+
+[dependencies]
+contracts = { path = "../contracts" }
+libffi = "5.2.0"
+libloading = "0.9.0"
+polling = "3.11.0"
+rustls = { version = "0.23.45", default-features = false, features = ["ring", "std", "tls12"] }
+rustls-pki-types = "1.15.1"
+webpki-roots = "1.0.9"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+rcgen = { version = "0.14.10", default-features = false, features = ["crypto", "pem", "ring"] }

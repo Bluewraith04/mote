@@ -1,0 +1,39 @@
+/// std.sys.tls — certificates for TLS sockets over rustls and rcgen. Explicit import, not in the prelude.
+///
+/// An `Identity` is a certificate chain and private key that `net.listen_tls` and `http_server.listen_tls` serve with.
+/// The client side needs none: `net.connect_tls` checks the server against the bundled root certificates.
+
+import { * } from std.prelude
+
+/// A certificate chain and its private key, both PEM text, checked to load and match.
+pub class Identity {
+    cert: String
+    key: String
+
+    /// The certificate chain as PEM text.
+    pub fn cert_pem(self) -> String { return self.cert }
+
+    /// The private key as PEM text.
+    pub fn key_pem(self) -> String { return self.key }
+}
+
+/// An identity from PEM text; an `Err` when the chain or key does not load or they do not match.
+pub fn identity_from_pem(cert: String, key: String) -> Result<Identity, Error> {
+    match __tls_check_identity(cert, key) {
+        Ok(done) => { return Ok(Identity { cert: cert, key: key }) }
+        Err(e) => { return Err(e) }
+    }
+}
+
+/// An identity from a PEM certificate chain file and a PEM private key file.
+pub fn identity_from_files(cert_path: String, key_path: String) -> Result<Identity, Error> {
+    let cert = __io_read_file(cert_path)?
+    let key = __io_read_file(key_path)?
+    return identity_from_pem(cert, key)
+}
+
+/// A new self-signed certificate valid for `names` (host names or addresses), for development; clients must be told to trust it.
+pub fn self_signed(names: List<String>) -> Result<Identity, Error> {
+    let parts = __tls_self_signed(names)?
+    return identity_from_pem(parts.get(0), parts.get(1))
+}

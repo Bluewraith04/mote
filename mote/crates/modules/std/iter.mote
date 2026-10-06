@@ -1,0 +1,193 @@
+/// std.iter: eager list adapters. Each walks a `List` and returns a new `List`; callbacks are typed, so `map(xs, |x| x * 2)` answers `List<Int>`. `std.stream` has the lazy versions.
+
+import { * } from std.prelude
+
+/// `[0, 1, …, n-1]`.
+pub fn range(n: Int) -> List<Int> {
+    var out: List<Int> = []
+    for i in 0..n {
+        out.push(i)
+    }
+    return out
+}
+
+/// `f` applied to every element.
+pub fn map<T, U>(xs: List<T>, f: (T) -> U) -> List<U> {
+    var out: List<U> = []
+    for x in xs {
+        out.push(f(x))
+    }
+    return out
+}
+
+/// `f` applied to every element, then flattened one level — `map` immediately
+/// followed by manual flattening collapsed into one call.
+pub fn flat_map<T, U>(xs: List<T>, f: (T) -> List<U>) -> List<U> {
+    var out: List<U> = []
+    for x in xs {
+        for y in f(x) {
+            out.push(y)
+        }
+    }
+    return out
+}
+
+/// The elements for which `pred` is true.
+pub fn filter<T>(xs: List<T>, pred: (T) -> Bool) -> List<T> {
+    var out: List<T> = []
+    for x in xs {
+        if pred(x) {
+            out.push(x)
+        }
+    }
+    return out
+}
+
+/// The first element for which `pred` is true, if any.
+pub fn find<T>(xs: List<T>, pred: (T) -> Bool) -> Option<T> {
+    for x in xs {
+        if pred(x) {
+            return Some(x)
+        }
+    }
+    return None
+}
+
+/// The index of the first element for which `pred` is true, if any.
+pub fn find_index<T>(xs: List<T>, pred: (T) -> Bool) -> Option<Int> {
+    var i = 0
+    for x in xs {
+        if pred(x) {
+            return Some(i)
+        }
+        i = i + 1
+    }
+    return None
+}
+
+/// True if `pred` is true for at least one element.
+pub fn any<T>(xs: List<T>, pred: (T) -> Bool) -> Bool {
+    for x in xs {
+        if pred(x) {
+            return true
+        }
+    }
+    return false
+}
+
+/// True if `pred` is true for every element (vacuously true on an empty list).
+pub fn all<T>(xs: List<T>, pred: (T) -> Bool) -> Bool {
+    for x in xs {
+        if pred(x) == false {
+            return false
+        }
+    }
+    return true
+}
+
+/// Left fold: `f(f(f(init, x0), x1), …)`. The accumulator type `A` comes from
+/// `init`, not from `f`, so it stays real.
+pub fn fold<T, A>(xs: List<T>, init: A, f: (A, T) -> A) -> A {
+    var acc = init
+    for x in xs {
+        acc = f(acc, x)
+    }
+    return acc
+}
+
+/// Sum of the elements.
+pub fn sum(xs: List<Int>) -> Int {
+    var total = 0
+    for x in xs {
+        total = total + x
+    }
+    return total
+}
+
+/// A new list with the elements in reverse order.
+pub fn reverse<T>(xs: List<T>) -> List<T> {
+    var out: List<T> = []
+    var i = xs.len() - 1
+    while i >= 0 {
+        out.push(xs.get(i))
+        i = i - 1
+    }
+    return out
+}
+
+/// The first `n` elements (fewer if the list is shorter).
+pub fn take<T>(xs: List<T>, n: Int) -> List<T> {
+    var out: List<T> = []
+    var i = 0
+    while i < n {
+        if i >= xs.len() {
+            return out
+        }
+        out.push(xs.get(i))
+        i = i + 1
+    }
+    return out
+}
+
+/// `[(0, x0), (1, x1), …]` as a list of real tuples.
+pub fn enumerate<T>(xs: List<T>) -> List<(Int, T)> {
+    var out: List<(Int, T)> = []
+    var i = 0
+    for x in xs {
+        out.push((i, x))
+        i = i + 1
+    }
+    return out
+}
+
+/// True if any element equals `target` (`==` semantics).
+pub fn contains<T: Eq>(xs: List<T>, target: T) -> Bool {
+    for x in xs {
+        if x == target {
+            return true
+        }
+    }
+    return false
+}
+
+/// A new list sorted by `less(a, b) -> Bool` (true when `a` should come before
+/// `b`). A stable insertion sort, O(n^2); the input list is untouched.
+pub fn sort_by<T>(xs: List<T>, less: (T, T) -> Bool) -> List<T> {
+    var out: List<T> = []
+    for x in xs {
+        out.push(x)
+        var k = out.len() - 1
+        while k > 0 {
+            let prev = out.get(k - 1)
+            if less(x, prev) {
+                out.set(k, prev)
+                out.set(k - 1, x)
+                k = k - 1
+            } else {
+                k = 0
+            }
+        }
+    }
+    return out
+}
+
+/// A new list in ascending order by `Ord.compare` — any `T: Ord`,
+/// not just numbers. Other orderings need `sort_by` with an explicit comparator.
+pub fn sort<T: Ord>(xs: List<T>) -> List<T> {
+    var out: List<T> = []
+    for x in xs {
+        out.push(x)
+        var k = out.len() - 1
+        while k > 0 {
+            let prev = out.get(k - 1)
+            if x.compare(prev) < 0 {
+                out.set(k, prev)
+                out.set(k - 1, x)
+                k = k - 1
+            } else {
+                k = 0
+            }
+        }
+    }
+    return out
+}

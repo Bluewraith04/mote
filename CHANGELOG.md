@@ -1,5 +1,58 @@
 # Changelog
 
+## 0.1.2
+
+Named arguments, an explicit glob import, rich text and a multi-line editor for windows, a markdown package, a mote home that caches packages, and a round of compiler and runtime fixes.
+
+### Breaking changes
+
+- **A plain import is a namespace.** `import .m` and `import pane` bring `m.f()` and `pane.f()`, no longer every name bare. Write `import { * } from m` for the old behaviour, or import the names you use. `pub import { * } from m` re-exports every public name.
+- **pane's `run*` and `mount*` functions are replaced by the `App` builder**: `pane.App(...)` with `Handle` for shared state, a required input setter, component-local state, `every` and `on_key`, and headless test helpers (`click`, `type`, `press`).
+- **pane's title bar presets `flat`, `windows` and `mac` are removed.** The bar is built from theme tones; `slate` and `banner` are the new presets, and a `Theme` sets `text_size` and `spacing`.
+- **A function with defaults or a variadic parameter used as a value has its full arity** (a variadic parameter is a `List`). It was typed `Any`, so a short call ran with an argument missing; it is now a checker error.
+
+### Language
+
+- Named arguments: `f(a, width = 3)`, after the positional ones and in any order. A named argument may skip the defaulted parameters before it. Functions, methods and constructors take names.
+- `import { * } from m`, as above.
+- A function stored in a field is called as `obj.f(x)`, and `(obj.f)(x)` works too.
+- Lexer and parser errors say what was expected and what was found, name the block's owner and show the file and source line.
+- The tree-sitter grammar and the Zed highlights know named arguments and `{ * }`.
+
+### Windows
+
+- `std.sys.gui` rich text: runs with weight, italic, monospace, underline, colour, strike and links on text and button nodes; a `Link` event; a bundled DejaVu Sans Mono.
+- `TextArea`: wrapped multi-line editing with caret movement by line, scroll, undo and redo.
+- `Window.set_maximized`, `set_fullscreen` and `fullscreen`.
+- A scroll frame of a large document drops from 120–230 ms to 20 ms, and a 14 KB text area paints in 45 ms instead of 850 ms.
+
+### pane
+
+- `rich`, `on_link`, `input_multi`, `Element.reveal`, `memo` (an element rebuilt only when its token changes), `App.maximized` and `App.fullscreen`, and the roles `Code`, `Rule` and `Cell`.
+
+### Packages and tools
+
+- `markdown`: a package over `pulldown-cmark` that answers typed blocks and spans, with a `view` for pane (outline, `render_at`, images).
+- `[package] mote = "0.1.2"` names the oldest Mote that builds a package. An older toolchain stops with a message that names both versions. `mote init` writes the current one.
+- The mote home: `mote sync` fetches what `mote.toml` lists, `mote install` builds a program into `~/.mote/bin` with its native libraries, and fetched packages are cached under `~/.mote/git`, so a package fetched once syncs again offline.
+- `mote test` runs a package's `tests/` files. `mote run -- args` passes arguments to a package's program.
+- The tests of the language no longer import packages; each package carries its own.
+
+### Performance
+
+- Slicing, measuring, comparing and hashing a string read it in place instead of copying it. Parsing 230 KB of JSON drops from 5.2 s to 0.66 s.
+
+### Fixes
+
+- **compiler:** a lambda inside a nested generic call, such as `xs.push(el(|v, t| …))`, takes its parameter types from the collection instead of failing in code generation.
+- **compiler:** a method call on a lambda parameter whose type nothing fixes is an error that says to write the type, not an internal one.
+- **compiler:** calling a function stored in a field failed with "no method".
+- **compiler:** a function with defaults or a variadic parameter used as a value was typed `Any`.
+- **runtime:** closing a listener, or a UDP socket, wakes the tasks waiting on it; a pending `accept` returns an error instead of waiting forever.
+- **runtime:** a child task finishing under a running parent no longer leaves a stale wake that wakes the parent's next, unrelated wait.
+- **runtime:** a cancelled task passes on its wake at `send`, `recv` and shared begin and drops its waiter entries; a scope exit is woken only by its last child.
+- **runtime:** an unobserved child fault at a scope's close built an error of the wrong type, which crashed a function returning `Result<_, Error>`; it now builds an `Error`, and a function returning an optional panics. A scope in a function returning a bare `Result` builds an `Err` of a `String`.
+
 ## 0.1.1
 
 A window library, a UI package on top of it, packages from any git repository, and much smaller programs.

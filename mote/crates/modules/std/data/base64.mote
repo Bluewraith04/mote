@@ -1,0 +1,25 @@
+/// std.data.base64 — base64 and base64url, RFC 4648, over the Rust `base64` crate. Explicit import, not in the prelude.
+///
+/// `encode` and `decode` use the standard alphabet with `=` padding; the `_url` pair uses `-` and `_` with no padding.
+
+import { * } from std.prelude
+
+/// The standard alphabet, `=` padded.
+pub fn encode(b: Bytes) -> String {
+    return __base64_encode(b, false)
+}
+
+/// The bytes of standard base64 text.
+pub fn decode(s: String) -> Result<Bytes, Error> {
+    return __base64_decode(s, false)
+}
+
+/// The URL-safe alphabet, no padding.
+pub fn encode_url(b: Bytes) -> String {
+    return __base64_encode(b, true)
+}
+
+/// The bytes of URL-safe base64 text without padding.
+pub fn decode_url(s: String) -> Result<Bytes, Error> {
+    return __base64_decode(s, true)
+}

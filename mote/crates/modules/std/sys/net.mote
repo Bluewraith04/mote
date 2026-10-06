@@ -1,0 +1,171 @@
+/// std.sys.net — TCP over platform-owned sockets. Explicit import, not in the prelude.
+///
+/// A socket holds only the platform's id. `close()` closes it at a chosen point; a socket nothing holds
+/// any more is closed by the collector. A parked `accept` or `read` holds an offload thread until it returns.
+
+import { * } from std.prelude
+import { Identity } from std.sys.tls
+
+fn owned_stream(id: Int) -> TcpStream {
+    let s = TcpStream { id: id }
+    __release_on_collect(s, 2)
+    return s
+}
+
+fn owned_listener(id: Int) -> TcpListener {
+    let l = TcpListener { id: id }
+    __release_on_collect(l, 2)
+    return l
+}
+
+fn owned_udp(id: Int) -> UdpSocket {
+    let u = UdpSocket { id: id }
+    __release_on_collect(u, 2)
+    return u
+}
+
+/// A connected TCP stream.
+pub class TcpStream {
+    id: Int
+
+    /// Up to `max` bytes; empty once the peer finished sending.
+    pub fn read(self, max: Int) -> Result<Bytes, Error> {
+        return __net_read(self.id, max)
+    }
+
+    /// Everything until the peer finishes sending.
+    pub fn read_to_end(self) -> Result<Bytes, Error> {
+        let out = Bytes()
+        while true {
+            match self.read(4096) {
+                Ok(chunk) => {
+                    let c: Bytes = chunk
+                    if c.len() == 0 {
+                        return Ok(out)
+                    }
+                    out.extend(c)
+                }
+                Err(e) => { return Err(e) }
+            }
+        }
+        return Ok(out)
+    }
+
+    pub fn write(self, b: Bytes) -> Result<Null, Error> {
+        return __net_write(self.id, b)
+    }
+
+    pub fn write_text(self, s: String) -> Result<Null, Error> {
+        return __net_write_text(self.id, s)
+    }
+
+    /// Tells the peer no more bytes are coming; this side can still read.
+    pub fn shutdown_write(self) -> Result<Null, Error> {
+        return __net_shutdown_write(self.id)
+    }
+
+    pub fn close(self) -> Result<Null, Error> {
+        return __net_close(self.id)
+    }
+
+    pub fn local_port(self) -> Result<Int, Error> {
+        return __net_local_port(self.id)
+    }
+
+    /// The peer as `host:port`.
+    pub fn peer_addr(self) -> Result<String, Error> {
+        return __net_peer_addr(self.id)
+    }
+}
+
+/// A listening TCP socket.
+pub class TcpListener {
+    id: Int
+
+    /// Waits for the next connection.
+    pub fn accept(self) -> Result<TcpStream, Error> {
+        match __net_tcp_accept(self.id) {
+            Ok(id) => { return Ok(owned_stream(id)) }
+            Err(e) => { return Err(e) }
+        }
+    }
+
+    /// The bound port; useful after `listen(host, 0)`.
+    pub fn local_port(self) -> Result<Int, Error> {
+        return __net_local_port(self.id)
+    }
+
+    pub fn close(self) -> Result<Null, Error> {
+        return __net_close(self.id)
+    }
+}
+
+/// Opens a TCP connection; `host` is a name or an address.
+pub fn connect(host: String, port: Int) -> Result<TcpStream, Error> {
+    match __net_tcp_connect(host, port) {
+        Ok(id) => { return Ok(owned_stream(id)) }
+        Err(e) => { return Err(e) }
+    }
+}
+
+/// Listens on `host:port`; port `0` picks a free one.
+pub fn listen(host: String, port: Int) -> Result<TcpListener, Error> {
+    match __net_tcp_listen(host, port) {
+        Ok(id) => { return Ok(owned_listener(id)) }
+        Err(e) => { return Err(e) }
+    }
+}
+
+/// Opens a TCP connection and a TLS session over it, checking the server's certificate and name against the bundled roots.
+pub fn connect_tls(host: String, port: Int) -> Result<TcpStream, Error> {
+    match __net_tcp_connect_tls(host, port) {
+        Ok(id) => { return Ok(owned_stream(id)) }
+        Err(e) => { return Err(e) }
+    }
+}
+
+/// Listens on `host:port` for TLS clients, serving `identity`; `accept` answers a stream that reads and writes plain bytes.
+pub fn listen_tls(host: String, port: Int, identity: Identity) -> Result<TcpListener, Error> {
+    match __net_tcp_listen_tls(host, port, identity.cert_pem(), identity.key_pem()) {
+        Ok(id) => { return Ok(owned_listener(id)) }
+        Err(e) => { return Err(e) }
+    }
+}
+
+/// One received UDP datagram; `sender` is `host:port`.
+pub class Datagram {
+    pub bytes: Bytes
+    pub sender: String
+}
+
+/// A bound UDP socket.
+pub class UdpSocket {
+    id: Int
+
+    /// Sends one datagram; answers the byte count.
+    pub fn send_to(self, host: String, port: Int, b: Bytes) -> Result<Int, Error> {
+        return __net_udp_send_to(self.id, host, port, b)
+    }
+
+    /// Waits for one datagram; one longer than `max` is truncated.
+    pub fn recv_from(self, max: Int) -> Result<Datagram, Error> {
+        let parts = __net_udp_recv_from(self.id, max)?
+        return Ok(Datagram { bytes: parts.get(0), sender: parts.get(1) })
+    }
+
+    pub fn local_port(self) -> Result<Int, Error> {
+        return __net_local_port(self.id)
+    }
+
+    pub fn close(self) -> Result<Null, Error> {
+        return __net_close(self.id)
+    }
+}
+
+/// Binds a UDP socket; port `0` picks a free one.
+pub fn bind(host: String, port: Int) -> Result<UdpSocket, Error> {
+    match __net_udp_bind(host, port) {
+        Ok(id) => { return Ok(owned_udp(id)) }
+        Err(e) => { return Err(e) }
+    }
+}

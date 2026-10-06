@@ -1,0 +1,38 @@
+[package]
+name = "ffi"
+version = "0.1.2"
+edition = "2024"
+license = "MIT"
+
+[dependencies]
+isa = { path = "../isa" }
+runtime = { path = "../runtime" }
+gui = { path = "../gui" }
+contracts = { path = "../contracts" }
+platform = { path = "../platform" }
+parking_lot = "0.12"
+base64 = "0.23.1"
+uuid = { version = "1.26.1", features = ["v4", "v7"] }
+form_urlencoded = "1.2.2"
+httparse = "1.10.1"
+http = "1.5.0"
+percent-encoding = "2.3.2"
+httpdate = "1.0.3"
+sha2 = "0.11.0"
+hmac = "0.13.0"
+subtle = "2.6.1"
+getrandom = "0.4.3"
+hex = "0.4.3"
+argon2 = "0.6.0"
+rcgen = { version = "0.14.10", default-features = false, features = ["crypto", "pem", "ring"] }
+
+winit = { version = "0.30", optional = true }
+softbuffer = { version = "0.4", default-features = false, features = ["x11", "x11-dlopen", "wayland", "wayland-dlopen"], optional = true }
+
+[features]
+default = ["window"]
+# Windows on a display (std.sys.gui open); without it only headless windows exist.
+window = ["dep:winit", "dep:softbuffer"]
+
+[dev-dependencies]
+cli = { path = "../cli" }

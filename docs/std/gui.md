@@ -19,17 +19,18 @@ fn main() {
 }
 ```
 
-A window on a display shows what `present` last painted and repaints by itself after each batch of events, so hover styles need no `present`. A pinned task waits in `for e in win.events()`; a user closing the window raises `Close`, and the program closes it. A task that never parks stalls the window, and sizes are physical pixels. Under WSL the window opens through X11, so Windows draws its frame; install `libxkbcommon-x11-0` for it. `motec/examples/gui_demo.mote` is a complete program: a click counter, a text field, a scrolling list and a clock a second task ticks with `post`.
+A window on a display shows what `present` last painted and repaints by itself after each batch of events, so hover styles need no `present`. A pinned task waits in `for e in win.events()`; a user closing the window raises `Close`, and the program closes it. A task that never parks stalls the window, and sizes are physical pixels. Under WSL the window opens through X11, so Windows draws its frame; install `libxkbcommon-x11-0` for it. `mote/examples/gui_demo.mote` is a complete program: a click counter, a text field, a scrolling list and a clock a second task ticks with `post`.
 
-`win.root()` is the node every other hangs from. `win.add(parent, kind)` adds a last child; `Kind` is `Box`, `Text`, `Image`, `Button`, `Input` or `Scroll`. `win.style(style)` stores a style and answers a `StyleId` for `set_style`. `present` lays out and paints what changed.
+`win.root()` is the node every other hangs from. `win.add(parent, kind)` adds a last child; `Kind` is `Box`, `Text`, `Image`, `Button`, `Input`, `TextArea` or `Scroll`. `win.style(style)` stores a style and answers a `StyleId` for `set_style`. `present` lays out and paints what changed.
 
 | Window method | Does |
 |---|---|
 | `add(parent, kind)`, `remove(node)` | grows and prunes the tree |
 | `move_before(node, before)` | reorders siblings: before `before`, or last when `None` |
 | `set_frame(on)`, `set_title(title)` | the system frame and title of a window on a display |
-| `drag()`, `drag_resize(edge)`, `minimize()`, `toggle_maximize()`, `maximized()` | move, resize and state of the window, for a title bar a program draws |
+| `drag()`, `drag_resize(edge)`, `minimize()`, `toggle_maximize()`, `maximized()`, `set_maximized(on)`, `set_fullscreen(on)`, `fullscreen()` | move, resize and state of the window, for a title bar a program draws |
 | `set_text(node, text)`, `text(node)` | a node's text |
+| `set_runs(node, runs)` | a text node's text in several looks: `gui.run(text)` with `bold()`, `weight(w)`, `italic()`, `mono()`, `underline()`, `strike()`, `color(rgba)` and `link(id)` |
 | `set_style(node, style_id)` | gives a stored style to a node |
 | `set_image(node, png)` | the picture of an `Image` node |
 | `present()` | lays out and paints; answers the rectangles repainted |
@@ -50,9 +51,12 @@ A window on a display shows what `present` last painted and repaints by itself a
 | `Key(key, mods, down)` | a key; `Key` is `Char(code_point)`, `Enter`, `Escape`, `Backspace`, `Delete`, `Tab`, an arrow, `Home` or `End` |
 | `Changed(node)`, `Submit(node)` | an input's text changed; Enter was pressed in an input |
 | `Resize(w, h)`, `Close`, `User(n)` | the window changed size or was asked to close; another task posted |
+| `Link(node, id)` | the pointer went down and up on one link run of a text node |
 
 `Input` has the same shape (`PointerMove(x, y)`, `PointerDown`, `PointerUp`, `PointerLeave`, `Wheel(x, y, dx, dy)`, `Key`, `Text(s)`, `Resize`, `Close`). `gui.mods(shift, ctrl, alt, meta)` and `gui.no_mods()` make a `Mods`.
 
 A button's `hover` and `pressed` styles change paint fields only. A `Scroll` node scrolls with the wheel. An `Input` node edits one line: a press focuses it and places the caret, dragging selects, the arrows, Home, End, Backspace and Delete edit, Control with `a` selects all, and `Text` inserts. `win.selection(node)` answers `[caret, anchor]`; `win.focus()` and `win.focus_on(node)` read and set the focus. Not included: the system clipboard, input method composition and a right-to-left caret.
 
-A `Size` is `Auto`, `Px(f)` or `Pct(f)`; a `Track` is `Px(f)`, `Fr(f)`, `Auto`, `MinContent` or `MaxContent`. Colors are `0xRRGGBBAA` Ints. A window is 1 to 16384 pixels on a side. Text uses system fonts, with a bundled DejaVu Sans as the fallback.
+A `TextArea` edits many lines and wraps at its width: Enter breaks the line (Control or Meta with Enter raises `Submit`), Up and Down move by wrapped line, Home and End go to the ends of the line, and the text scrolls to keep the caret in view and with the wheel. Control or Meta with `z` undoes an edit of an input or text area, with Shift or `y` redoes.
+
+A `Size` is `Auto`, `Px(f)` or `Pct(f)`; a `Track` is `Px(f)`, `Fr(f)`, `Auto`, `MinContent` or `MaxContent`. Colors are `0xRRGGBBAA` Ints. A window is 1 to 16384 pixels on a side. Text uses system fonts, with a bundled DejaVu Sans, Sans Bold and Sans Mono as the fallback.

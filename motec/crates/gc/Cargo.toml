@@ -1,9 +1,0 @@
-[package]
-name = "gc"
-version = "0.1.1"
-edition = "2021"
-license = "MIT"
-
-[dependencies]
-isa = { path = "../isa" }
-contracts = { path = "../contracts" }

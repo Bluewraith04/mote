@@ -1,0 +1,155 @@
+/// Interface file for the builtin natives: one bodyless `native fn` per registry entry the
+/// language or the standard library calls. The registry name is the declared name without a leading `__`.
+/// A parameter typed `T` makes the function generic in `T`; `__Any` is the untyped escape hatch, spelled
+/// `Any` by users (`std.experimental.types`).
+
+native fn print(value: T)
+native fn println(value: T)
+native fn typeof(value: T) -> String
+
+native fn assert(cond: Bool)
+native fn assert_eq(a: T, b: T)
+
+native fn __panic(msg: String)
+
+native fn __debug_raw(value: T) -> String
+
+native fn __task_any(tasks: __Any) -> __Any
+native fn __task_pin(mode: Int) -> Bool
+
+native fn __math_f1(op: String, x: Float) -> Float
+native fn __math_f2(op: String, x: Float, y: Float) -> Float
+native fn __math_pred(op: String, x: Float) -> Bool
+native fn __math_iwrap(op: String, a: Int, b: Int) -> Int
+native fn __num_to_float(n: Int) -> Float
+native fn __num_to_int(x: Float) -> Int
+
+native fn __env_args() -> List<String>
+native fn __env_var_raw(name: String) -> String?
+native fn __env_vars() -> Map<String, String>
+
+native fn __io_write(fd: Int, s: String)
+native fn __io_flush(fd: Int)
+native fn __io_read_line() -> __Fallible<String?>
+native fn __io_read_file(path: String) -> __Fallible<String>
+native fn __io_read_file_bytes(path: String) -> __Fallible<Bytes>
+native fn __io_write_file(path: String, contents: String) -> __Fallible<Null>
+native fn __io_write_file_bytes(path: String, contents: Bytes) -> __Fallible<Null>
+
+native fn __fs_open(path: String, mode: Int) -> __Fallible<Int>
+native fn __fs_read(id: Int, max: Int) -> __Fallible<Bytes>
+native fn __fs_read_line(id: Int) -> __Fallible<String?>
+native fn __fs_write(id: Int, b: Bytes) -> __Fallible<Null>
+native fn __fs_write_text(id: Int, s: String) -> __Fallible<Null>
+native fn __fs_seek(id: Int, offset: Int, whence: Int) -> __Fallible<Int>
+native fn __fs_close(id: Int) -> __Fallible<Null>
+
+native fn __fs_list_dir(path: String) -> __Fallible<List<String>>
+native fn __fs_create_dir(path: String, recursive: Int) -> __Fallible<Null>
+native fn __fs_remove_file(path: String) -> __Fallible<Null>
+native fn __fs_remove_dir(path: String, recursive: Int) -> __Fallible<Null>
+native fn __fs_rename(src: String, dst: String) -> __Fallible<Null>
+native fn __fs_stat(path: String) -> __Fallible<List<Int>>
+
+native fn __process_run(program: String, args: List<String>, env: List<String>, stdin: Bytes, cwd: String) -> __Fallible<List<__Any>>
+
+native fn __str_parse_int(s: String) -> __Fallible<Int>
+native fn __str_parse_float(s: String) -> __Fallible<Float>
+
+native fn __net_tcp_connect(host: String, port: Int) -> __Fallible<Int>
+native fn __net_tcp_listen(host: String, port: Int) -> __Fallible<Int>
+native fn __net_tcp_accept(id: Int) -> __Fallible<Int>
+native fn __net_read(id: Int, max: Int) -> __Fallible<Bytes>
+native fn __net_write(id: Int, b: Bytes) -> __Fallible<Null>
+native fn __net_write_text(id: Int, s: String) -> __Fallible<Null>
+native fn __net_shutdown_write(id: Int) -> __Fallible<Null>
+native fn __net_close(id: Int) -> __Fallible<Null>
+native fn __net_local_port(id: Int) -> __Fallible<Int>
+native fn __net_peer_addr(id: Int) -> __Fallible<String>
+native fn __net_udp_bind(host: String, port: Int) -> __Fallible<Int>
+native fn __net_udp_send_to(id: Int, host: String, port: Int, b: Bytes) -> __Fallible<Int>
+native fn __net_udp_recv_from(id: Int, max: Int) -> __Fallible<List<__Any>>
+
+native fn __time_now_nanos() -> Int
+native fn __time_unix_millis() -> Int
+native fn __time_sleep_nanos(nanos: Int)
+native fn __time_local_offset(unix_seconds: Int) -> __Fallible<Int>
+native fn __time_ticker(nanos: Int) -> Receiver<Int>
+
+native fn __process_exit(code: Int)
+native fn __random_entropy() -> Int
+native fn __random_advance(state: Int) -> Int
+native fn __random_bits(state: Int) -> Int
+native fn __random_unit(state: Int) -> Float
+
+native fn __libtools_open(path: String) -> __Fallible<Int>
+native fn __libtools_open_package(package: String, name: String) -> __Fallible<Int>
+native fn __libtools_symbol(lib: Int, name: String, signature: String) -> __Fallible<Int>
+native fn __libtools_close(lib: Int)
+native fn __libtools_call(symbol: Int, signature: String, args: List<__Any>, blocking: Bool) -> __Any
+
+native fn __release_on_collect(handle: __Any, kind: Int)
+
+native fn __base64_encode(data: Bytes, url: Bool) -> String
+native fn __base64_decode(text: String, url: Bool) -> __Fallible<Bytes>
+native fn __uuid_v4() -> String
+native fn __uuid_v7() -> String
+native fn __uuid_parse(text: String) -> __Fallible<String>
+native fn __uuid_from_bytes(data: Bytes) -> __Fallible<String>
+native fn __uuid_bytes(text: String) -> Bytes
+native fn __uuid_version(text: String) -> Int
+
+
+
+native fn __http_parse_request(buf: Bytes) -> __Fallible<List<__Any>>
+native fn __http_decode_chunked(buf: Bytes, max: Int) -> __Fallible<List<__Any>>
+native fn __http_reason(status: Int) -> String
+native fn __http_date() -> String
+native fn __form_decode(text: String) -> List<String>
+native fn __percent_decode(text: String) -> String
+
+native fn __crypto_hash(alg: Int, data: Bytes) -> Bytes
+native fn __crypto_hmac(alg: Int, key: Bytes, data: Bytes) -> Bytes
+native fn __crypto_equal(a: Bytes, b: Bytes) -> Bool
+native fn __crypto_random(n: Int) -> __Fallible<Bytes>
+native fn __hex_encode(data: Bytes) -> String
+native fn __hex_decode(text: String) -> __Fallible<Bytes>
+native fn __password_hash(password: String) -> __Fallible<String>
+native fn __password_verify(password: String, hash: String) -> __Fallible<Bool>
+
+native fn __net_tcp_connect_tls(host: String, port: Int) -> __Fallible<Int>
+native fn __net_tcp_listen_tls(host: String, port: Int, cert_pem: String, key_pem: String) -> __Fallible<Int>
+native fn __tls_self_signed(names: List<String>) -> __Fallible<List<String>>
+native fn __tls_check_identity(cert_pem: String, key_pem: String) -> __Fallible<Null>
+native fn __net_read_for(id: Int, max: Int, timeout_ms: Int) -> __Fallible<Bytes>
+
+
+native fn __ui_headless(w: Int, h: Int) -> __Fallible<Int>
+native fn __ui_close(win: Int) -> __Fallible<Null>
+native fn __ui_default_style() -> List<Float>
+native fn __ui_style(win: Int, wire: List<Float>) -> __Fallible<Int>
+native fn __ui_add(win: Int, parent: Int, kind: Int) -> __Fallible<Int>
+native fn __ui_remove(win: Int, node: Int) -> __Fallible<Null>
+native fn __ui_set_text(win: Int, node: Int, text: String) -> __Fallible<Null>
+native fn __ui_text(win: Int, node: Int) -> __Fallible<String>
+native fn __ui_set_style(win: Int, node: Int, style: Int) -> __Fallible<Null>
+native fn __ui_set_image(win: Int, node: Int, png: Bytes) -> __Fallible<Null>
+native fn __ui_present(win: Int) -> __Fallible<Int>
+native fn __ui_rect(win: Int, node: Int) -> __Fallible<List<Float>>
+native fn __ui_hit(win: Int, x: Float, y: Float) -> __Fallible<Int>
+native fn __ui_scroll(win: Int, node: Int, dx: Float, dy: Float) -> __Fallible<Bool>
+native fn __ui_resize(win: Int, w: Int, h: Int) -> __Fallible<Null>
+native fn __ui_pixel(win: Int, x: Int, y: Int) -> __Fallible<Int>
+native fn __ui_png(win: Int) -> __Fallible<Bytes>
+native fn __ui_input(win: Int, kind: Int, a: Float, b: Float, c: Float, d: Float) -> __Fallible<Int>
+native fn __ui_post(win: Int, tag: Int) -> __Fallible<Null>
+native fn __ui_events(win: Int) -> Receiver<List<Float>>
+native fn __ui_type(win: Int, text: String) -> __Fallible<Int>
+native fn __ui_focus(win: Int) -> __Fallible<Int>
+native fn __ui_focus_on(win: Int, node: Int) -> __Fallible<Null>
+native fn __ui_selection(win: Int, node: Int) -> __Fallible<List<Int>>
+native fn __ui_open(title: String, w: Int, h: Int) -> __Fallible<Int>
+native fn __ui_move_before(win: Int, node: Int, before: Int) -> __Fallible<Null>
+native fn __ui_chrome(win: Int, op: Int, arg: Int) -> __Fallible<Int>
+native fn __ui_set_title(win: Int, title: String) -> __Fallible<Null>
+native fn __ui_set_runs(win: Int, node: Int, texts: List<String>, spec: List<Float>) -> __Fallible<Null>

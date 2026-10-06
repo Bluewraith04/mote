@@ -274,6 +274,10 @@
         {
           "type": "_expression",
           "named": true
+        },
+        {
+          "type": "named_argument",
+          "named": true
         }
       ]
     }
@@ -1653,6 +1657,32 @@
           "named": true
         }
       ]
+    }
+  },
+  {
+    "type": "named_argument",
+    "named": true,
+    "fields": {
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      },
+      "value": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "_expression",
+            "named": true
+          }
+        ]
+      }
     }
   },
   {

@@ -1,0 +1,747 @@
+/// std.regex — a small regex engine. Explicit import, not in the prelude.
+///
+/// Matches over bytes (`String.bytes()`), not Unicode scalar values: `String` has no codepoint
+/// iterator yet. `.` and a class match one byte; `\w`/`\d`/`\s` are ASCII-only. A literal pattern
+/// still matches non-ASCII text correctly, since a UTF-8 byte sequence is unique per scalar value.
+///
+/// Syntax: literals, `.`, `[...]`/`[^...]` (ranges, `\d \D \w \W \s \S`), `^` `$`, `\b` `\B`,
+/// `(...)` capturing, `(?:...)` non-capturing, `(?<name>...)` named, `|`, `* + ? {m} {m,} {m,n}`
+/// with a trailing `?` for lazy. No backreferences, lookahead or lookbehind.
+
+import { * } from std.prelude
+
+enum Node {
+    Lit(Int)
+    AnyChar
+    Class(List<Int>, List<Int>, Bool)
+    Concat(List<Node>)
+    Alt(List<Node>)
+    Group(Int, Node)
+    Repeat(Node, Int, Int, Bool)
+    Start
+    End
+    WordB(Bool)
+}
+
+enum Instr {
+    Char(Int)
+    AnyByte
+    Class(List<Int>, List<Int>, Bool)
+    Jmp(Int)
+    Split(Int, Int)
+    Save(Int)
+    AssertStart
+    AssertEnd
+    WordB(Bool)
+    Accept
+}
+
+class PState {
+    bytes: Bytes
+    var pos: Int
+    var ngroups: Int
+    var depth: Int
+    var names: List<String>
+    var error: String
+}
+
+fn peek(p: PState) -> Int {
+    if p.pos >= p.bytes.len() { return -1 }
+    return p.bytes.get(p.pos)
+}
+
+fn peek_at(p: PState, off: Int) -> Int {
+    let i = p.pos + off
+    if i >= p.bytes.len() { return -1 }
+    return p.bytes.get(i)
+}
+
+fn advance(var p: PState) -> Int {
+    let c = peek(p)
+    p.pos = p.pos + 1
+    return c
+}
+
+fn byte_char(c: Int) -> String {
+    let b = Bytes()
+    b.push(c)
+    match b.decode() {
+        Some(s) => { return s }
+        None => { return "?" }
+    }
+}
+
+fn is_alpha(c: Int) -> Bool {
+    return (c >= 65 && c <= 90) || (c >= 97 && c <= 122)
+}
+
+fn add_range(var los: List<Int>, var his: List<Int>, lo: Int, hi: Int) {
+    los.push(lo)
+    his.push(hi)
+}
+
+fn add_digit_ranges(var los: List<Int>, var his: List<Int>, negate: Bool) {
+    if !negate {
+        add_range(los, his, 48, 57)
+        return
+    }
+    add_range(los, his, 0, 47)
+    add_range(los, his, 58, 255)
+}
+
+fn add_word_ranges(var los: List<Int>, var his: List<Int>, negate: Bool) {
+    if !negate {
+        add_range(los, his, 48, 57)
+        add_range(los, his, 65, 90)
+        add_range(los, his, 95, 95)
+        add_range(los, his, 97, 122)
+        return
+    }
+    add_range(los, his, 0, 47)
+    add_range(los, his, 58, 64)
+    add_range(los, his, 91, 94)
+    add_range(los, his, 96, 96)
+    add_range(los, his, 123, 255)
+}
+
+fn add_space_ranges(var los: List<Int>, var his: List<Int>, negate: Bool) {
+    if !negate {
+        add_range(los, his, 9, 13)
+        add_range(los, his, 32, 32)
+        return
+    }
+    add_range(los, his, 0, 8)
+    add_range(los, his, 14, 31)
+    add_range(los, his, 33, 255)
+}
+
+fn digit_class_node(negate: Bool) -> Node {
+    var los: List<Int> = []
+    var his: List<Int> = []
+    add_digit_ranges(los, his, negate)
+    return Node.Class(los, his, false)
+}
+
+fn word_class_node(negate: Bool) -> Node {
+    var los: List<Int> = []
+    var his: List<Int> = []
+    add_word_ranges(los, his, negate)
+    return Node.Class(los, his, false)
+}
+
+fn space_class_node(negate: Bool) -> Node {
+    var los: List<Int> = []
+    var his: List<Int> = []
+    add_space_ranges(los, his, negate)
+    return Node.Class(los, his, false)
+}
+
+fn add_class_shorthand(var p: PState, var los: List<Int>, var his: List<Int>) -> Bool {
+    let save = p.pos
+    advance(p)
+    let e = peek(p)
+    if e == 100 { advance(p); add_digit_ranges(los, his, false); return true }
+    if e == 68 { advance(p); add_digit_ranges(los, his, true); return true }
+    if e == 119 { advance(p); add_word_ranges(los, his, false); return true }
+    if e == 87 { advance(p); add_word_ranges(los, his, true); return true }
+    if e == 115 { advance(p); add_space_ranges(los, his, false); return true }
+    if e == 83 { advance(p); add_space_ranges(los, his, true); return true }
+    p.pos = save
+    return false
+}
+
+fn parse_class_char(var p: PState) -> Int {
+    let c = advance(p)
+    if c != 92 { return c }
+    let e = advance(p)
+    if e == 110 { return 10 }
+    if e == 116 { return 9 }
+    if e == 114 { return 13 }
+    if e == 48 { return 0 }
+    return e
+}
+
+fn parse_class(var p: PState) -> Node {
+    advance(p)
+    var negate = false
+    if peek(p) == 94 { advance(p); negate = true }
+    var los: List<Int> = []
+    var his: List<Int> = []
+    var first = true
+    while true {
+        let c = peek(p)
+        if c < 0 {
+            if p.error == "" { p.error = "unterminated character class" }
+            return Node.Lit(0)
+        }
+        if c == 93 && !first { advance(p); break }
+        first = false
+        if c == 92 {
+            if add_class_shorthand(p, los, his) { continue }
+            let lo = parse_class_char(p)
+            add_range(los, his, lo, lo)
+            continue
+        }
+        let lo = parse_class_char(p)
+        if peek(p) == 45 && peek_at(p, 1) >= 0 && peek_at(p, 1) != 93 {
+            advance(p)
+            let hi = parse_class_char(p)
+            if hi < lo {
+                if p.error == "" { p.error = "bad class range: end before start" }
+                return Node.Lit(0)
+            }
+            add_range(los, his, lo, hi)
+        } else {
+            add_range(los, his, lo, lo)
+        }
+    }
+    return Node.Class(los, his, negate)
+}
+
+fn parse_escape(var p: PState) -> Node {
+    advance(p)
+    let e = peek(p)
+    if e < 0 {
+        if p.error == "" { p.error = "dangling escape at end of pattern" }
+        return Node.Lit(0)
+    }
+    if e == 100 { advance(p); return digit_class_node(false) }
+    if e == 68 { advance(p); return digit_class_node(true) }
+    if e == 119 { advance(p); return word_class_node(false) }
+    if e == 87 { advance(p); return word_class_node(true) }
+    if e == 115 { advance(p); return space_class_node(false) }
+    if e == 83 { advance(p); return space_class_node(true) }
+    if e == 98 { advance(p); return Node.WordB(true) }
+    if e == 66 { advance(p); return Node.WordB(false) }
+    if e == 110 { advance(p); return Node.Lit(10) }
+    if e == 116 { advance(p); return Node.Lit(9) }
+    if e == 114 { advance(p); return Node.Lit(13) }
+    if e == 48 { advance(p); return Node.Lit(0) }
+    if is_alpha(e) {
+        if p.error == "" { p.error = "unknown escape '\\" + byte_char(e) + "'" }
+        return Node.Lit(0)
+    }
+    advance(p)
+    return Node.Lit(e)
+}
+
+fn parse_group(var p: PState) -> Node {
+    advance(p)
+    p.depth = p.depth + 1
+    if p.depth > 256 {
+        if p.error == "" { p.error = "pattern nesting is too deep" }
+        return Node.Lit(0)
+    }
+    var capturing = true
+    var name = ""
+    if peek(p) == 63 {
+        advance(p)
+        if peek(p) == 58 {
+            advance(p)
+            capturing = false
+        } else if peek(p) == 60 {
+            advance(p)
+            var nm = ""
+            while peek(p) >= 0 && peek(p) != 62 {
+                nm = nm + byte_char(advance(p))
+            }
+            if peek(p) != 62 {
+                if p.error == "" { p.error = "unterminated group name" }
+                return Node.Lit(0)
+            }
+            advance(p)
+            name = nm
+        } else {
+            if p.error == "" { p.error = "unsupported group syntax '(?" + byte_char(peek(p)) + "'" }
+            return Node.Lit(0)
+        }
+    }
+    var gi = -1
+    if capturing {
+        p.ngroups = p.ngroups + 1
+        gi = p.ngroups
+        p.names.push(name)
+    }
+    let inner = parse_alt(p)
+    if p.error != "" { return inner }
+    if peek(p) != 41 {
+        if p.error == "" { p.error = "unterminated group" }
+        return inner
+    }
+    advance(p)
+    p.depth = p.depth - 1
+    return Node.Group(gi, inner)
+}
+
+fn parse_atom(var p: PState) -> Node {
+    let c = peek(p)
+    if c == 40 { return parse_group(p) }
+    if c == 91 { return parse_class(p) }
+    if c == 46 { advance(p); return Node.AnyChar }
+    if c == 94 { advance(p); return Node.Start }
+    if c == 36 { advance(p); return Node.End }
+    if c == 92 { return parse_escape(p) }
+    if c < 0 {
+        if p.error == "" { p.error = "unexpected end of pattern" }
+        return Node.Lit(0)
+    }
+    if c == 41 || c == 124 || c == 42 || c == 43 || c == 63 {
+        if p.error == "" { p.error = "unexpected '" + byte_char(c) + "'" }
+        return Node.Lit(0)
+    }
+    advance(p)
+    return Node.Lit(c)
+}
+
+fn maybe_lazy(var p: PState) -> Bool {
+    if peek(p) == 63 { advance(p); return false }
+    return true
+}
+
+fn parse_digits(var p: PState) -> Int {
+    var n = 0
+    var count = 0
+    while peek(p) >= 48 && peek(p) <= 57 {
+        n = n * 10 + (advance(p) - 48)
+        count = count + 1
+    }
+    if count == 0 { return -1 }
+    return n
+}
+
+fn parse_brace_repeat(var p: PState, atom: Node) -> Node {
+    let save = p.pos
+    advance(p)
+    let min = parse_digits(p)
+    if min < 0 { p.pos = save; return atom }
+    var max = min
+    if peek(p) == 44 {
+        advance(p)
+        if peek(p) == 125 {
+            max = -1
+        } else {
+            max = parse_digits(p)
+            if max < 0 { p.pos = save; return atom }
+        }
+    }
+    if peek(p) != 125 { p.pos = save; return atom }
+    advance(p)
+    if max >= 0 && max < min {
+        if p.error == "" { p.error = "bad repeat {" + min.to_string() + "," + max.to_string() + "}: max is less than min" }
+        return atom
+    }
+    if min > 1000 || max > 1000 {
+        if p.error == "" { p.error = "repeat count too large (max 1000)" }
+        return atom
+    }
+    let greedy = maybe_lazy(p)
+    return Node.Repeat(atom, min, max, greedy)
+}
+
+fn parse_repeat(var p: PState) -> Node {
+    let atom = parse_atom(p)
+    if p.error != "" { return atom }
+    let c = peek(p)
+    if c == 42 {
+        advance(p)
+        let greedy = maybe_lazy(p)
+        return Node.Repeat(atom, 0, -1, greedy)
+    }
+    if c == 43 {
+        advance(p)
+        let greedy = maybe_lazy(p)
+        return Node.Repeat(atom, 1, -1, greedy)
+    }
+    if c == 63 {
+        advance(p)
+        let greedy = maybe_lazy(p)
+        return Node.Repeat(atom, 0, 1, greedy)
+    }
+    if c == 123 { return parse_brace_repeat(p, atom) }
+    return atom
+}
+
+fn parse_concat(var p: PState) -> Node {
+    let parts: List<Node> = []
+    while true {
+        let c = peek(p)
+        if c < 0 || c == 124 || c == 41 { break }
+        let n = parse_repeat(p)
+        if p.error != "" { return n }
+        parts.push(n)
+    }
+    if parts.len() == 1 {
+        return parts.get(0)
+    }
+    return Node.Concat(parts)
+}
+
+fn parse_alt(var p: PState) -> Node {
+    let first = parse_concat(p)
+    if p.error != "" { return first }
+    if peek(p) != 124 { return first }
+    let branches: List<Node> = [first]
+    while peek(p) == 124 {
+        advance(p)
+        let n = parse_concat(p)
+        if p.error != "" { return n }
+        branches.push(n)
+    }
+    return Node.Alt(branches)
+}
+
+fn compile_star(child: Node, greedy: Bool, var prog: List<Instr>) {
+    let l1 = prog.len()
+    let split_pc = prog.len()
+    prog.push(Instr.Split(0, 0))
+    let l2 = prog.len()
+    compile_node(child, prog)
+    prog.push(Instr.Jmp(l1))
+    let l3 = prog.len()
+    if greedy { prog.set(split_pc, Instr.Split(l2, l3)) } else { prog.set(split_pc, Instr.Split(l3, l2)) }
+}
+
+fn compile_plus(child: Node, greedy: Bool, var prog: List<Instr>) {
+    let l1 = prog.len()
+    compile_node(child, prog)
+    let split_pc = prog.len()
+    prog.push(Instr.Split(0, 0))
+    let l2 = prog.len()
+    if greedy { prog.set(split_pc, Instr.Split(l1, l2)) } else { prog.set(split_pc, Instr.Split(l2, l1)) }
+}
+
+fn compile_quest(child: Node, greedy: Bool, var prog: List<Instr>) {
+    let split_pc = prog.len()
+    prog.push(Instr.Split(0, 0))
+    let l1 = prog.len()
+    compile_node(child, prog)
+    let l2 = prog.len()
+    if greedy { prog.set(split_pc, Instr.Split(l1, l2)) } else { prog.set(split_pc, Instr.Split(l2, l1)) }
+}
+
+fn compile_repeat(child: Node, min: Int, max: Int, greedy: Bool, var prog: List<Instr>) {
+    if min == 0 && max == -1 { compile_star(child, greedy, prog); return }
+    if min == 1 && max == -1 { compile_plus(child, greedy, prog); return }
+    if min == 0 && max == 1 { compile_quest(child, greedy, prog); return }
+    var i = 0
+    while i < min {
+        compile_node(child, prog)
+        i = i + 1
+    }
+    if max == -1 {
+        compile_star(child, greedy, prog)
+        return
+    }
+    var j = min
+    while j < max {
+        compile_quest(child, greedy, prog)
+        j = j + 1
+    }
+}
+
+fn compile_alt(branches: List<Node>, var prog: List<Instr>) {
+    let n = branches.len()
+    let end_jumps: List<Int> = []
+    var i = 0
+    while i < n {
+        let branch = branches.get(i)
+        if i < n - 1 {
+            let split_pc = prog.len()
+            prog.push(Instr.Split(0, 0))
+            let l1 = prog.len()
+            compile_node(branch, prog)
+            let jmp_pc = prog.len()
+            prog.push(Instr.Jmp(0))
+            end_jumps.push(jmp_pc)
+            let l2 = prog.len()
+            prog.set(split_pc, Instr.Split(l1, l2))
+        } else {
+            compile_node(branch, prog)
+        }
+        i = i + 1
+    }
+    let after = prog.len()
+    var j = 0
+    while j < end_jumps.len() {
+        prog.set(end_jumps.get(j), Instr.Jmp(after))
+        j = j + 1
+    }
+}
+
+fn compile_node(node: Node, var prog: List<Instr>) {
+    match node {
+        Node.Lit(c) => { prog.push(Instr.Char(c)) }
+        Node.AnyChar => { prog.push(Instr.AnyByte) }
+        Node.Class(los, his, negate) => { prog.push(Instr.Class(los, his, negate)) }
+        Node.Start => { prog.push(Instr.AssertStart) }
+        Node.End => { prog.push(Instr.AssertEnd) }
+        Node.WordB(want) => { prog.push(Instr.WordB(want)) }
+        Node.Concat(parts) => {
+            var i = 0
+            while i < parts.len() {
+                compile_node(parts.get(i), prog)
+                i = i + 1
+            }
+        }
+        Node.Alt(branches) => { compile_alt(branches, prog) }
+        Node.Group(gi, inner) => {
+            if gi >= 0 {
+                prog.push(Instr.Save(gi * 2))
+                compile_node(inner, prog)
+                prog.push(Instr.Save(gi * 2 + 1))
+            } else {
+                compile_node(inner, prog)
+            }
+        }
+        Node.Repeat(child, min, max, greedy) => { compile_repeat(child, min, max, greedy, prog) }
+    }
+}
+
+fn class_contains(los: List<Int>, his: List<Int>, b: Int) -> Bool {
+    var i = 0
+    while i < los.len() {
+        if b >= los.get(i) && b <= his.get(i) { return true }
+        i = i + 1
+    }
+    return false
+}
+
+fn is_word_byte(b: Int) -> Bool {
+    return (b >= 48 && b <= 57) || (b >= 65 && b <= 90) || (b >= 97 && b <= 122) || b == 95
+}
+
+fn is_word_boundary(s: Bytes, pos: Int) -> Bool {
+    let before = pos > 0 && is_word_byte(s.get(pos - 1))
+    let after = pos < s.len() && is_word_byte(s.get(pos))
+    return before != after
+}
+
+fn run(prog: List<Instr>, pc: Int, s: Bytes, pos: Int, var caps: List<Int>) -> Option<Int> {
+    let ins: Instr = prog.get(pc)
+    match ins {
+        Instr.Char(b) => {
+            if pos < s.len() && s.get(pos) == b { return run(prog, pc + 1, s, pos + 1, caps) }
+            return None
+        }
+        Instr.AnyByte => {
+            if pos < s.len() { return run(prog, pc + 1, s, pos + 1, caps) }
+            return None
+        }
+        Instr.Class(los, his, negate) => {
+            if pos >= s.len() { return None }
+            let inside = class_contains(los, his, s.get(pos))
+            if inside != negate { return run(prog, pc + 1, s, pos + 1, caps) }
+            return None
+        }
+        Instr.Jmp(t) => { return run(prog, t, s, pos, caps) }
+        Instr.Split(a, b) => {
+            let r = run(prog, a, s, pos, caps)
+            match r {
+                Some(_) => { return r }
+                None => { return run(prog, b, s, pos, caps) }
+            }
+        }
+        Instr.Save(slot) => {
+            let old = caps.get(slot)
+            caps.set(slot, pos)
+            let r = run(prog, pc + 1, s, pos, caps)
+            match r {
+                Some(_) => { return r }
+                None => { caps.set(slot, old); return None }
+            }
+        }
+        Instr.AssertStart => {
+            if pos == 0 { return run(prog, pc + 1, s, pos, caps) }
+            return None
+        }
+        Instr.AssertEnd => {
+            if pos == s.len() { return run(prog, pc + 1, s, pos, caps) }
+            return None
+        }
+        Instr.WordB(want) => {
+            if is_word_boundary(s, pos) == want { return run(prog, pc + 1, s, pos, caps) }
+            return None
+        }
+        Instr.Accept => { return Some(pos) }
+    }
+    return None
+}
+
+fn find_at(re: Regex, s: Bytes, start: Int) -> Option<List<Int>> {
+    var caps: List<Int> = []
+    var i = 0
+    while i < (re.ngroups + 1) * 2 {
+        caps.push(-1)
+        i = i + 1
+    }
+    let r = run(re.prog, 0, s, start, caps)
+    match r {
+        Some(_) => { return Some(caps) }
+        None => { return None }
+    }
+}
+
+fn scan_from(re: Regex, s: Bytes, start_at: Int) -> Option<List<Int>> {
+    var start = start_at
+    while start <= s.len() {
+        let r = find_at(re, s, start)
+        match r {
+            Some(caps) => { return Some(caps) }
+            None => {}
+        }
+        start = start + 1
+    }
+    return None
+}
+
+fn make_match(text: String, caps: List<Int>) -> Match {
+    let start = caps.get(0)
+    let end = caps.get(1)
+    return Match { start: start, end: end, text: text.slice(start, end) }
+}
+
+fn make_captures(re: Regex, text: String, caps: List<Int>) -> Captures {
+    let groups: List<Match?> = []
+    var i = 0
+    while i <= re.ngroups {
+        let s = caps.get(i * 2)
+        let e = caps.get(i * 2 + 1)
+        if s >= 0 && e >= 0 {
+            groups.push(Some(Match { start: s, end: e, text: text.slice(s, e) }))
+        } else {
+            groups.push(None)
+        }
+        i = i + 1
+    }
+    return Captures { groups: groups, names: re.names }
+}
+
+/// One match: `start`/`end` are byte offsets into the matched text (`String.slice` boundaries).
+pub class Match {
+    pub start: Int
+    pub end: Int
+    pub text: String
+}
+
+/// A successful match's capture groups; index 0 is the whole match.
+pub class Captures {
+    groups: List<Match?>
+    names: List<String>
+
+    pub fn get(self, i: Int) -> Option<Match> {
+        if i < 0 || i >= self.groups.len() { return None }
+        return self.groups.get(i)
+    }
+
+    /// The group named `(?<name>...)`, or `None` if no group has that name or it did not match.
+    pub fn get_named(self, name: String) -> Option<Match> {
+        var i = 1
+        while i < self.names.len() {
+            if self.names.get(i) == name { return self.groups.get(i) }
+            i = i + 1
+        }
+        return None
+    }
+
+    pub fn len(self) -> Int {
+        return self.groups.len()
+    }
+}
+
+/// A compiled pattern. Matches over bytes; see the module doc comment.
+pub class Regex {
+    prog: List<Instr>
+    ngroups: Int
+    names: List<String>
+
+    /// Compiles `pattern`; `Err` names the first syntax problem and its byte offset.
+    pub fn compile(pattern: String) -> Result<Regex, Error> {
+        var p = PState { bytes: pattern.bytes(), pos: 0, ngroups: 0, depth: 0, names: [""], error: "" }
+        let ast = parse_alt(p)
+        if p.error == "" && p.pos < p.bytes.len() {
+            p.error = "unexpected '" + byte_char(peek(p)) + "'"
+        }
+        if p.error != "" {
+            return Err(Error.new(ErrorKind.InvalidData, p.error))
+        }
+        var prog: List<Instr> = []
+        prog.push(Instr.Save(0))
+        compile_node(ast, prog)
+        prog.push(Instr.Save(1))
+        prog.push(Instr.Accept)
+        return Ok(Regex { prog: prog, ngroups: p.ngroups, names: p.names })
+    }
+
+    pub fn is_match(self, text: String) -> Bool {
+        match scan_from(self, text.bytes(), 0) {
+            Some(_) => { return true }
+            None => { return false }
+        }
+    }
+
+    /// The leftmost match, if any.
+    pub fn find(self, text: String) -> Option<Match> {
+        match scan_from(self, text.bytes(), 0) {
+            Some(caps) => { return Some(make_match(text, caps)) }
+            None => { return None }
+        }
+    }
+
+    /// The leftmost match's capture groups, if any.
+    pub fn captures(self, text: String) -> Option<Captures> {
+        match scan_from(self, text.bytes(), 0) {
+            Some(caps) => { return Some(make_captures(self, text, caps)) }
+            None => { return None }
+        }
+    }
+
+    /// Every non-overlapping match, left to right; a zero-width match still advances by one byte.
+    pub fn find_all(self, text: String) -> List<Match> {
+        let out: List<Match> = []
+        let s = text.bytes()
+        var pos = 0
+        while pos <= s.len() {
+            match scan_from(self, s, pos) {
+                Some(caps) => {
+                    let m = make_match(text, caps)
+                    out.push(m)
+                    if m.end > pos { pos = m.end } else { pos = pos + 1 }
+                }
+                None => { pos = s.len() + 1 }
+            }
+        }
+        return out
+    }
+
+    /// `text` cut around every match; the matched text itself is dropped.
+    pub fn split(self, text: String) -> List<String> {
+        let parts: List<String> = []
+        let matches = self.find_all(text)
+        var last = 0
+        var i = 0
+        while i < matches.len() {
+            let m: Match = matches.get(i)
+            parts.push(text.slice(last, m.start))
+            last = m.end
+            i = i + 1
+        }
+        parts.push(text.slice(last, text.len()))
+        return parts
+    }
+
+    /// Every match replaced with `replacement` (taken literally — no `$1`/`${name}` expansion yet).
+    pub fn replace_all(self, text: String, replacement: String) -> String {
+        let matches = self.find_all(text)
+        var out = ""
+        var last = 0
+        var i = 0
+        while i < matches.len() {
+            let m: Match = matches.get(i)
+            out = out + text.slice(last, m.start) + replacement
+            last = m.end
+            i = i + 1
+        }
+        out = out + text.slice(last, text.len())
+        return out
+    }
+}

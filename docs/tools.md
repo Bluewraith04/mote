@@ -27,7 +27,7 @@ test "not ready yet" {
 | Command | Runs |
 |---|---|
 | `mote test main.mote` | every test in the file |
-| `mote test` | the tests of the current package |
+| `mote test` | the tests of the current package: those in the modules its entry imports, and in the `.mote` files directly under its `tests/` directory |
 | `mote test --filter zero` | tests whose name matches the [regex](std/regex.md) `zero` (unanchored; a bad pattern exits with `2`) |
 | `mote test --schedule-seed 7` | the tests on one worker, with task switches chosen by the seed |
 
@@ -41,6 +41,8 @@ Each test runs as its own task and is joined before the next, so a fault aborts 
 ```
 
 The exit code is `0` when nothing failed and `1` otherwise. A failing `--schedule-seed` run prints `schedule seed: n`; the same seed replays the same switches.
+
+A library keeps its tests in `tests/`, where they do not ship with it. A test file reaches the package's own modules by a relative path (`import ..src.lib as shapes`) and its dependencies by name once `mote sync` has run. `mote test` in the package directory runs every file in `tests/` with the tests the entry imports, and grants a package that carries a native library to its own tests.
 
 [`std.test`](std/test.md) has a `Suite` for tests written as ordinary code.
 

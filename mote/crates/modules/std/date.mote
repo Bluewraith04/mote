@@ -1,0 +1,430 @@
+/// std.date — civil calendar time. Explicit import, not in the prelude.
+///
+/// Proleptic Gregorian dates as value structs with methods; comparison is
+/// `compare`, as with Duration. All arithmetic is exact Int math, no floating point.
+
+import { * } from std.prelude
+import { pad_start } from std.string
+import { Duration } from std.time
+
+fn fdiv(a: Int, b: Int) -> Int {
+    let q = a / b
+    if a % b != 0 && ((a < 0) != (b < 0)) { return q - 1 }
+    return q
+}
+
+fn fmod(a: Int, b: Int) -> Int {
+    return a - fdiv(a, b) * b
+}
+
+pub fn is_leap_year(y: Int) -> Bool {
+    return fmod(y, 4) == 0 && (fmod(y, 100) != 0 || fmod(y, 400) == 0)
+}
+
+/// Days in month `m` (1 to 12) of year `y`.
+pub fn days_in_month(y: Int, m: Int) -> Int {
+    if m == 2 {
+        if is_leap_year(y) { return 29 }
+        return 28
+    }
+    if m == 4 || m == 6 || m == 9 || m == 11 { return 30 }
+    return 31
+}
+
+fn days_from_civil(year: Int, month: Int, day: Int) -> Int {
+    var y = year
+    if month <= 2 { y = y - 1 }
+    let era = fdiv(y, 400)
+    let yoe = y - era * 400
+    var shifted = month - 3
+    if month <= 2 { shifted = month + 9 }
+    let doy = (153 * shifted + 2) / 5 + day - 1
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy
+    return era * 146097 + doe - 719468
+}
+
+fn civil_from_days(days: Int) -> List<Int> {
+    let z = days + 719468
+    let era = fdiv(z, 146097)
+    let doe = z - era * 146097
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100)
+    let mp = (5 * doy + 2) / 153
+    let d = doy - (153 * mp + 2) / 5 + 1
+    var m = mp - 9
+    if mp < 10 { m = mp + 3 }
+    var y = yoe + era * 400
+    if m <= 2 { y = y + 1 }
+    return [y, m, d]
+}
+
+/// `n` as decimal digits, at least `width` wide, zero padded.
+pub fn pad_int(n: Int, width: Int) -> String {
+    return pad_start(n.to_string(), width, "0")
+}
+
+fn year_text(y: Int) -> String {
+    if y < 0 { return "-" + pad_int(0 - y, 4) }
+    return pad_int(y, 4)
+}
+
+/// The decimal number in `count` bytes of `s` from `start`; `-1` if any is not a digit or the text is short.
+pub fn digits_at(s: String, start: Int, count: Int) -> Int {
+    let b = s.bytes()
+    if start < 0 || start + count > b.len() { return -1 }
+    var n = 0
+    var i = 0
+    while i < count {
+        let c = b.get(start + i)
+        if c < 48 || c > 57 { return -1 }
+        n = n * 10 + (c - 48)
+        i = i + 1
+    }
+    return n
+}
+
+fn invalid(message: String) -> Error {
+    return Error.new(ErrorKind.InvalidData, message)
+}
+
+pub fn weekday_name(n: Int) -> String {
+    let names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+    return names.get(fmod(n, 7))
+}
+
+pub fn month_name(m: Int) -> String {
+    let names = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
+    return names.get(m - 1)
+}
+
+/// A calendar date. `weekday()` is 0 for Monday to 6 for Sunday.
+pub struct Date {
+    pub var year: Int
+    pub var month: Int
+    pub var day: Int
+
+    /// Checked construction; a month or day out of range is an `Err`.
+    pub fn new(year: Int, month: Int, day: Int) -> Result<Date, Error> {
+        if month < 1 || month > 12 { return Err(invalid("month must be 1 to 12")) }
+        if day < 1 || day > days_in_month(year, month) { return Err(invalid("day is out of range for the month")) }
+        return Ok(Date { year: year, month: month, day: day })
+    }
+
+    /// The date `days` after 1970-01-01 (negative before).
+    pub fn from_days(days: Int) -> Date {
+        let c = civil_from_days(days)
+        return Date { year: c.get(0), month: c.get(1), day: c.get(2) }
+    }
+
+    pub fn days_since_epoch(self) -> Int {
+        return days_from_civil(self.year, self.month, self.day)
+    }
+
+    pub fn weekday(self) -> Int {
+        return fmod(self.days_since_epoch() + 3, 7)
+    }
+
+    /// 1 for January 1st.
+    pub fn day_of_year(self) -> Int {
+        return self.days_since_epoch() - days_from_civil(self.year, 1, 1) + 1
+    }
+
+    pub fn add_days(self, n: Int) -> Date {
+        return Date.from_days(self.days_since_epoch() + n)
+    }
+
+    /// Whole months later; the day clamps to the end of a shorter month.
+    pub fn add_months(self, n: Int) -> Date {
+        let total = self.year * 12 + (self.month - 1) + n
+        let y = fdiv(total, 12)
+        let m = fmod(total, 12) + 1
+        var d = self.day
+        let last = days_in_month(y, m)
+        if d > last { d = last }
+        return Date { year: y, month: m, day: d }
+    }
+
+    pub fn add_years(self, n: Int) -> Date {
+        return self.add_months(n * 12)
+    }
+
+    /// Days from this date to `other`; negative if `other` is earlier.
+    pub fn days_until(self, other: Date) -> Int {
+        return other.days_since_epoch() - self.days_since_epoch()
+    }
+
+    /// -1, 0 or 1.
+    pub fn compare(self, other: Date) -> Int {
+        let a = self.days_since_epoch()
+        let b = other.days_since_epoch()
+        if a < b { return -1 }
+        if a > b { return 1 }
+        return 0
+    }
+
+    /// `2024-03-09`.
+    pub fn to_iso(self) -> String {
+        return year_text(self.year) + "-" + pad_int(self.month, 2) + "-" + pad_int(self.day, 2)
+    }
+}
+
+/// Parses `YYYY-MM-DD`.
+pub fn parse_date(text: String) -> Result<Date, Error> {
+    if text.len() != 10 { return Err(invalid("a date is YYYY-MM-DD")) }
+    let b = text.bytes()
+    if b.get(4) != 45 || b.get(7) != 45 { return Err(invalid("a date is YYYY-MM-DD")) }
+    let y = digits_at(text, 0, 4)
+    let m = digits_at(text, 5, 2)
+    let d = digits_at(text, 8, 2)
+    if y < 0 || m < 0 || d < 0 { return Err(invalid("a date is YYYY-MM-DD")) }
+    return Date.new(y, m, d)
+}
+
+/// A civil date and time with `offset`, seconds east of UTC. Compare moments with `compare`, not fields.
+pub struct DateTime {
+    pub var year: Int
+    pub var month: Int
+    pub var day: Int
+    pub var hour: Int
+    pub var minute: Int
+    pub var second: Int
+    pub var nano: Int
+    pub var offset: Int
+
+    /// Checked construction; a field out of range is an `Err`.
+    pub fn new(year: Int, month: Int, day: Int, hour: Int, minute: Int, second: Int, nano: Int, offset: Int) -> Result<DateTime, Error> {
+        if month < 1 || month > 12 { return Err(invalid("month must be 1 to 12")) }
+        if day < 1 || day > days_in_month(year, month) { return Err(invalid("day is out of range for the month")) }
+        if hour < 0 || hour > 23 { return Err(invalid("hour must be 0 to 23")) }
+        if minute < 0 || minute > 59 { return Err(invalid("minute must be 0 to 59")) }
+        if second < 0 || second > 59 { return Err(invalid("second must be 0 to 59")) }
+        if nano < 0 || nano > 999999999 { return Err(invalid("nano must be 0 to 999999999")) }
+        if offset <= -86400 || offset >= 86400 { return Err(invalid("offset must be under a day")) }
+        return Ok(DateTime { year: year, month: month, day: day, hour: hour, minute: minute, second: second, nano: nano, offset: offset })
+    }
+
+    /// The moment `secs` after the epoch plus `nano`, shown at `offset`.
+    pub fn from_unix(secs: Int, nano: Int, offset: Int) -> DateTime {
+        let local = secs + offset
+        let c = civil_from_days(fdiv(local, 86400))
+        let sod = fmod(local, 86400)
+        return DateTime {
+            year: c.get(0), month: c.get(1), day: c.get(2),
+            hour: sod / 3600, minute: (sod % 3600) / 60, second: sod % 60,
+            nano: nano, offset: offset
+        }
+    }
+
+    pub fn from_unix_millis(ms: Int, offset: Int) -> DateTime {
+        return DateTime.from_unix(fdiv(ms, 1000), fmod(ms, 1000) * 1000000, offset)
+    }
+
+    pub fn date(self) -> Date {
+        return Date { year: self.year, month: self.month, day: self.day }
+    }
+
+    /// Whole seconds since the epoch, offset removed.
+    pub fn unix_secs(self) -> Int {
+        let days = days_from_civil(self.year, self.month, self.day)
+        return days * 86400 + self.hour * 3600 + self.minute * 60 + self.second - self.offset
+    }
+
+    pub fn unix_millis(self) -> Int {
+        return self.unix_secs() * 1000 + self.nano / 1000000
+    }
+
+    /// The same moment shown at another offset.
+    pub fn with_offset(self, offset: Int) -> DateTime {
+        return DateTime.from_unix(self.unix_secs(), self.nano, offset)
+    }
+
+    /// The same moment at the machine's offset, which can differ across the year.
+    pub fn to_local(self) -> Result<DateTime, Error> {
+        let secs = self.unix_secs()
+        match local_offset(secs) {
+            Ok(o) => { return Ok(DateTime.from_unix(secs, self.nano, o)) }
+            Err(e) => { return Err(e) }
+        }
+    }
+
+    /// This moment plus `d` (negative moves back), keeping the offset.
+    pub fn plus(self, d: Duration) -> DateTime {
+        let n = d.as_nanos()
+        var secs = self.unix_secs() + fdiv(n, 1000000000)
+        var nano = self.nano + fmod(n, 1000000000)
+        if nano >= 1000000000 {
+            nano = nano - 1000000000
+            secs = secs + 1
+        }
+        return DateTime.from_unix(secs, nano, self.offset)
+    }
+
+    /// Time from `earlier` to this moment; a `Duration` holds about 292 years of nanoseconds.
+    pub fn since(self, earlier: DateTime) -> Duration {
+        let secs = self.unix_secs() - earlier.unix_secs()
+        return Duration.from_nanos(secs * 1000000000 + (self.nano - earlier.nano))
+    }
+
+    /// -1, 0 or 1, by moment.
+    pub fn compare(self, other: DateTime) -> Int {
+        let a = self.unix_secs()
+        let b = other.unix_secs()
+        if a < b { return -1 }
+        if a > b { return 1 }
+        if self.nano < other.nano { return -1 }
+        if self.nano > other.nano { return 1 }
+        return 0
+    }
+
+    /// `2024-03-09T12:30:00Z`, or `+02:00`; fractional seconds appear only when `nano` is not zero.
+    pub fn to_iso(self) -> String {
+        var out = self.date().to_iso() + "T" + pad_int(self.hour, 2) + ":" + pad_int(self.minute, 2) + ":" + pad_int(self.second, 2)
+        if self.nano != 0 {
+            let frac = pad_int(self.nano, 9)
+            var n = 9
+            while n > 1 && frac.bytes().get(n - 1) == 48 { n = n - 1 }
+            out = out + "." + frac.slice(0, n)
+        }
+        return out + offset_text(self.offset, true)
+    }
+
+    /// Fills `%Y %m %d %H %M %S %f %j %a %A %b %B %e %z %%` in `pattern`; any other `%x` is kept as written.
+    pub fn format(self, pattern: String) -> String {
+        let p = pattern.bytes()
+        var out = ""
+        var i = 0
+        while i < p.len() {
+            let c = p.get(i)
+            if c != 37 || i + 1 >= p.len() {
+                out = out + pattern.slice(i, i + 1)
+                i = i + 1
+                continue
+            }
+            let f = pattern.slice(i + 1, i + 2)
+            out = out + self.field(f)
+            i = i + 2
+        }
+        return out
+    }
+
+    fn field(self, f: String) -> String {
+        if f == "Y" { return year_text(self.year) }
+        if f == "m" { return pad_int(self.month, 2) }
+        if f == "d" { return pad_int(self.day, 2) }
+        if f == "e" { return pad_start(self.day.to_string(), 2, " ") }
+        if f == "H" { return pad_int(self.hour, 2) }
+        if f == "M" { return pad_int(self.minute, 2) }
+        if f == "S" { return pad_int(self.second, 2) }
+        if f == "f" { return pad_int(self.nano, 9) }
+        if f == "j" { return pad_int(self.date().day_of_year(), 3) }
+        if f == "A" { return weekday_name(self.date().weekday()) }
+        if f == "a" { return weekday_name(self.date().weekday()).slice(0, 3) }
+        if f == "B" { return month_name(self.month) }
+        if f == "b" { return month_name(self.month).slice(0, 3) }
+        if f == "z" { return offset_text(self.offset, false) }
+        if f == "%" { return "%" }
+        return "%" + f
+    }
+}
+
+fn offset_text(offset: Int, colon: Bool) -> String {
+    if offset == 0 && colon { return "Z" }
+    var sign = "+"
+    var mag = offset
+    if offset < 0 {
+        sign = "-"
+        mag = 0 - offset
+    }
+    let hh = pad_int(mag / 3600, 2)
+    let mm = pad_int((mag % 3600) / 60, 2)
+    if colon { return sign + hh + ":" + mm }
+    return sign + hh + mm
+}
+
+/// The moment `ms` after the epoch, shown at `offset`.
+pub fn datetime_from_unix_millis(ms: Int, offset: Int) -> DateTime {
+    return DateTime.from_unix_millis(ms, offset)
+}
+
+/// The current wall-clock moment at offset 0.
+pub fn now_utc() -> DateTime {
+    return DateTime.from_unix_millis(__time_unix_millis(), 0)
+}
+
+/// Parses `YYYY-MM-DD` (midnight, offset 0) or `YYYY-MM-DDTHH:MM[:SS[.fraction]]` with an optional `Z` or `+HH:MM` / `-HH:MM`; no offset means UTC.
+pub fn parse_iso(text: String) -> Result<DateTime, Error> {
+    let bad = "not an ISO 8601 date or date-time"
+    if text.len() == 10 {
+        match parse_date(text) {
+            Ok(d) => {
+                let day: Date = d
+                return DateTime.new(day.year, day.month, day.day, 0, 0, 0, 0, 0)
+            }
+            Err(e) => { return Err(e) }
+        }
+    }
+    let b = text.bytes()
+    if text.len() < 16 || b.get(10) != 84 || b.get(4) != 45 || b.get(7) != 45 || b.get(13) != 58 {
+        return Err(invalid(bad))
+    }
+    let y = digits_at(text, 0, 4)
+    let mo = digits_at(text, 5, 2)
+    let d = digits_at(text, 8, 2)
+    let h = digits_at(text, 11, 2)
+    let mi = digits_at(text, 14, 2)
+    if y < 0 || mo < 0 || d < 0 || h < 0 || mi < 0 { return Err(invalid(bad)) }
+    var pos = 16
+    var s = 0
+    if pos < text.len() && b.get(pos) == 58 {
+        s = digits_at(text, pos + 1, 2)
+        if s < 0 { return Err(invalid(bad)) }
+        pos = pos + 3
+    }
+    var nano = 0
+    if pos < text.len() && b.get(pos) == 46 {
+        pos = pos + 1
+        var count = 0
+        while pos < text.len() && b.get(pos) >= 48 && b.get(pos) <= 57 {
+            if count < 9 {
+                nano = nano * 10 + (b.get(pos) - 48)
+                count = count + 1
+            }
+            pos = pos + 1
+        }
+        if count == 0 { return Err(invalid(bad)) }
+        while count < 9 {
+            nano = nano * 10
+            count = count + 1
+        }
+    }
+    var offset = 0
+    if pos < text.len() {
+        let z = b.get(pos)
+        if z == 90 && pos + 1 == text.len() {
+            offset = 0
+        } else if (z == 43 || z == 45) && pos + 6 == text.len() && b.get(pos + 3) == 58 {
+            let oh = digits_at(text, pos + 1, 2)
+            let om = digits_at(text, pos + 4, 2)
+            if oh < 0 || om < 0 || om > 59 { return Err(invalid(bad)) }
+            offset = oh * 3600 + om * 60
+            if z == 45 { offset = 0 - offset }
+        } else {
+            return Err(invalid(bad))
+        }
+    }
+    return DateTime.new(y, mo, d, h, mi, s, nano, offset)
+}
+
+/// The machine's zone offset in seconds east of UTC at `unix_secs`; `Err` where the platform has no local zone.
+pub fn local_offset(unix_secs: Int) -> Result<Int, Error> {
+    return __time_local_offset(unix_secs)
+}
+
+/// The current moment at the machine's offset.
+pub fn now_local() -> Result<DateTime, Error> {
+    let ms = __time_unix_millis()
+    match local_offset(fdiv(ms, 1000)) {
+        Ok(o) => { return Ok(DateTime.from_unix_millis(ms, o)) }
+        Err(e) => { return Err(e) }
+    }
+}

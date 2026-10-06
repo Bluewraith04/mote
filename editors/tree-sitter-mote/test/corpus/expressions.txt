@@ -264,3 +264,33 @@ fn f() {
           (integer)
           (string
             (string_content)))))))
+
+================================================================================
+named arguments
+================================================================================
+
+fn f() {
+    box(4, label = "crate", height = a == b)
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (function_item
+    (identifier)
+    (parameters)
+    (block
+      (expression_statement
+        (call_expression
+          (identifier)
+          (arguments
+            (integer)
+            (named_argument
+              (identifier)
+              (string
+                (string_content)))
+            (named_argument
+              (identifier)
+              (binary_expression
+                (identifier)
+                (identifier)))))))))

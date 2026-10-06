@@ -40,6 +40,22 @@ box 4x2
 crate 4x2
 ```
 
+An argument can be written `name = value`. Named arguments follow the positional ones, come in any order, and may skip the defaults before them. Functions, methods and `Type(...)` constructors take names; a function stored in a variable, a lambda and a function with `...` do not.
+
+```mote
+fn box(width: Int, height: Int = 1, label: String = "box") -> String {
+    return "${label} ${width}x${height}"
+}
+
+println(box(4, label = "crate"))
+println(box(label = "tray", width = 6, height = 2))
+```
+
+```output
+crate 4x1
+tray 6x2
+```
+
 The last parameter may be `...name: Type`; the remaining arguments arrive as a `List`. A function with `...` cannot also have defaults.
 
 ```mote

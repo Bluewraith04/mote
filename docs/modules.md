@@ -10,10 +10,11 @@ Every `.mote` file is a module. A path names a file without its extension.
 | `import .sub.worker` | `sub/worker.mote` |
 | `import ..util` | `util.mote` one directory up |
 | `import std.iter as it` | a standard-library module under the name `it` |
-| `import pane` | a dependency package, the names its `src/lib.mote` exports |
+| `import pane` | a dependency package, the names its `src/lib.mote` exports, used as `pane.f()` |
 | `import pane.nav` | another file of that package, `src/nav.mote`, used as `nav.f()` |
 | `import { compute } from .helper` | one name, used bare |
 | `import { helper as ha } from .a` | one name under another name |
+| `import { * } from .helper` | every `pub` name of the module, used bare |
 
 A module name cannot be used as a value, so import a function by name to pass it. A circular import is an error that names the modules.
 
@@ -52,6 +53,7 @@ Nothing is visible outside its module unless marked `pub`.
 | Written | Exports |
 |---|---|
 | `pub fn`, `pub let`, `pub struct`, `pub class`, `pub enum` | the item |
+| `pub import { * } from .origin` | every `pub` name of another module |
 | `pub import { real } from .origin` | a name from another module, as a facade |
 
 For a `pub` type each member has its own visibility. This is `shapes.mote`:

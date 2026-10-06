@@ -103,7 +103,7 @@ module.exports = grammar({
         ),
       ),
 
-    import_list: ($) => seq('{', commaSep($.import_symbol), '}'),
+    import_list: ($) => seq('{', choice('*', commaSep($.import_symbol)), '}'),
 
     import_symbol: ($) =>
       seq(field('name', $.identifier), optional(seq('as', field('alias', $.identifier)))),
@@ -607,7 +607,10 @@ module.exports = grammar({
     call_expression: ($) =>
       prec(PREC.postfix, seq(field('function', $._expression), field('arguments', $.arguments))),
 
-    arguments: ($) => seq('(', commaSep($._expression), ')'),
+    arguments: ($) => seq('(', commaSep(choice($._expression, $.named_argument)), ')'),
+
+    // `name = value` in a call.
+    named_argument: ($) => seq(field('name', $.identifier), '=', field('value', $._expression)),
 
     member_expression: ($) =>
       prec(

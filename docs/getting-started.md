@@ -28,7 +28,8 @@ Each command takes a file path, or none to use the package in the current direct
 | `mote test` | runs `test { }` blocks ([Tools](tools.md)) |
 | `mote init myapp [--lib]` | creates a package, or a library with `--lib` |
 | `mote add <git url>`, `mote remove foo` | adds or removes a dependency |
-| `mote install [--locked]` | fetches dependencies |
+| `mote sync [--locked]` | fetches dependencies |
+| `mote install [<dir> \| <git url>[@ref]]` | builds a program into `~/.mote/bin`, with its libraries |
 | `mote package` | writes the package's `.mpk` archive to `dist/` |
 | `mote version`, `mote help` | prints the version, or every command and flag |
 
@@ -54,14 +55,15 @@ A package is a directory with a `mote.toml`:
 name    = "myapp"
 version = "0.1.0"
 entry   = "src/main.mote"
+mote    = "0.1.2"
 
 [dependencies]
 ui  = { git = "github:someone/mote-ui", tag = "v1.2.0" }
 bar = { path = "../bar" }
 ```
 
-A dependency is a git repository at a `tag`, `branch` or `rev`, or a `path`. A repository is an `https://`, `ssh://`, `git://` or `file://` URL, a `user@host:path` address, or `github:user/repo`; Mote reads it with the `git` command, so `git` must be installed and its credentials apply. `mote add <repository>[@ref]` adds one (the highest release tag without `@ref`), and `mote install` fetches them. `mote.lock` records the commit and a checksum of the files for each; commit it and use `mote install --locked` in automated builds. A release is a pushed tag.
+`mote` is the oldest Mote that builds the package; an older toolchain stops with a message that names it. A dependency is a git repository at a `tag`, `branch` or `rev`, or a `path`. A repository is an `https://`, `ssh://`, `git://` or `file://` URL, a `user@host:path` address, or `github:user/repo`; Mote reads it with the `git` command, so `git` must be installed and its credentials apply. `mote add <repository>[@ref]` adds one (the highest release tag without `@ref`), and `mote sync` fetches them. `mote.lock` records the commit and a checksum of the files for each; commit it and use `mote sync --locked` in automated builds. A release is a pushed tag. Fetched packages are cached under the mote home, `~/.mote` or `$MOTE_HOME`, so a package fetched once syncs again offline; `mote install` puts programs in its `bin/`.
 
-A package may carry compiled libraries in `native/<triple>/`, such as `native/x86_64-unknown-linux-gnu/libmote_toml.so`. The root `mote.toml` must grant them: `toml = { git = "github:someone/mote-toml", tag = "v0.1.0", native = true }`. `mote install` unpacks only this machine's directory and the lock checksums each triple. The package opens its library with `open_package("toml", "mote_toml")` from `std.dev.libtools`, with no `--allow-native`. `mote build` copies the libraries to `dist/<name>.lib/<package>/`; ship that directory beside the executable.
+A package may carry compiled libraries in `native/<triple>/`, such as `native/x86_64-unknown-linux-gnu/libmote_toml.so`. The root `mote.toml` must grant them: `toml = { git = "github:someone/mote-toml", tag = "v0.1.0", native = true }`. `mote sync` unpacks only this machine's directory and the lock checksums each triple. The package opens its library with `open_package("toml", "mote_toml")` from `std.dev.libtools`, with no `--allow-native`. `mote build` copies the libraries to `dist/<name>.lib/<package>/`; ship that directory beside the executable.
 
-Libraries written only over the standard library are packages in `motec/packages`, each with a README: `pane` (windows as a function of your state, over `std.sys.gui`), `log` (structured logging) and `path` (text operations on `/`-separated paths). `toml`, `yaml`, `compress`, `archive`, `sqlite` and `http` carry Rust libraries and need `native = true`.
+Libraries written only over the standard library are packages, kept outside the toolchain's repository and each with a README. Packages written so far include `pane` (windows as a function of your state, over `std.sys.gui`), `log` (structured logging) and `path` (text operations on `/`-separated paths). `toml`, `yaml`, `compress`, `archive`, `sqlite` and `http` carry Rust libraries and need `native = true`.
