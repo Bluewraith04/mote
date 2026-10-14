@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-/// The byte that names a `Value` kind in a `.mbc` constant; the numbers are the file format and never change.
+/// The byte that names a `Value` kind in a `.mbc` constant.
 #[repr(u8)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum ValueTag {
@@ -41,62 +41,54 @@ impl InlinePayload {
     }
 }
 
-/// Reserved `TypeDescriptor::id` for the heap string object: slot 0 holds the byte length, then the UTF-8 bytes packed into 16-byte slots.
-/// The collector sizes and scans strings specially by this id.
+/// Reserved `TypeDescriptor::id` for the heap string object.
 pub(crate) const STRING_TYPE_ID: u64 = 0xFFFF_FFFF_FFFF_F5D2;
 
-/// Reserved `TypeDescriptor::id` for a function value: slot 0 holds the code-object index, then the captured values.
+/// Reserved `TypeDescriptor::id` for a function value.
 pub const FUNCTION_TYPE_ID: u64 = 0xFFFF_FFFF_FFFF_F0C7;
 
-/// Slot count for a heap string of `byte_len` bytes: one length slot plus enough
-/// 16-byte slots to hold the payload.
+/// Slot count for a heap string of `byte_len` bytes.
 #[inline(always)]
 pub fn string_slot_count(byte_len: usize) -> usize {
     1 + byte_len.div_ceil(std::mem::size_of::<Value>())
 }
 
-/// Reserved id: a `List` header — `{ len@0, backing:ptr@1 }` (capacity lives in the backing).
+/// Reserved id for a `List` header.
 pub const LIST_TYPE_ID: u64 = 0xFFFF_FFFF_FFFF_F100;
-/// Reserved id: a `Map` header — `{ len@0, entries:ptr@1, index:ptr@2, used@3 }`. The entries are a
-/// `MAP_BACKING_TYPE_ID` run in insertion order; the index is a raw `u32` hash table over them.
+/// Reserved id for a `Map` header.
 pub const MAP_TYPE_ID: u64 = 0xFFFF_FFFF_FFFF_F101;
-/// Reserved id: a `Set` header — `{ len@0, entries:ptr@1, index:ptr@2, used@3 }`, with a
-/// `BACKING_TYPE_ID` key-only entries run (a `Map` with the value half elided).
+/// Reserved id for a `Set` header.
 pub const SET_TYPE_ID: u64 = 0xFFFF_FFFF_FFFF_F102;
-/// Reserved id: a `Bytes` header — `{ len@0, backing:ptr@1 }`.
+/// Reserved id for a `Bytes` header.
 pub const BYTES_TYPE_ID: u64 = 0xFFFF_FFFF_FFFF_F103;
-/// Reserved id: a `Task<T>` handle `{ task_id@0, status@1 (0 Pending, 1 Ok, 2 Err), result@2, waiter@3, observed@4 }`.
+/// Reserved id for a `Task<T>` handle.
 pub const TASK_TYPE_ID: u64 = 0xFFFF_FFFF_FFFF_F104;
-/// Reserved id: a channel, which is also the `Receiver<T>`: `{ channel_id@0, capacity@1, head@2, len@3, closed@4, senders@5, taken@6, backing@7, rendezvous@8 }`.
-/// The backing is a ring buffer; a rendezvous channel (`Channel(0)`) has one slot and `send` waits for its value to be taken.
+/// Reserved id for a channel, which is also the `Receiver<T>`.
 pub const CHANNEL_TYPE_ID: u64 = 0xFFFF_FFFF_FFFF_F105;
-/// Reserved id: a `Sender<T>` handle — `{ channel:ptr@0, closed:int@1 }`. Each handle counts as one of its channel's senders.
+/// Reserved id for a `Sender<T>` handle.
 pub const SENDER_TYPE_ID: u64 = 0xFFFF_FFFF_FFFF_F106;
-/// Reserved id: a growable pointer backing shared by `List` and `Set`.
-/// Slot 0 holds the slot capacity; elements are in `1..=capacity`, unused ones `null`.
+/// Reserved id for a growable pointer backing shared by `List` and `Set`.
 pub const BACKING_TYPE_ID: u64 = 0xFFFF_FFFF_FFFF_F110;
-/// Reserved id: a growable raw-byte backing for `Bytes`. Slot 0 holds the byte capacity; bytes are packed from slot 1 and never traced.
+/// Reserved id for a growable raw-byte backing for `Bytes`.
 pub const BYTES_BACKING_TYPE_ID: u64 = 0xFFFF_FFFF_FFFF_F111;
-/// Reserved id: a `Map` entries backing. Slot 0 = `Value::uint(entry capacity)`; entry `i` occupies
-/// slots `1 + 2i` (key) and `2 + 2i` (value). A removed entry has a `null` key. Both halves are traced `Value`s.
+/// Reserved id for a `Map` entries backing.
 pub const MAP_BACKING_TYPE_ID: u64 = 0xFFFF_FFFF_FFFF_F112;
-/// Reserved id: a `List` iterator cursor `{ list:ptr@0, idx:int@1 }`.
+/// Reserved id for a `List` iterator cursor.
 pub const LIST_ITER_TYPE_ID: u64 = 0xFFFF_FFFF_FFFF_F120;
-/// Reserved id: a suspended generator. Slot 0 holds the slot count, then `state@1` (0 fresh, 1 suspended, 2 running, 3 done), `code_idx@2`, `pc@3`, `closure@4` and the saved registers from `@5`. Never `Send`.
+/// Reserved id for a suspended generator.
 pub const GENERATOR_TYPE_ID: u64 = 0xFFFF_FFFF_FFFF_F109;
 
-/// The most slots an object may have to live in a region (1 KiB with its header).
+/// The most slots an object may have to live in a region.
 pub const MAX_REGION_SLOTS: usize = 63;
-/// Reserved id: a `Some` cell, slot 0 = a payload that is `None` or another cell. Any other `Some(v)` is `v` itself.
+/// Reserved id for a `Some` cell.
 pub const SOME_TYPE_ID: u64 = 0xFFFF_FFFF_FFFF_F10A;
-/// Reserved id: a `Shared<T>` cell: `{ cell_id:uint@0, version@1, holder@2 }`; `holder` is the writing task id or `null`. The version is sealed.
+/// Reserved id for a `Shared<T>` cell.
 pub const SHARED_TYPE_ID: u64 = 0xFFFF_FFFF_FFFF_F10B;
 
-/// Reserved id: a descriptor that only carries a `LOADTYPE` type term; never allocated.
+/// Reserved id for a descriptor that only carries a `LOADTYPE` type term.
 pub const TYPE_TERM_ID: u64 = 0xFFFF_FFFF_FFFF_FE00;
 
-/// Inclusive bounds of the reserved intrinsic-collection id block. A user
-/// `struct` / `class` (codegen hands those small sequential ids) never lands here.
+/// Inclusive bounds of the reserved intrinsic-collection id block.
 pub(crate) const INTRINSIC_TYPE_ID_LO: u64 = 0xFFFF_FFFF_FFFF_F100;
 pub(crate) const INTRINSIC_TYPE_ID_HI: u64 = 0xFFFF_FFFF_FFFF_F1FF;
 
@@ -118,10 +110,7 @@ pub enum SlotLayout {
 }
 
 impl SlotLayout {
-    /// Total slots of `header`'s object; `declared` is the descriptor's field count.
-    ///
-    /// # Safety
-    /// `header` must be a live object of this layout with slot 0 initialised.
+    /// Total slots of `header`'s object.
     #[inline(always)]
     pub unsafe fn slot_count(self, header: &ObjectHeader, declared: usize) -> usize {
         match self {
@@ -138,8 +127,7 @@ impl SlotLayout {
     }
 }
 
-/// Total slot count for a pointer backing holding `capacity` elements:
-/// one capacity slot plus one slot per element.
+/// Total slot count for a pointer backing holding `capacity` elements.
 #[inline(always)]
 pub fn backing_slot_count(capacity: usize) -> usize {
     1 + capacity
@@ -154,8 +142,7 @@ pub const TABLE_USED_SLOT: usize = 3;
 /// `Map` / `Set` header slot count: live length, entries, index, entries used.
 pub const TABLE_HEADER_SLOTS: usize = 4;
 
-/// Total slot count for a `Map` entries backing holding `entries` entries:
-/// one count slot plus `MAP_ENTRY_STRIDE` slots per entry.
+/// Total slot count for a `Map` entries backing holding `entries` entries.
 #[inline(always)]
 pub fn map_backing_slot_count(entries: usize) -> usize {
     1 + MAP_ENTRY_STRIDE * entries
@@ -165,13 +152,12 @@ pub fn map_backing_slot_count(entries: usize) -> usize {
 pub const HEADER_LEN_SLOT: usize = 0;
 /// `List` / `Bytes` header slot 1: the backing object pointer.
 pub const HEADER_BACKING_SLOT: usize = 1;
-/// Backing slot 0: the element / byte capacity. Elements / bytes start at slot 1.
+/// Backing slot 0: the element / byte capacity.
 pub const BACKING_CAP_SLOT: usize = 0;
-/// First element slot in a backing (element `i` lives at `BACKING_DATA_BASE + i`).
+/// First element slot in a backing.
 pub const BACKING_DATA_BASE: usize = 1;
 
-/// Total slot count for a raw-byte backing holding `capacity` bytes:
-/// one capacity slot plus enough 16-byte slots for the payload.
+/// Total slot count for a raw-byte backing holding `capacity` bytes.
 #[inline(always)]
 pub fn bytes_backing_slot_count(capacity: usize) -> usize {
     1 + capacity.div_ceil(std::mem::size_of::<Value>())
@@ -182,17 +168,14 @@ pub fn bytes_backing_slot_count(capacity: usize) -> usize {
 /// The header every heap object starts with.
 pub struct ObjectHeader {
     pub type_ptr: NonNull<TypeDescriptor>,
-    /// Mark, pinned and old-generation bits, the `freeze` seal bit and the other flags listed at [`REGION_BIT`]. Atomic because two OS threads may reach one object.
+    /// Mark, pinned and old-generation bits, the `freeze` seal bit and other flags.
     pub gc_state: AtomicUsize,
 }
 
-/// `gc_state` bits: `1 << 0` mark, `1 << 1` sealed ([`crate::seal::SEALED_BIT`]), `1 << 2` pinned, `1 << 3` old
-/// generation, `1 << 4` free block (the collector's constants are in `gc`), `1 << 5` region object, `1 << 6` `update`
-/// working copy ([`crate::seal::WORKING_BIT`]), `1 << 7` a handle object the collector releases ([`RELEASE_BIT`]); bits 8–15 hold
-/// a region object's depth.
+/// The `gc_state` bit flags; bits 8-15 hold a region object's depth.
 pub const REGION_BIT: usize = 1 << 5;
 
-/// Set on a file, socket or library handle object: the collector closes the handle once no object holds it.
+/// Set on a handle object the collector releases.
 pub const RELEASE_BIT: usize = 1 << 7;
 const REGION_DEPTH_SHIFT: usize = 8;
 const REGION_DEPTH_MASK: usize = 0xFF << REGION_DEPTH_SHIFT;
@@ -206,14 +189,13 @@ pub fn region_state(depth: usize) -> usize {
     REGION_BIT | (depth << REGION_DEPTH_SHIFT)
 }
 
-/// Fails when `value` points to a region object deeper than `target`: an object may point to its own depth
-/// or an outer one, never an inner one, and a heap object (depth 0) never points into a region.
+/// Fails when `value` points to a region object deeper than `target`.
 #[inline]
 pub fn check_store(target: &ObjectHeader, value: Value) -> Result<(), String> {
     check_store_at(target.region_depth(), value)
 }
 
-/// [`check_store`] for a target of the given depth; a global or a capture is depth 0.
+/// Checks a store against a target of the given depth; a global or a capture is depth 0.
 #[inline]
 pub fn check_store_at(target_depth: usize, value: Value) -> Result<(), String> {
     let Value::ObjectPtr(ptr) = value else {
@@ -238,8 +220,7 @@ impl ObjectHeader {
         }
     }
 
-    /// # Safety
-    /// `field_idx` is below the object's slot count.
+    /// `field_idx` must be below the object's slot count.
     pub unsafe fn field_ptr(&self, field_idx: usize) -> *mut Value {
         unsafe {
             let header_ptr = self as *const ObjectHeader as *mut u8;
@@ -248,14 +229,12 @@ impl ObjectHeader {
         }
     }
 
-    /// # Safety
-    /// `field_idx` is below the object's slot count.
+    /// `field_idx` must be below the object's slot count.
     pub unsafe fn get_field(&self, field_idx: usize) -> Value {
         unsafe { *self.field_ptr(field_idx) }
     }
 
-    /// # Safety
-    /// `field_idx` is below the object's slot count.
+    /// `field_idx` must be below the object's slot count.
     pub unsafe fn set_field(&mut self, field_idx: usize, val: Value) {
         unsafe { *self.field_ptr(field_idx) = val; }
     }
@@ -670,9 +649,7 @@ impl Value {
         }
     }
 
-    /// If this is a `ObjectPtr` to a heap string object (`STRING_TYPE_ID`), its
-    /// UTF-8 content as an owned `String`. Reads the byte length from slot 0 and
-    /// the payload from the slots after it.
+    /// If this is a heap string object, its UTF-8 content as an owned `String`.
     pub fn as_heap_string(&self) -> Option<String> {
         let ptr = self.as_object_ptr()?;
         // SAFETY: a boxed pointer points at a live object, and a string's slots hold its length and bytes.
@@ -701,8 +678,7 @@ impl Value {
         }
     }
 
-    /// If this is a `ObjectPtr` to a function value (`FUNCTION_TYPE_ID`), the
-    /// callee code-object index stored in slot 0.
+    /// If this is a function value, the callee code-object index stored in slot 0.
     pub fn as_function_code_idx(&self) -> Option<usize> {
         let ptr = self.as_object_ptr()?;
         // SAFETY: a boxed pointer points at a live object, and a function object has its code index in slot 0.
@@ -715,8 +691,7 @@ impl Value {
         }
     }
 
-    /// This value's text, whether it's stored as a 7-byte inline short string or
-    /// as a heap string object.
+    /// This value's text, whether stored as an inline short string or a heap string object.
     pub fn as_any_string(&self) -> Option<String> {
         self.as_short_str()
             .map(|s| s.to_string())

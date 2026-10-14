@@ -1,0 +1,758 @@
+import std.json as json
+import { JsonCodec } from std.json
+import { Stream } from std.stream
+import { Task } from std.task
+import std.socket as sockets
+import std.fs as fs
+import std.process as process
+import std.time as time
+import ..src.lib as wire
+
+type Req = wire.Request<Null>
+type Reply = Result<wire.Reply, Error>
+type Next = wire.Handler<Null>
+
+struct Item: (JsonCodec) {
+    name: String
+    qty: Int
+}
+
+struct Deps {
+    greeting: String
+    hits: Shared<Int>
+}
+
+fn say(req: Req) -> Reply {
+    return Ok(wire.Reply.text(200, "say"))
+}
+
+fn user(req: Req) -> Reply {
+    let id = req.param_int("id")?
+    return Ok(wire.Reply.text(200, "user ${id}"))
+}
+
+fn post_of(req: Req) -> Reply {
+    let user = req.param("user")
+    let post = req.param("post")
+    return Ok(wire.Reply.text(200, "${user}/${post}"))
+}
+
+fn rest_of(req: Req) -> Reply {
+    let path = req.param("path")
+    return Ok(wire.Reply.text(200, "files:${path}"))
+}
+
+fn first(req: Req) -> Reply {
+    return Ok(wire.Reply.text(200, "first"))
+}
+
+fn second(req: Req) -> Reply {
+    return Ok(wire.Reply.text(200, "second"))
+}
+
+fn missing(req: Req) -> Reply {
+    return Err(Error.new(ErrorKind.NotFound, "no such thing"))
+}
+
+fn invalid(req: Req) -> Reply {
+    return Err(Error.new(ErrorKind.InvalidData, "bad input"))
+}
+
+fn denied(req: Req) -> Reply {
+    return Err(Error.new(ErrorKind.PermissionDenied, "not yours"))
+}
+
+fn exists(req: Req) -> Reply {
+    return Err(Error.new(ErrorKind.AlreadyExists, "taken"))
+}
+
+fn slow(req: Req) -> Reply {
+    return Err(Error.new(ErrorKind.TimedOut, "too slow"))
+}
+
+fn broken(req: Req) -> Reply {
+    return Err(Error.new(ErrorKind.Other, "broken"))
+}
+
+fn boom(req: Req) -> Reply {
+    let xs: List<Int> = []
+    return Ok(wire.Reply.text(200, "${xs.get(5)}"))
+}
+
+fn echo(req: Req) -> Reply {
+    let item = Item.from_json(req.json()?)?
+    return Ok(wire.Reply.json(201, item.to_json()))
+}
+
+fn details(req: Req) -> Reply {
+    let q = req.query()
+    let who = q.get_or("who", "nobody")
+    let token = req.header("x-token").unwrap_or("none")
+    return Ok(wire.Reply.text(200, "${req.method} ${req.path} who=${who} token=${token}"))
+}
+
+fn form_of(req: Req) -> Reply {
+    let f = req.form()?
+    let a = f.get_or("a", "-")
+    return Ok(wire.Reply.text(200, "a=${a}"))
+}
+
+fn nothing_here(req: Req) -> Reply {
+    return Ok(wire.Reply.text(404, "custom ${req.path}"))
+}
+
+fn slow_ok(req: Req) -> Reply {
+    time.sleep(time.Duration.from_millis(300))
+    return Ok(wire.Reply.text(200, "slow done"))
+}
+
+fn hang(req: Req) -> Reply {
+    time.sleep(time.Duration.from_secs(30))
+    return Ok(wire.Reply.text(200, "never"))
+}
+
+fn stamp(next: Next) -> Next {
+    return |req: Req| -> Reply {
+        let reply = next(req)?
+        return Ok(reply.header("x-stamp", "yes"))
+    }
+}
+
+fn needs_token(next: Next) -> Next {
+    return |req: Req| -> Reply {
+        if req.header("x-token").is_none() {
+            return Err(Error.new(ErrorKind.PermissionDenied, "token needed"))
+        }
+        return next(req)
+    }
+}
+
+fn upload(req: Req) -> Reply {
+    return Ok(wire.Reply.text(200, "body=${req.body.len()}"))
+}
+
+fn pieces_of() -> Stream<Bytes> {
+    yield "hello ".bytes()
+    yield "stream".bytes()
+}
+
+fn pieces(req: Req) -> Reply {
+    return Ok(wire.Reply.stream(200, pieces_of()))
+}
+
+fn org_user(req: Req) -> Reply {
+    let org = req.param("org")
+    let id = req.param_int("id")?
+    return Ok(wire.Reply.text(200, "${org}:${id}"))
+}
+
+fn greet(req: wire.Request<Deps>) -> Result<wire.Reply, Error> {
+    var hits = req.state.hits.clone()
+    hits.update(|n| { n += 1 })
+    return Ok(wire.Reply.text(200, "${req.state.greeting} ${req.state.hits.get()}"))
+}
+
+fn who(req: wire.Request<Deps>) -> Result<String, Error> {
+    match req.header("x-user") {
+        Some(name) => { return Ok(name) }
+        None => { return Err(Error.new(ErrorKind.PermissionDenied, "sign in")) }
+    }
+}
+
+fn me(req: wire.Request<Deps>) -> Result<wire.Reply, Error> {
+    let name = who(req)?
+    return Ok(wire.Reply.text(200, "${req.state.greeting}, ${name}"))
+}
+
+fn start(app: wire.Server<Null>) -> wire.Running {
+    return app.start("127.0.0.1", 0).unwrap()
+}
+
+fn stop(r: wire.Running) {
+    r.stop()
+    let ended = r.wait()
+}
+
+fn url(r: wire.Running, path: String) -> String {
+    return "http://127.0.0.1:${r.port()}${path}"
+}
+
+fn text_of(r: wire.Running, path: String) -> String {
+    let got = wire.get(url(r, path)).unwrap()
+    return "${got.status} ${got.text().unwrap()}"
+}
+
+fn answer(app: wire.Server<Null>, path: String) -> String {
+    let got = app.test().get(path).send().unwrap()
+    return "${got.status} ${got.text().unwrap()}"
+}
+
+test "routes match literals, parameters and a rest" {
+    var app = wire.Server(null)
+    app.get("/say", say)
+    app.get("/users/:id", user)
+    app.get("/u/:user/posts/:post", post_of)
+    app.get("/files/*path", rest_of)
+    assert_eq(answer(app, "/say"), "200 say")
+    assert_eq(answer(app, "/users/7"), "200 user 7")
+    assert_eq(answer(app, "/u/ann/posts/42"), "200 ann/42")
+    assert_eq(answer(app, "/files/a/b/c.txt"), "200 files:a/b/c.txt")
+    assert_eq(answer(app, "/say/"), "200 say")
+    assert_eq(answer(app, "/users/7?x=1"), "200 user 7")
+}
+
+test "the first matching route wins" {
+    var app = wire.Server(null)
+    app.get("/x/:a", first)
+    app.get("/x/b", second)
+    assert_eq(answer(app, "/x/b"), "200 first")
+}
+
+test "an unmatched path is a 404 and the fallback can answer it" {
+    var app = wire.Server(null)
+    app.get("/say", say)
+    assert_eq(answer(app, "/nothing"), "404 not found")
+    assert_eq(answer(app, "/say/more"), "404 not found")
+    app.fallback(nothing_here)
+    assert_eq(answer(app, "/nothing"), "404 custom /nothing")
+}
+
+test "a wrong method is a 405 that lists the methods, and HEAD runs GET" {
+    var app = wire.Server(null)
+    app.get("/r", say)
+    app.put("/r", say)
+    app.post("/s", say)
+    let r = app.test().post("/r").send().unwrap()
+    assert_eq(r.status, 405)
+    assert_eq(r.header("allow").unwrap(), "GET, PUT")
+    let h = app.test().head("/r").send().unwrap()
+    assert_eq(h.status, 200)
+    assert_eq(h.body.len(), 0)
+    let d = app.test().delete("/s").send().unwrap()
+    assert_eq(d.status, 405)
+    assert_eq(d.header("allow").unwrap(), "POST")
+}
+
+test "an error answers with the status of its kind" {
+    var app = wire.Server(null)
+    app.get("/e/missing", missing)
+    app.get("/e/invalid", invalid)
+    app.get("/e/denied", denied)
+    app.get("/e/exists", exists)
+    app.get("/e/slow", slow)
+    app.get("/e/broken", broken)
+    app.get("/users/:id", user)
+    assert_eq(answer(app, "/e/missing"), "404 no such thing")
+    assert_eq(answer(app, "/e/invalid"), "400 bad input")
+    assert_eq(answer(app, "/e/denied"), "403 not yours")
+    assert_eq(answer(app, "/e/exists"), "409 taken")
+    assert_eq(answer(app, "/e/slow"), "504 too slow")
+    assert_eq(answer(app, "/e/broken"), "500 broken")
+    assert_eq(answer(app, "/users/abc"), "400 id is not a number: abc")
+}
+
+test "a JSON body is read as a type and answered as JSON" {
+    var app = wire.Server(null)
+    app.post("/items", echo)
+    let ok = app.test().post("/items").json(json.parse("{\"name\": \"bolt\", \"qty\": 3}").unwrap()).send().unwrap()
+    assert_eq(ok.status, 201)
+    assert_eq(ok.header("content-type").unwrap(), "application/json")
+    assert_eq(ok.text().unwrap(), "{\"name\":\"bolt\",\"qty\":3}")
+    let bad = app.test().post("/items").json(json.parse("{\"name\": 5}").unwrap()).send().unwrap()
+    assert_eq(bad.status, 400)
+    let worse = app.test().post("/items").text("not json").send().unwrap()
+    assert_eq(worse.status, 400)
+}
+
+test "a form body, the query and the headers reach a handler" {
+    var app = wire.Server(null)
+    app.get("/d", details)
+    app.post("/form", form_of)
+    let r = app.test().get("/d?who=zed").header("X-Token", "abc").send().unwrap()
+    assert_eq(r.text().unwrap(), "GET /d who=zed token=abc")
+    assert_eq(answer(app, "/d"), "200 GET /d who=nobody token=none")
+    let f = app.test().post("/form").form({"a": "x y"}).send().unwrap()
+    assert_eq(f.text().unwrap(), "a=x y")
+}
+
+test "a handler that faults answers 500 and the server keeps serving" {
+    var app = wire.Server(null)
+    app.get("/boom", boom)
+    app.get("/say", say)
+    let r = start(app)
+    assert_eq(text_of(r, "/say"), "200 say")
+    assert_eq(text_of(r, "/boom"), "500 internal error")
+    assert_eq(text_of(r, "/say"), "200 say")
+    assert_eq(text_of(r, "/boom"), "500 internal error")
+    stop(r)
+}
+
+test "a middleware wraps the routes and the fallback added before it" {
+    var app = wire.Server(null)
+    app.get("/a", say)
+    app.get("/b", say)
+    app.wrap(stamp)
+    app.get("/c", say)
+    let a = app.test().get("/a").send().unwrap()
+    assert_eq(a.header("x-stamp").unwrap(), "yes")
+    let none = app.test().get("/nothing").send().unwrap()
+    assert_eq(none.status, 404)
+    assert_eq(none.header("x-stamp").unwrap(), "yes")
+    let c = app.test().get("/c").send().unwrap()
+    assert(c.header("x-stamp").is_none())
+}
+
+test "a middleware can refuse a request and middlewares nest" {
+    var app = wire.Server(null)
+    app.get("/a", say)
+    app.wrap(needs_token)
+    app.wrap(stamp)
+    let refused = app.test().get("/a").send().unwrap()
+    assert_eq(refused.status, 403)
+    assert_eq(refused.text().unwrap(), "token needed")
+    let ok = app.test().get("/a").header("x-token", "t").send().unwrap()
+    assert_eq(ok.status, 200)
+    assert_eq(ok.header("x-stamp").unwrap(), "yes")
+}
+
+test "a middleware on one route is a function call" {
+    var app = wire.Server(null)
+    app.get("/open", say)
+    app.get("/closed", needs_token(say))
+    assert_eq(answer(app, "/open"), "200 say")
+    assert_eq(answer(app, "/closed"), "403 token needed")
+}
+
+test "an included router answers under its prefix" {
+    var users = wire.Router<Null>()
+    users.get("/users/:id", org_user)
+    users.get("/ping", say)
+    var app = wire.Server(null)
+    app.get("/", say)
+    app.include("/orgs/:org", users)
+    assert_eq(answer(app, "/orgs/acme/users/7"), "200 acme:7")
+    assert_eq(answer(app, "/orgs/acme/ping"), "200 say")
+    assert_eq(answer(app, "/users/7"), "404 not found")
+    assert_eq(answer(app, "/"), "200 say")
+}
+
+fn twice() {
+    var app = wire.Server(null)
+    app.get("/a/:id", say)
+    app.get("/a/:name", first)
+}
+
+fn star_first() {
+    var app = wire.Server(null)
+    app.get("/files/*path/more", say)
+}
+
+fn unnamed() {
+    var app = wire.Server(null)
+    app.get("/a/:", say)
+}
+
+fn included_twice() {
+    var one = wire.Router<Null>()
+    one.get("/x", say)
+    var app = wire.Server(null)
+    app.get("/api/x", say)
+    app.include("/api", one)
+}
+
+fn failure_of(t: Task<Null>) -> String {
+    match t.join() {
+        Ok(done) => { return "no fault" }
+        Err(e) => { return e }
+    }
+}
+
+test "a bad or repeated route is a fault where it is registered" {
+    assert(failure_of(spawn { twice() }).contains("GET /a/:name is already registered"))
+    assert(failure_of(spawn { star_first() }).contains("must be the last segment"))
+    assert(failure_of(spawn { unnamed() }).contains("a parameter needs a name"))
+    assert(failure_of(spawn { included_twice() }).contains("is already registered"))
+}
+
+test "the same path under two methods is two routes" {
+    var app = wire.Server(null)
+    app.get("/r", say)
+    app.post("/r", first)
+    assert_eq(answer(app, "/r"), "200 say")
+    assert_eq(app.test().post("/r").send().unwrap().text().unwrap(), "first")
+}
+
+test "routers include routers and one router serves two servers" {
+    var leaf = wire.Router<Null>()
+    leaf.get("/ping", say)
+    var mid = wire.Router<Null>()
+    mid.include("/v1", leaf)
+    var a = wire.Server(null)
+    a.include("/api", mid)
+    var b = wire.Server(null)
+    b.include("/other", leaf)
+    assert_eq(answer(a, "/api/v1/ping"), "200 say")
+    assert_eq(answer(b, "/other/ping"), "200 say")
+    assert_eq(answer(a, "/other/ping"), "404 not found")
+}
+
+test "handlers read the state and call plain dependency functions" {
+    var app = wire.Server(Deps { greeting: "hello", hits: Shared(0) })
+    app.get("/greet", greet)
+    app.get("/me", me)
+    let a = app.test().get("/greet").send().unwrap()
+    assert_eq(a.text().unwrap(), "hello 1")
+    let b = app.test().get("/greet").send().unwrap()
+    assert_eq(b.text().unwrap(), "hello 2")
+    let signed = app.test().get("/me").header("x-user", "ann").send().unwrap()
+    assert_eq(signed.text().unwrap(), "hello, ann")
+    let anonymous = app.test().get("/me").send().unwrap()
+    assert_eq(anonymous.status, 403)
+    assert_eq(anonymous.text().unwrap(), "sign in")
+}
+
+test "the state is shared with a server that is running" {
+    let deps = Deps { greeting: "hi", hits: Shared(0) }
+    var app = wire.Server(deps)
+    app.get("/greet", greet)
+    let r = app.start("127.0.0.1", 0).unwrap()
+    let one = wire.get("http://127.0.0.1:${r.port()}/greet").unwrap()
+    assert_eq(one.text().unwrap(), "hi 1")
+    let two = wire.get("http://127.0.0.1:${r.port()}/greet").unwrap()
+    assert_eq(two.text().unwrap(), "hi 2")
+    r.stop()
+    assert_eq(r.wait().is_ok(), true)
+    assert_eq(deps.hits.get(), 2)
+}
+
+test "a port in use is an Err from start" {
+    var app = wire.Server(null)
+    app.get("/say", say)
+    let r = start(app)
+    let again = wire.Server(null).start("127.0.0.1", r.port())
+    assert(again.is_err())
+    stop(r)
+}
+
+test "a stop lets a request in flight finish and refuses new ones" {
+    var app = wire.Server(null)
+    app.get("/slow", slow_ok)
+    app.grace(5)
+    let r = start(app)
+    let client = spawn { text_of(r, "/slow") }
+    time.sleep(time.Duration.from_millis(100))
+    r.stop()
+    assert_eq(client.join().unwrap(), "200 slow done")
+    assert_eq(r.wait().is_ok(), true)
+    assert(wire.get(url(r, "/slow")).is_err())
+}
+
+test "the grace ends a request that is still running" {
+    var app = wire.Server(null)
+    app.get("/hang", hang)
+    app.grace(1)
+    let r = start(app)
+    let client = spawn { wire.get(url(r, "/hang")).is_err() }
+    time.sleep(time.Duration.from_millis(100))
+    let began = time.now()
+    r.stop()
+    assert_eq(r.wait().is_ok(), true)
+    let waited = time.now().duration_since(began).as_millis()
+    assert(waited >= 900)
+    assert(waited < 5000)
+    assert_eq(client.join().unwrap(), true)
+}
+
+test "a stop closes an idle keep-alive connection at once" {
+    var app = wire.Server(null)
+    app.get("/say", say)
+    app.grace(5)
+    let r = start(app)
+    let c = sockets.connect("127.0.0.1", r.port()).unwrap()
+    c.write_text("GET /say HTTP/1.1\r\nhost: x\r\n\r\n").unwrap()
+    assert(c.read(4096).unwrap().len() > 0)
+    let began = time.now()
+    r.stop()
+    assert_eq(r.wait().is_ok(), true)
+    assert(time.now().duration_since(began).as_millis() < 2000)
+    assert_eq(c.read(4096).unwrap().len(), 0)
+}
+
+fn site(name: String) -> String {
+    let dir = ".site_${name}"
+    let cleared = fs.remove_dir_all(dir)
+    fs.create_dir_all("${dir}/sub").unwrap()
+    fs.write_text("${dir}/hello.txt", "hello world").unwrap()
+    fs.write_text("${dir}/page.html", "<p>page</p>").unwrap()
+    fs.write_text("${dir}/sub/index.html", "<p>index</p>").unwrap()
+    fs.write_text("${dir}/secret.txt", "secret").unwrap()
+    fs.write_text("${dir}/.hidden.txt", "hidden").unwrap()
+    fs.write_bytes("${dir}/big.bin", Bytes(2097152)).unwrap()
+    return dir
+}
+
+fn serving(dir: String) -> wire.Server<Null> {
+    var app = wire.Server(null)
+    app.files("/static", wire.Files(dir))
+    return app
+}
+
+fn serving_at(prefix: String, files: wire.Files) -> wire.Server<Null> {
+    var app = wire.Server(null)
+    app.files(prefix, files)
+    return app
+}
+
+fn ranged(app: wire.Server<Null>, path: String, range: String) -> wire.Response {
+    return app.test().get(path).header("range", range).send().unwrap()
+}
+
+test "files serves a directory with types, an ETag and an index" {
+    let dir = site("plain")
+    var app = serving(dir)
+    app.files("/sub", wire.Files("${dir}/sub"))
+    let r = app.test().get("/static/hello.txt").send().unwrap()
+    assert_eq(r.status, 200)
+    assert_eq(r.text().unwrap(), "hello world")
+    assert_eq(r.header("content-type").unwrap(), "text/plain; charset=utf-8")
+    assert_eq(r.header("accept-ranges").unwrap(), "bytes")
+    assert_eq(app.test().get("/static/page.html").send().unwrap().header("content-type").unwrap(), "text/html; charset=utf-8")
+    assert_eq(app.test().get("/static/big.bin").send().unwrap().header("content-type").unwrap(), "application/octet-stream")
+    assert_eq(answer(app, "/sub/"), "200 <p>index</p>")
+    assert_eq(answer(app, "/static/sub"), "200 <p>index</p>")
+    let etag = r.header("etag").unwrap()
+    let cached = app.test().get("/static/hello.txt").header("if-none-match", etag).send().unwrap()
+    assert_eq(cached.status, 304)
+    assert_eq(answer(app, "/static/nothing.txt"), "404 not found")
+    fs.remove_dir_all(dir).unwrap()
+}
+
+test "files sends Last-Modified and answers If-Modified-Since" {
+    let dir = site("dates")
+    let app = serving_at("/f", wire.Files(dir).max_age(60))
+    let r = app.test().get("/f/hello.txt").send().unwrap()
+    let dated = r.header("last-modified").unwrap()
+    assert(dated.ends_with(" GMT"))
+    assert_eq(r.header("cache-control").unwrap(), "public, max-age=60")
+    let same = app.test().get("/f/hello.txt").header("if-modified-since", dated).send().unwrap()
+    assert_eq(same.status, 304)
+    assert_eq(same.header("cache-control").unwrap(), "public, max-age=60")
+    let older = app.test().get("/f/hello.txt").header("if-modified-since", "Mon, 01 Jan 2001 00:00:00 GMT").send().unwrap()
+    assert_eq(older.status, 200)
+    let plain = serving_at("/f", wire.Files(dir))
+    assert(plain.test().get("/f/hello.txt").send().unwrap().header("cache-control").is_none())
+    fs.remove_dir_all(dir).unwrap()
+}
+
+test "files refuses a path that climbs out of the directory" {
+    let dir = site("climb")
+    let app = serving_at("/static", wire.Files("${dir}/sub"))
+    assert_eq(answer(app, "/static/../secret.txt"), "404 not found")
+    assert_eq(answer(app, "/static/a/../../secret.txt"), "404 not found")
+    assert_eq(answer(app, "/static/..\\secret.txt"), "404 not found")
+    let r = start(app)
+    let c = sockets.connect("127.0.0.1", r.port()).unwrap()
+    c.write_text("GET /static/../secret.txt HTTP/1.1\r\nhost: x\r\nconnection: close\r\n\r\n").unwrap()
+    let reply = c.read_to_end().unwrap().decode().unwrap()
+    assert(reply.starts_with("HTTP/1.1 404"))
+    assert(!reply.contains("secret"))
+    stop(r)
+    fs.remove_dir_all(dir).unwrap()
+}
+
+test "files follows a link that stays inside the directory and refuses one that leaves it" {
+    let dir = site("links")
+    let real = fs.canonicalize(dir).unwrap()
+    process.run("ln", ["-s", "${real}/sub/index.html", "${real}/sub/inside.txt"]).unwrap()
+    process.run("ln", ["-s", "${real}/secret.txt", "${real}/sub/outside.txt"]).unwrap()
+    let app = serving_at("/static", wire.Files("${dir}/sub"))
+    assert_eq(answer(app, "/static/inside.txt"), "200 <p>index</p>")
+    assert_eq(answer(app, "/static/outside.txt"), "404 not found")
+    let whole = serving(dir)
+    assert_eq(answer(whole, "/static/sub/inside.txt"), "200 <p>index</p>")
+    assert_eq(answer(whole, "/static/sub/outside.txt"), "200 secret")
+    fs.remove_dir_all(dir).unwrap()
+}
+
+test "files serves the root through a link to it" {
+    let dir = site("rootlink")
+    let real = fs.canonicalize(dir).unwrap()
+    process.run("ln", ["-s", real, "${real}.link"]).unwrap()
+    let app = serving_at("/static", wire.Files("${dir}.link"))
+    assert_eq(answer(app, "/static/hello.txt"), "200 hello world")
+    fs.remove_file("${real}.link").unwrap()
+    fs.remove_dir_all(dir).unwrap()
+}
+
+test "files refuses hidden files and answers a directory without an index with a 404" {
+    let dir = site("hidden")
+    fs.create_dir_all("${dir}/empty").unwrap()
+    let app = serving_at("/f", wire.Files(dir))
+    assert_eq(answer(app, "/f/.hidden.txt"), "404 not found")
+    assert_eq(answer(app, "/f/empty"), "404 not found")
+    fs.remove_dir_all(dir).unwrap()
+}
+
+test "files answers one byte range and refuses one past the end" {
+    let dir = site("range")
+    let app = serving_at("/f", wire.Files(dir))
+    let a = ranged(app, "/f/hello.txt", "bytes=0-4")
+    assert_eq(a.status, 206)
+    assert_eq(a.text().unwrap(), "hello")
+    assert_eq(a.header("content-range").unwrap(), "bytes 0-4/11")
+    assert_eq(ranged(app, "/f/hello.txt", "bytes=6-").text().unwrap(), "world")
+    assert_eq(ranged(app, "/f/hello.txt", "bytes=-5").text().unwrap(), "world")
+    assert_eq(ranged(app, "/f/hello.txt", "bytes=0-99").text().unwrap(), "hello world")
+    let past = ranged(app, "/f/hello.txt", "bytes=50-")
+    assert_eq(past.status, 416)
+    assert_eq(past.header("content-range").unwrap(), "bytes */11")
+    assert_eq(ranged(app, "/f/hello.txt", "bytes=0-1,3-4").text().unwrap(), "hello world")
+    let etag = app.test().get("/f/hello.txt").send().unwrap().header("etag").unwrap()
+    let stale = app.test().get("/f/hello.txt").header("range", "bytes=0-4").header("if-range", "W/\"other\"").send().unwrap()
+    assert_eq(stale.status, 200)
+    let fresh = app.test().get("/f/hello.txt").header("range", "bytes=0-4").header("if-range", etag).send().unwrap()
+    assert_eq(fresh.status, 206)
+    fs.remove_dir_all(dir).unwrap()
+}
+
+test "a big file is streamed whole and by range" {
+    let dir = site("big")
+    let r = start(serving_at("/f", wire.Files(dir)))
+    let whole = wire.get(url(r, "/f/big.bin")).unwrap()
+    assert_eq(whole.status, 200)
+    assert_eq(whole.header("content-length").unwrap(), "2097152")
+    assert_eq(whole.body.len(), 2097152)
+    let part = wire.request("GET", url(r, "/f/big.bin")).header("range", "bytes=100-1999999").send().unwrap()
+    assert_eq(part.status, 206)
+    assert_eq(part.body.len(), 1999900)
+    assert_eq(part.header("content-range").unwrap(), "bytes 100-1999999/2097152")
+    stop(r)
+    fs.remove_dir_all(dir).unwrap()
+}
+
+test "a reply can be a stream and the test client reads it to the end" {
+    var app = wire.Server(null)
+    app.get("/pieces", pieces)
+    app.post("/upload", upload)
+    assert_eq(answer(app, "/pieces"), "200 hello stream")
+    let small = app.test().post("/upload").text("abc").send().unwrap()
+    assert_eq(small.text().unwrap(), "body=3")
+}
+
+fn masked(first: Int, payload: Bytes) -> Bytes {
+    let out = Bytes()
+    out.push(first)
+    out.push(128 + payload.len())
+    let mask = [7, 11, 13, 17]
+    for m in mask { out.push(m) }
+    var i = 0
+    while i < payload.len() {
+        out.push(payload[i] ^ mask[i % 4])
+        i = i + 1
+    }
+    return out
+}
+
+fn exactly(c: sockets.TcpStream, n: Int) -> Bytes {
+    let out = Bytes()
+    while out.len() < n {
+        let piece = c.read(n - out.len()).unwrap()
+        if piece.len() == 0 { break }
+        out.extend(piece)
+    }
+    return out
+}
+
+fn handshake(r: wire.Running, path: String) -> sockets.TcpStream {
+    let c = sockets.connect("127.0.0.1", r.port()).unwrap()
+    c.write_text("GET ${path} HTTP/1.1\r\nhost: x\r\nupgrade: websocket\r\nconnection: Upgrade\r\nsec-websocket-key: dGhlIHNhbXBsZSBub25jZQ==\r\nsec-websocket-version: 13\r\n\r\n").unwrap()
+    return c
+}
+
+fn head_of(c: sockets.TcpStream) -> String {
+    var text = ""
+    while !text.contains("\r\n\r\n") {
+        let piece = c.read(1).unwrap()
+        if piece.len() == 0 { break }
+        text = text + piece.decode().unwrap()
+    }
+    return text
+}
+
+fn echo_socket(socket: wire.Socket) -> Result<Null, Error> {
+    for got in socket.messages() {
+        match got? {
+            wire.Message.Text(t) => { socket.send_text("echo:${t}")? }
+            wire.Message.Binary(b) => { socket.send_binary(b)? }
+            wire.Message.Close(code, reason) => { }
+        }
+    }
+    return Ok(null)
+}
+
+fn hosting(pattern: String, handler: wire.SocketHandler) -> wire.Server<Null> {
+    var app = wire.Server(null)
+    app.socket(pattern, handler)
+    return app
+}
+
+test "a socket route answers the handshake and echoes messages" {
+    let r = start(hosting("/chat", echo_socket))
+    let c = handshake(r, "/chat")
+    let head = head_of(c)
+    assert(head.starts_with("HTTP/1.1 101 Switching Protocols"))
+    assert(head.contains("sec-websocket-accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo="))
+    c.write(masked(129, "hello".bytes())).unwrap()
+    let frame = exactly(c, 12)
+    assert_eq(frame[0], 129)
+    assert_eq(frame[1], 10)
+    assert_eq(frame.slice(2, 12).decode().unwrap(), "echo:hello")
+    c.write(masked(130, Bytes(3))).unwrap()
+    let binary = exactly(c, 5)
+    assert_eq(binary[0], 130)
+    assert_eq(binary[1], 3)
+    c.write(masked(137, Bytes())).unwrap()
+    let pong = exactly(c, 2)
+    assert_eq(pong[0], 138)
+    assert_eq(pong[1], 0)
+    stop(r)
+}
+
+test "a socket close is answered and ends the connection" {
+    let r = start(hosting("/chat", echo_socket))
+    let c = handshake(r, "/chat")
+    let head = head_of(c)
+    let reason = Bytes()
+    reason.push(3)
+    reason.push(232)
+    reason.extend("bye".bytes())
+    c.write(masked(136, reason)).unwrap()
+    let closing = exactly(c, 7)
+    assert_eq(closing[0], 136)
+    assert_eq(closing[1], 5)
+    assert_eq(closing.slice(4, 7).decode().unwrap(), "bye")
+    assert_eq(c.read(10).unwrap().len(), 0)
+    stop(r)
+}
+
+test "a request that is not a WebSocket handshake is a 400" {
+    let r = start(hosting("/chat", echo_socket))
+    assert_eq(text_of(r, "/chat"), "400 not a WebSocket request")
+    stop(r)
+}
+
+test "a stop closes the sockets of a route with 1001" {
+    var app = hosting("/chat", echo_socket)
+    app.grace(1)
+    let r = start(app)
+    let c = handshake(r, "/chat")
+    head_of(c)
+    time.sleep(time.Duration.from_millis(200))
+    r.stop()
+    let closing = exactly(c, 4)
+    assert_eq(closing[0], 136)
+    assert_eq(closing[2], 3)
+    assert_eq(closing[3], 233)
+    c.write(masked(136, Bytes())).unwrap()
+    assert_eq(r.wait().is_ok(), true)
+}

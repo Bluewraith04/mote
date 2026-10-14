@@ -1,0 +1,370 @@
+/// std.derive.json: the modifier behind `JsonCodec`.
+
+import { * } from std.prelude
+import std.meta as meta
+import std.string as str
+
+fn is_json(name: String) -> Bool {
+    return name == "Json" || name.ends_with(".Json")
+}
+
+fn is_named(t: meta.TypeRef, name: String) -> Bool {
+    match t.kind {
+        meta.TypeKind.Named => { return t.name == name }
+        _ => { return false }
+    }
+}
+
+fn describe(t: meta.TypeRef) -> String {
+    match t.kind {
+        meta.TypeKind.Named => {
+            if t.name == "Int" { return "an int" }
+            if t.name == "Float" { return "a float" }
+            if t.name == "Bool" { return "a bool" }
+            if t.name == "String" { return "a string" }
+            return meta.render(t)
+        }
+        meta.TypeKind.Generic => {
+            if t.name == "Map" { return "an object" }
+            return "an array"
+        }
+        meta.TypeKind.Tuple => { return "an array" }
+        meta.TypeKind.Optional => { return describe(t.args.get(0)) + " or null" }
+        _ => { return meta.render(t) }
+    }
+}
+
+fn list_words(words: List<String>) -> String {
+    let n = words.len()
+    if n == 0 { return "" }
+    if n == 1 { return words.get(0) }
+    var rest: List<String> = []
+    var i = 0
+    for w in words {
+        if i < n - 1 { rest.push(w) }
+        i = i + 1
+    }
+    return str.join(rest, ", ") + " or " + words.get(n - 1)
+}
+
+fn no_form(what: String, ty: String) -> String {
+    return what + " of type `" + ty + "` has no JSON form"
+}
+
+fn wrap(path: String, inner: String) -> String {
+    if path == "" { return inner }
+    return "__modifier.__in(\"" + path + "\", " + inner + ")"
+}
+
+/// The helpers a union or tuple needs.
+class Gen {
+    owner: String
+    var helpers: List<String>
+    var ids: Int
+
+    fn id(var self) -> Int {
+        self.ids = self.ids + 1
+        return self.ids
+    }
+
+    fn enc_lambda(var self, ty: meta.TypeRef) -> Result<String, String> {
+        let x = "__x${self.id()}"
+        let body = self.enc(x, ty)?
+        return Ok("|" + x + "| " + body)
+    }
+
+    fn dec_lambda(var self, ty: meta.TypeRef) -> Result<String, String> {
+        let x = "__x${self.id()}"
+        let body = self.dec(x, ty)?
+        return Ok("|" + x + "| " + body)
+    }
+
+    /// The expression that turns `e` of type `ty` into a `Json`.
+    fn enc(var self, e: String, ty: meta.TypeRef) -> Result<String, String> {
+        match ty.kind {
+            meta.TypeKind.Named => {
+                if ty.name == "Int" { return Ok("__modifier.Json.Int(" + e + ")") }
+                if ty.name == "Float" { return Ok("__modifier.Json.Float(" + e + ")") }
+                if ty.name == "Bool" { return Ok("__modifier.Json.Bool(" + e + ")") }
+                if ty.name == "String" { return Ok("__modifier.Json.Str(" + e + ")") }
+                if ty.name == "Char" || ty.name == "Null" { return Err(meta.render(ty)) }
+                if is_json(ty.name) { return Ok(e) }
+                return Ok(e + ".to_json()")
+            }
+            meta.TypeKind.SelfType => { return Ok(e + ".to_json()") }
+            meta.TypeKind.Optional => {
+                let f = self.enc_lambda(ty.args.get(0))?
+                return Ok("__modifier.__to_nullable(" + e + ", " + f + ")")
+            }
+            meta.TypeKind.Generic => {
+                if ty.name == "List" && ty.args.len() == 1 {
+                    let f = self.enc_lambda(ty.args.get(0))?
+                    return Ok("__modifier.__to_list(" + e + ", " + f + ")")
+                }
+                if ty.name == "Set" && ty.args.len() == 1 {
+                    let f = self.enc_lambda(ty.args.get(0))?
+                    return Ok("__modifier.__to_list(" + e + ".items(), " + f + ")")
+                }
+                if ty.name == "Map" && ty.args.len() == 2 && is_named(ty.args.get(0), "String") {
+                    let f = self.enc_lambda(ty.args.get(1))?
+                    return Ok("__modifier.__to_map(" + e + ", " + f + ")")
+                }
+                return Err(meta.render(ty))
+            }
+            meta.TypeKind.Tuple => {
+                let id = self.id()
+                var items: List<String> = []
+                var i = 0
+                for t in ty.args {
+                    items.push(self.enc("__t.${i}", t)?)
+                    i = i + 1
+                }
+                self.helpers.push("fn __json_enc${id}(__t: " + meta.render(ty) + ") -> __modifier.Json { return __modifier.Json.Array([" + str.join(items, ", ") + "]) }")
+                return Ok(self.owner + ".__json_enc${id}(" + e + ")")
+            }
+            meta.TypeKind.Union => {
+                let id = self.id()
+                var arms = ""
+                var i = 0
+                for m in ty.args {
+                    let e = self.enc("__v${i}", m)?
+                    arms = arms + "__v${i}: " + meta.render(m) + " => { return " + e + " }\n"
+                    i = i + 1
+                }
+                self.helpers.push("fn __json_enc${id}(__u: " + meta.render(ty) + ") -> __modifier.Json { match __u {\n" + arms + "} }")
+                return Ok(self.owner + ".__json_enc${id}(" + e + ")")
+            }
+            _ => { return Err(meta.render(ty)) }
+        }
+    }
+
+    /// The expression that reads the `Json` `e` as a `ty`.
+    fn dec(var self, e: String, ty: meta.TypeRef) -> Result<String, String> {
+        match ty.kind {
+            meta.TypeKind.Named => {
+                if ty.name == "Int" { return Ok("__modifier.__int(" + e + ")") }
+                if ty.name == "Float" { return Ok("__modifier.__float(" + e + ")") }
+                if ty.name == "Bool" { return Ok("__modifier.__bool(" + e + ")") }
+                if ty.name == "String" { return Ok("__modifier.__str(" + e + ")") }
+                if ty.name == "Char" || ty.name == "Null" { return Err(meta.render(ty)) }
+                if is_json(ty.name) { return Ok("Ok(" + e + ")") }
+                return Ok(ty.name + ".from_json(" + e + ")")
+            }
+            meta.TypeKind.SelfType => { return Ok(self.owner + ".from_json(" + e + ")") }
+            meta.TypeKind.Optional => {
+                let f = self.dec_lambda(ty.args.get(0))?
+                return Ok("__modifier.__nullable(" + e + ", " + f + ")")
+            }
+            meta.TypeKind.Generic => {
+                if ty.name == "List" && ty.args.len() == 1 {
+                    let f = self.dec_lambda(ty.args.get(0))?
+                    return Ok("__modifier.__list(" + e + ", " + f + ")")
+                }
+                if ty.name == "Set" && ty.args.len() == 1 {
+                    let f = self.dec_lambda(ty.args.get(0))?
+                    return Ok("__modifier.__set(" + e + ", " + f + ")")
+                }
+                if ty.name == "Map" && ty.args.len() == 2 && is_named(ty.args.get(0), "String") {
+                    let f = self.dec_lambda(ty.args.get(1))?
+                    return Ok("__modifier.__map(" + e + ", " + f + ")")
+                }
+                return Err(meta.render(ty))
+            }
+            meta.TypeKind.Tuple => {
+                let id = self.id()
+                var body = "let __xs = __modifier.__elements(__j, ${ty.args.len()})?\n"
+                var names: List<String> = []
+                var i = 0
+                for t in ty.args {
+                    let e = self.dec("__xs.get(${i})", t)?
+                    body = body + "let __e${i} = __modifier.__in(\"[${i}]\", " + e + ")?\n"
+                    names.push("__e${i}")
+                    i = i + 1
+                }
+                self.helpers.push("fn __json_dec${id}(__j: __modifier.Json) -> Result<" + meta.render(ty) + ", Error> {\n" + body + "return Ok((" + str.join(names, ", ") + "))\n}")
+                return Ok(self.owner + ".__json_dec${id}(" + e + ")")
+            }
+            meta.TypeKind.Union => {
+                let id = self.id()
+                var body = ""
+                var wanted: List<String> = []
+                for m in ty.args {
+                    let e = self.dec("__j", m)?
+                    body = body + "match " + e + " { Ok(__v) => { return Ok(__v) } Err(__e) => {} }\n"
+                    wanted.push(describe(m))
+                }
+                body = body + "return Err(__modifier.__wrong(\"" + list_words(wanted) + "\", __j))\n"
+                self.helpers.push("fn __json_dec${id}(__j: __modifier.Json) -> Result<" + meta.render(ty) + ", Error> {\n" + body + "}")
+                return Ok(self.owner + ".__json_dec${id}(" + e + ")")
+            }
+            _ => { return Err(meta.render(ty)) }
+        }
+    }
+
+    /// The `Json.Object` expression over the fields.
+    fn members(var self, fields: List<meta.Field>, prefix: String) -> Result<String, String> {
+        var out: List<String> = []
+        for f in fields {
+            match self.enc(prefix + f.name, f.ty) {
+                Ok(e) => { out.push("__modifier.member(\"" + f.name + "\", " + e + ")") }
+                Err(ty) => { return Err(no_form("field `" + f.name + "`", ty)) }
+            }
+        }
+        return Ok("__modifier.Json.Object([" + str.join(out, ", ") + "])")
+    }
+
+    /// The statements that read each field out of `source`.
+    fn read_fields(var self, fields: List<meta.Field>, source: String, path: String) -> Result<(String, String), String> {
+        var stmts = ""
+        var inits: List<String> = []
+        for f in fields {
+            var fetch = "__field"
+            match f.ty.kind {
+                meta.TypeKind.Optional => { fetch = "__field_or_null" }
+                _ => {}
+            }
+            var dec = ""
+            match self.dec("__v_" + f.name, f.ty) {
+                Ok(e) => { dec = e }
+                Err(ty) => { return Err(no_form("field `" + f.name + "`", ty)) }
+            }
+            stmts = stmts + "let __v_" + f.name + " = " + wrap(path, "__modifier." + fetch + "(" + source + ", \"" + f.name + "\")") + "?\n"
+            stmts = stmts + "let __f_" + f.name + " = " + wrap(path, "__modifier.__in(\"" + f.name + "\", " + dec + ")") + "?\n"
+            inits.push(f.name + ": __f_" + f.name)
+        }
+        return Ok((stmts, str.join(inits, ", ")))
+    }
+
+    fn struct_to(var self, fields: List<meta.Field>) -> Result<String, String> {
+        let body = self.members(fields, "self.")?
+        return Ok("fn to_json(self) -> __modifier.Json { return " + body + " }")
+    }
+
+    fn struct_from(var self, fields: List<meta.Field>) -> Result<String, String> {
+        let read = self.read_fields(fields, "__j", "")?
+        return Ok("fn from_json(__j: __modifier.Json) -> Result<" + self.owner + ", Error> {\n" + read.0 + "return Ok(" + self.owner + " { " + read.1 + " })\n}")
+    }
+
+    fn enum_to(var self, variants: List<meta.Variant>) -> Result<String, String> {
+        let owner = self.owner
+        var arms = ""
+        for v in variants {
+            let name = v.name
+            match v.shape {
+                meta.Shape.Unit => {
+                    arms = arms + owner + "." + name + " => { return __modifier.Json.Str(\"" + name + "\") }\n"
+                }
+                meta.Shape.Tuple => {
+                    var binds: List<String> = []
+                    var parts: List<String> = []
+                    var i = 0
+                    for t in v.types {
+                        binds.push("__p${i}")
+                        match self.enc("__p${i}", t) {
+                            Ok(e) => { parts.push(e) }
+                            Err(ty) => { return Err(no_form("payload ${i + 1} of `" + name + "`", ty)) }
+                        }
+                        i = i + 1
+                    }
+                    var payload = "__modifier.Json.Array([" + str.join(parts, ", ") + "])"
+                    if parts.len() == 1 { payload = parts.get(0) }
+                    arms = arms + owner + "." + name + "(" + str.join(binds, ", ") + ") => { return __modifier.Json.Object([__modifier.member(\"" + name + "\", " + payload + ")]) }\n"
+                }
+                meta.Shape.Struct => {
+                    var binds: List<String> = []
+                    for f in v.fields { binds.push(f.name + ": __b_" + f.name) }
+                    let payload = self.members(v.fields, "__b_")?
+                    arms = arms + owner + "." + name + " { " + str.join(binds, ", ") + " } => { return __modifier.Json.Object([__modifier.member(\"" + name + "\", " + payload + ")]) }\n"
+                }
+            }
+        }
+        return Ok("fn to_json(self) -> __modifier.Json { match self {\n" + arms + "} }")
+    }
+
+    fn enum_from(var self, variants: List<meta.Variant>) -> Result<String, String> {
+        let owner = self.owner
+        var body = ""
+        var units = 0
+        for v in variants {
+            match v.shape {
+                meta.Shape.Unit => { units = units + 1 }
+                _ => {}
+            }
+        }
+        if units > 0 {
+            body = "match __j {\n__modifier.Json.Str(__s) => {\n"
+            for v in variants {
+                match v.shape {
+                    meta.Shape.Unit => { body = body + "if __s == \"" + v.name + "\" { return Ok(" + owner + "." + v.name + ") }\n" }
+                    _ => {}
+                }
+            }
+            body = body + "return Err(__modifier.__unknown_variant(__s, \"" + owner + "\"))\n}\n_ => {}\n}\n"
+        }
+        body = body + "let __m = __modifier.__variant(__j)?\n"
+        for v in variants {
+            let name = v.name
+            match v.shape {
+                meta.Shape.Unit => {}
+                meta.Shape.Tuple => {
+                    if v.types.len() == 1 {
+                        var dec = ""
+                        match self.dec("__m.value", v.types.get(0)) {
+                            Ok(e) => { dec = e }
+                            Err(ty) => { return Err(no_form("payload 1 of `" + name + "`", ty)) }
+                        }
+                        body = body + "if __m.key == \"" + name + "\" { return Ok(" + owner + "." + name + "(__modifier.__in(\"" + name + "\", " + dec + ")?)) }\n"
+                    } else {
+                        var block = "let __xs = __modifier.__in(\"" + name + "\", __modifier.__elements(__m.value, ${v.types.len()}))?\n"
+                        var names: List<String> = []
+                        var i = 0
+                        for t in v.types {
+                            match self.dec("__xs.get(${i})", t) {
+                                Ok(e) => { block = block + "let __e${i} = __modifier.__in(\"" + name + "\", __modifier.__in(\"[${i}]\", " + e + "))?\n" }
+                                Err(ty) => { return Err(no_form("payload ${i + 1} of `" + name + "`", ty)) }
+                            }
+                            names.push("__e${i}")
+                            i = i + 1
+                        }
+                        body = body + "if __m.key == \"" + name + "\" {\n" + block + "return Ok(" + owner + "." + name + "(" + str.join(names, ", ") + "))\n}\n"
+                    }
+                }
+                meta.Shape.Struct => {
+                    let read = self.read_fields(v.fields, "__m.value", name)?
+                    body = body + "if __m.key == \"" + name + "\" {\n" + read.0 + "return Ok(" + owner + "." + name + " { " + read.1 + " })\n}\n"
+                }
+            }
+        }
+        body = body + "return Err(__modifier.__unknown_variant(__m.key, \"" + owner + "\"))"
+        return Ok("fn from_json(__j: __modifier.Json) -> Result<" + owner + ", Error> {\n" + body + "\n}")
+    }
+}
+
+fn generate(d: meta.Decl) -> Result<meta.Additions, String> {
+    var g = Gen { owner: d.name, helpers: [], ids: 0 }
+    var writer = ""
+    var reader = ""
+    match d.kind {
+        meta.DeclKind.Enum => {
+            writer = g.enum_to(d.variants)?
+            reader = g.enum_from(d.variants)?
+        }
+        _ => {
+            writer = g.struct_to(d.fields)?
+            reader = g.struct_from(d.fields)?
+        }
+    }
+    return Ok(meta.Additions.new(writer + "\n" + reader, str.join(g.helpers, "\n")))
+}
+
+@stable
+@modifier
+pub fn json_modifier(d: meta.Decl) -> Result<meta.Additions, meta.Diagnostic> {
+    if d.generics.len() > 0 {
+        return Err(meta.Diagnostic.new("a generic type is not supported"))
+    }
+    match generate(d) {
+        Ok(a) => { return Ok(a) }
+        Err(message) => { return Err(meta.Diagnostic.new(message)) }
+    }
+}

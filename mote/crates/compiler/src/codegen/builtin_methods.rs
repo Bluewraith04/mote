@@ -408,12 +408,26 @@ impl CodeGenerator {
                 args,
                 span,
             )?)),
-            "slice" => Ok(Some(self.emit_list_method(
-                "coll_slice",
-                object,
-                args,
-                span,
-            )?)),
+            "slice" => {
+                let mut full = args.to_vec();
+                if full.len() == 1 {
+                    full.push(Expr::Null(span));
+                }
+                if full.len() == 2 {
+                    full.push(Expr::Int(1, span));
+                }
+                Ok(Some(self.emit_list_method("coll_slice", object, &full, span)?))
+            }
+            "set_slice" => {
+                let mut full = args.to_vec();
+                if full.len() == 2 {
+                    full.insert(1, Expr::Null(span));
+                }
+                if full.len() == 3 {
+                    full.insert(2, Expr::Int(1, span));
+                }
+                Ok(Some(self.emit_list_method("coll_set_slice", object, &full, span)?))
+            }
             "concat" => {
                 let l = self.compile_expr(object)?;
                 let r = self.compile_expr(args.first().ok_or_else(|| {

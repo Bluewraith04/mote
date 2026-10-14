@@ -12,17 +12,27 @@ Commands:
   run [file]                 Run a file, or the current package
   run -- [args]              Run the current package with command-line arguments
   check [file] [--memory]    Type-check without running; --memory shows where struct literals live
+  expand [file]              Print the program with the code its modifiers generate written in
   compile [file] [-o out]    Compile to .mbc
   build [file] [-o out]      Build a standalone executable
   test [--filter text]       Run the package's tests
        [--schedule-seed n]   Vary where tasks switch (one worker); a failure prints the seed
   init [name] [--lib]        Create a package
   add <git url>[@ref]        Add a dependency from a git repository (github:user/repo works too)
+  add <name>[@version] [--registry name]
+                             Add a dependency from a registry
   remove <name>              Remove a dependency
   sync [--locked]            Resolve dependencies, update mote.lock and fill .mote_packages
+  core fetch [--force]       Download the core libraries (pane, wire, tile, sqlite, ...) for this version
+  core list                  Show where each core library is
   install [<dir> | <git url>[@ref]]
                              Build a program into ~/.mote/bin with its native libraries
-  package                   Create a .mpk archive
+  package                    Create a .mpk archive
+  package --add-registry <name> <url> [--local] [--default]
+                             Name a registry in ~/.mote/mote_config.toml (--local: in mote.toml)
+  package --remove-registry <name> [--local]
+                             Forget a registry
+  publish [--registry name]  Upload the package to a registry (needs description and license)
   version                    Print the version
   help                       Print this message
 
@@ -31,7 +41,6 @@ Flags:
   --max-heap <size>          Heap limit, such as 2GiB or unlimited (default: half of memory)
   --mem-stats                Print what the run used to stderr
   --workers <n>              Scheduler worker count
-  --allow-native             Let std.dev.libtools load native libraries
   --release                  Release build
 ";
 
@@ -156,15 +165,6 @@ fn parse_workers_flag(mut args: Vec<String>) -> (Vec<String>, usize) {
     }
 }
 
-fn env_allows_native() -> bool {
-    env::var("MOTE_ALLOW_NATIVE").is_ok_and(|v| v == "1")
-}
-
-fn parse_allow_native_flag(args: Vec<String>) -> Vec<String> {
-    ffi::builtins::set_allow_native(env_allows_native() || args.iter().any(|a| a == "--allow-native"));
-    args.into_iter().filter(|a| a != "--allow-native").collect()
-}
-
 static SCHEDULE_SEED: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
 
 fn parse_seed_flag(mut args: Vec<String>, workers: usize) -> (Vec<String>, usize) {
@@ -228,7 +228,7 @@ fn discover_package_or_exit(verb: &str) -> (PathBuf, pkg::PackageManifest) {
     }
 }
 
-/// `mote install`: builds the package `target` names into `<mote home>/bin`, with the native libraries of its dependencies beside it.
+/// `mote install`: builds the package `target` names into `<mote home>/bin`.
 fn install_program(target: Option<&str>) -> Result<(), String> {
     let cwd = env::current_dir().map_err(|e| format!("no current directory: {e}"))?;
     let source = pkg::program::locate(target, &cwd)?;
@@ -255,12 +255,12 @@ fn install_program(target: Option<&str>) -> Result<(), String> {
     Ok(())
 }
 
-/// Lets the run open the native libraries of the packages `mote.toml` in `root` grants.
+/// Lets the run open the native libraries of the packages installed under `root`.
 fn grant_natives(root: &Path) {
-    ffi::builtins::set_native_packages(pkg::native::grants(root));
+    ffi::builtins::set_native_packages(pkg::native::libraries(root));
 }
 
-/// The entry `mote test` compiles for a package: its own entry, or a generated one that also imports the `.mote` files in `tests/`.
+/// The entry `mote test` compiles for a package.
 fn package_test_entry(root: &Path, entry: &Path) -> Result<PathBuf, String> {
     let Ok(read) = fs::read_dir(root.join("tests")) else { return Ok(entry.to_path_buf()) };
     let mut stems: Vec<String> = read
@@ -316,9 +316,9 @@ fn main() {
         None => {}
     }
 
+    pkg::core::install_fetcher();
     let args: Vec<String> = env::args().collect();
     let (args, gc) = parse_gc_flag(args);
-    let args = parse_allow_native_flag(args);
     let args = parse_max_heap_flag(args);
     let args = parse_mem_stats_flag(args);
     let (args, workers) = parse_workers_flag(args);
@@ -404,8 +404,12 @@ fn main() {
                 eprintln!("Error: missing package name for 'add' command");
                 process::exit(1);
             }
-            let pkg = &args[2];
-            match pkg::PackageManager::add_dependency(Path::new("."), pkg) {
+            let registry = args.iter().position(|a| a == "--registry").and_then(|at| args.get(at + 1)).map(String::as_str);
+            let Some(pkg) = args.iter().skip(2).enumerate().find(|(i, a)| !a.starts_with('-') && args[*i + 1] != "--registry").map(|(_, a)| a) else {
+                eprintln!("Error: missing package name for 'add' command");
+                process::exit(1);
+            };
+            match pkg::PackageManager::add_dependency_from(Path::new("."), pkg, registry) {
                 Ok(()) => println!("Added dependency '{}' and updated lockfile.", pkg),
                 Err(e) => {
                     eprintln!("Error adding dependency: {}", e);
@@ -437,6 +441,27 @@ fn main() {
                 }
             }
         }
+        "core" => match args.get(2).map(String::as_str) {
+            Some("fetch") => {
+                let force = args.iter().skip(3).any(|a| a == "--force");
+                match pkg::core::fetch(force) {
+                    Ok(dir) => println!("The core libraries of mote {} are in {}", cli::VERSION, dir.display()),
+                    Err(e) => {
+                        eprintln!("Error fetching the core libraries: {e}");
+                        process::exit(1);
+                    }
+                }
+            }
+            Some("list") => {
+                for line in pkg::core::list() {
+                    println!("{line}");
+                }
+            }
+            _ => {
+                eprintln!("Usage: mote core fetch [--force] | mote core list");
+                process::exit(1);
+            }
+        },
         "install" => {
             let target = args.get(2).filter(|a| !a.starts_with('-')).map(String::as_str);
             if let Err(e) = install_program(target) {
@@ -476,11 +501,53 @@ fn main() {
             }
         }
         "package" => {
+            let local = args.iter().any(|a| a == "--local");
+            let project = || local.then(|| discover_package_or_exit("package").0);
+            if let Some(at) = args.iter().position(|a| a == "--add-registry") {
+                let (Some(name), Some(url)) = (args.get(at + 1), args.get(at + 2)) else {
+                    eprintln!("Error: --add-registry takes a name and a URL");
+                    process::exit(1);
+                };
+                let make_default = args.iter().any(|a| a == "--default");
+                match pkg::config::add_registry(name, url, project().as_deref(), make_default) {
+                    Ok(()) => println!("Added registry '{name}'."),
+                    Err(e) => {
+                        eprintln!("Error adding registry: {e}");
+                        process::exit(1);
+                    }
+                }
+                return;
+            }
+            if let Some(at) = args.iter().position(|a| a == "--remove-registry") {
+                let Some(name) = args.get(at + 1) else {
+                    eprintln!("Error: --remove-registry takes a name");
+                    process::exit(1);
+                };
+                match pkg::config::remove_registry(name, project().as_deref()) {
+                    Ok(()) => println!("Removed registry '{name}'."),
+                    Err(e) => {
+                        eprintln!("Error removing registry: {e}");
+                        process::exit(1);
+                    }
+                }
+                return;
+            }
             let (root, _manifest) = discover_package_or_exit("package");
             match pkg::PackageManager::package(&root) {
                 Ok(path) => println!("Package archive: {}", path.display()),
                 Err(e) => {
                     eprintln!("Error packaging artifact: {}", e);
+                    process::exit(1);
+                }
+            }
+        }
+        "publish" => {
+            let (root, _manifest) = discover_package_or_exit("publish");
+            let registry = args.iter().position(|a| a == "--registry").and_then(|at| args.get(at + 1)).map(String::as_str);
+            match pkg::publish::publish(&root, registry) {
+                Ok(p) => println!("Published {} {} to registry '{}' ({}).", p.name, p.version, p.registry, p.checksum),
+                Err(e) => {
+                    eprintln!("Error publishing: {e}");
                     process::exit(1);
                 }
             }
@@ -536,7 +603,7 @@ fn main() {
             let has_file = args.get(2).is_some_and(|a| !a.starts_with('-'));
             if !has_file {
                 let (root, manifest) = discover_package_or_exit("test");
-                let mut grants = pkg::native::grants(&root);
+                let mut grants = pkg::native::libraries(&root);
                 let own = root.join("native").join(pkg::native::host_triple());
                 if own.is_dir() {
                     grants.push((manifest.package.name.clone(), own));
@@ -581,6 +648,39 @@ fn main() {
                 Ok(compiled) => execute_compiled(compiled, gc.clone(), workers),
                 Err(e) => {
                     eprintln!("{}", e);
+                    process::exit(1);
+                }
+            }
+        }
+        "expand" => {
+            let (root_dir, entry) = match args.get(2) {
+                Some(file) if file.ends_with(".mote") => {
+                    let path = PathBuf::from(file);
+                    (path.parent().unwrap_or(Path::new(".")).to_path_buf(), path)
+                }
+                Some(_) => {
+                    eprintln!("Error: `mote expand` needs a `.mote` source file");
+                    process::exit(1);
+                }
+                None => {
+                    let (root, manifest) = discover_package_or_exit("expand");
+                    let entry = manifest.entry_path(&root);
+                    (root, entry)
+                }
+            };
+            match modules::MultiFileCompiler::new(root_dir).expanded_sources(&entry) {
+                Ok(modules) if modules.is_empty() => println!("No modifiers are applied."),
+                Ok(modules) => {
+                    for (path, text) in modules {
+                        println!("// ==== {path} ====");
+                        print!("{text}");
+                        if !text.ends_with('\n') {
+                            println!();
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!("{e}");
                     process::exit(1);
                 }
             }

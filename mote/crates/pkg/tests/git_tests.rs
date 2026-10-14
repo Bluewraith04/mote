@@ -41,7 +41,7 @@ impl Hosts {
         format!("file://{}", self.root.join(repo).display())
     }
 
-    /// Commits `files` as the whole tree of `repo` on `main`, tags it `tag` when given, and returns the commit.
+    /// Commits `files` as the whole tree of `repo` and returns the commit.
     fn commit(&self, repo: &str, tag: Option<&str>, files: &[(&str, &str)]) -> String {
         let dir = self.root.join(repo);
         if !dir.join(".git").exists() {
@@ -68,7 +68,7 @@ impl Hosts {
         git(&dir, &["rev-parse", "HEAD"])
     }
 
-    /// Publishes a package named `repo` at `tag` with a `lib.mote` and dependencies written as `deps` lines.
+    /// Publishes a package named `repo` at `tag` with dependencies.
     fn package(&self, repo: &str, tag: &str, lib: &str, deps: &str) -> String {
         let version = tag.trim_start_matches('v');
         let manifest = format!("[package]\nname = \"{repo}\"\nversion = \"{version}\"\nentry = \"src/lib.mote\"\n\n[dependencies]\n{deps}");
@@ -242,7 +242,7 @@ fn a_name_pinned_twice_and_a_missing_source_are_errors() {
 
     let app = h.app("foo = \"^1.0\"\n");
     let err = PackageManager::install_dependencies(&app, false).unwrap_err();
-    assert!(err.contains("foo: a dependency needs a source") && err.contains("https://host/user/repo"), "{err}");
+    assert!(err.contains("no registry is configured") && err.contains("--add-registry"), "{err}");
     fs::remove_dir_all(&app).unwrap();
 
     let url = h.url("c");
@@ -289,8 +289,9 @@ fn add_picks_the_latest_release_tag_and_names_the_ref() {
     let app = h.app("");
     let missing = h.url("missing");
     for (spec, expect) in [
-        ("util".to_string(), "not a git repository"),
-        ("logger@^1.0.0".to_string(), "not a git repository"),
+        ("Util".to_string(), "not a git repository"),
+        ("Logger@^1.0.0".to_string(), "not a git repository"),
+        ("util".to_string(), "no registry is configured"),
         (format!("{url}@nope"), "has no tag or branch 'nope'"),
         (missing, "cannot be read"),
     ] {

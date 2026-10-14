@@ -1,6 +1,4 @@
-//! The scheduler-aware natives: `Task<T>.join()` and `.cancel()`; channels are in [`super::channel`].
-//! Routed here from [`super::native`] before the leaf dispatcher, since they need full `&mut Runtime` access to park a task or reach another's state.
-//! `join`, `send` and `recv` check `task.cancelled` first.
+//! The scheduler-aware natives: task joins, cancels, channels and shared cells.
 
 use std::ptr::NonNull;
 
@@ -13,7 +11,7 @@ use crate::{Runtime, TaskContext, VmStatus};
 pub use isa::intrinsics::*;
 pub(crate) use channel::{alloc_channel, close_owned_senders};
 
-/// Dispatches a `CALLINTRINSIC`; the id indexes [`INTRINSIC_NAMES`] and `dest` / `args_start` are frame-relative registers.
+/// Dispatches a `CALLINTRINSIC` by its id.
 pub fn dispatch(
     rt: &Runtime,
     task: &mut TaskContext,
@@ -38,6 +36,8 @@ pub fn dispatch(
         SHARED_WAIT_INTRINSIC => super::shared_cell::shared_wait(rt, task, dest, args_start),
         TASK_IS_READY_INTRINSIC => is_ready(rt, task, dest, args_start),
         TASK_PIN_INTRINSIC => pin(task, dest, args_start),
+        SEM_ACQUIRE_INTRINSIC => super::shared_cell::sem_acquire(rt, task, dest, args_start),
+        SEM_RELEASE_INTRINSIC => super::shared_cell::sem_release(rt, task, dest, args_start),
         _ => Err(format!("CALLINTRINSIC: unknown intrinsic {func_idx}")),
     }
 }
@@ -48,8 +48,7 @@ pub(crate) fn alloc_task_handle(rt: &Runtime, task_id: u64) -> NonNull<ObjectHea
         .descriptor(TASK_TYPE_ID)
         .expect("TASK_TYPE_ID is registered in IntrinsicTypeTable::default");
     let mut obj = rt.with_mutator(|m| alloc_intrinsic_object(m, desc, 5));
-    // SAFETY: freshly allocated with 5 slots; no collection can run before
-    // `SPAWN`'s handler returns (the intrinsic module's GC-safety invariant).
+    // SAFETY: freshly allocated with 5 slots.
     unsafe {
         let h = obj.as_mut();
         h.set_field(TASK_SLOT_ID, Value::uint(task_id));
@@ -73,10 +72,7 @@ pub(crate) fn complete_handle(
     };
     let waiter = {
         let _st = rt.sched.lock().unwrap();
-        // SAFETY: `handle` was allocated by `alloc_task_handle` and is kept alive
-        // by the GC root in `TaskContext::handle` (scanned by `roots`)
-        // for as long as this task's `TaskContext` exists — which it still does;
-        // the caller recycles it only after this call returns.
+        // SAFETY: `handle` is kept alive by the GC root in `TaskContext::handle` until the caller recycles it.
         unsafe {
             handle.as_mut().set_field(TASK_SLOT_STATUS, Value::small_int(status));
             handle.as_mut().set_field(TASK_SLOT_RESULT, result);
@@ -98,8 +94,7 @@ fn join(rt: &Runtime, task: &mut TaskContext, dest: usize, args_start: usize) ->
         .ok_or_else(|| "join: receiver is not a Task handle".to_string())?;
     {
         let _st = rt.sched.lock().unwrap();
-        // SAFETY: a live `Task<T>` handle's slots are all initialised by
-        // `alloc_task_handle`.
+        // SAFETY: a live `Task<T>` handle's slots are all initialised by `alloc_task_handle`.
         let status = unsafe { handle.as_ref().get_field(TASK_SLOT_STATUS) }
             .as_int()
             .unwrap_or(STATUS_PENDING);
@@ -130,7 +125,7 @@ fn is_ready(rt: &Runtime, task: &mut TaskContext, dest: usize, args_start: usize
     Ok(VmStatus::Running)
 }
 
-/// `std.task.pin` / `unpin` / `is_pinned`: a change of mode yields so the scheduler moves the task to its new queue.
+/// `std.task.pin`, `unpin` and `is_pinned`.
 fn pin(task: &mut TaskContext, dest: usize, args_start: usize) -> Result<VmStatus, String> {
     let mode = task.registers[args_start].as_int().ok_or_else(|| "task.pin: mode is not an Int".to_string())?;
     let wanted = match mode {

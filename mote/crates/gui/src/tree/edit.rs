@@ -1,4 +1,4 @@
-//! The text editor of `Input` and `TextArea` nodes: caret, selection, undo and the editing keys. Positions count characters.
+//! The text editor of `Input` and `TextArea` nodes: caret, selection, undo and the editing keys.
 
 use super::{Kind, Tree, UiEvent};
 use crate::keys;
@@ -6,7 +6,7 @@ use crate::keys;
 /// The most undo steps an input keeps.
 const HISTORY_LIMIT: usize = 200;
 
-/// An input's caret, the other end of its selection, and a text area's scroll and remembered column.
+/// An input's caret and selection, and a text area's scroll and remembered column.
 #[derive(Clone, Copy)]
 pub(super) struct Edit {
     caret: usize,
@@ -79,12 +79,12 @@ impl Tree {
         Some(Edit { caret: edit.caret.min(len), anchor: edit.anchor.min(len), ..edit })
     }
 
-    /// An input's caret and selection anchor as character positions; a new input has the caret at the end of its text.
+    /// An input's caret and selection anchor as character positions.
     pub fn selection(&self, node: u32) -> Option<(usize, usize)> {
         self.edit_of(node).map(|e| (e.caret, e.anchor))
     }
 
-    /// Puts the caret at character `index` of an input; `extend` keeps the selection's other end where it was.
+    /// Puts the caret at character `index` of an input.
     pub fn set_caret(&mut self, node: u32, index: usize, extend: bool) {
         self.move_caret(node, index, extend, None);
     }
@@ -130,7 +130,7 @@ impl Tree {
         self.history.remove(&node);
     }
 
-    /// Keeps the text as an undo step, unless `how` continues the run of edits before it.
+    /// Keeps the text as an undo step.
     fn record(&mut self, node: u32, how: Last) {
         let continues = how != Last::Other && self.history.get(&node).is_some_and(|h| h.last == how);
         if !continues {
@@ -179,7 +179,7 @@ impl Tree {
         out.push(UiEvent::Changed(node));
     }
 
-    /// Types `text` over the selection of an input; a line input drops control characters, a text area keeps tabs and line breaks.
+    /// Types `text` over the selection of an input.
     pub(super) fn type_text(&mut self, node: u32, text: &str, out: &mut Vec<UiEvent>) {
         let Some((caret, anchor)) = self.selection(node) else { return };
         let area = self.kind(node) == Some(Kind::TextArea);
@@ -194,7 +194,7 @@ impl Tree {
         }
     }
 
-    /// Applies an editing key to an input: arrows, Home, End, Backspace, Delete, select all, undo, and Enter, which submits a line input and breaks the line of a text area.
+    /// Applies an editing key to an input.
     pub(super) fn edit_key(&mut self, node: u32, code: u32, mods: u32, out: &mut Vec<UiEvent>) {
         let Some((caret, anchor)) = self.selection(node) else { return };
         let area = self.kind(node) == Some(Kind::TextArea);

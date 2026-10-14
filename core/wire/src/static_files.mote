@@ -1,0 +1,238 @@
+/// Serves a directory of static files safely.
+
+import std.http_server as std_server
+import std.fs as fs
+import std.string as strings
+import std.date as dates
+import { Stream } from std.stream
+import { parse_int } from std.string
+import { Stat } from std.fs
+
+/// Files up to this size are read at once; bigger ones are streamed.
+let WHOLE_LIMIT = 1048576
+let PIECE = 65536
+
+/// A directory to serve; each setting answers a changed copy.
+pub class Files {
+    dir: String
+    seconds: Int
+
+    /// Serves the files under `dir`.
+    pub fn new(dir: String) -> Files {
+        return Files { dir: dir, seconds: -1 }
+    }
+
+    /// Adds `cache-control: public, max-age=seconds` to every file reply.
+    pub fn max_age(self, seconds: Int) -> Files {
+        return Files { dir: self.dir, seconds: seconds }
+    }
+}
+
+fn content_type(name: String) -> String {
+    let pieces = name.split(".")
+    if pieces.len() < 2 { return "application/octet-stream" }
+    let last: String = pieces.get(pieces.len() - 1)
+    let ext = last.to_lower()
+    if ext == "html" || ext == "htm" { return "text/html; charset=utf-8" }
+    if ext == "css" { return "text/css; charset=utf-8" }
+    if ext == "js" || ext == "mjs" { return "text/javascript; charset=utf-8" }
+    if ext == "json" { return "application/json" }
+    if ext == "txt" { return "text/plain; charset=utf-8" }
+    if ext == "md" { return "text/markdown; charset=utf-8" }
+    if ext == "csv" { return "text/csv; charset=utf-8" }
+    if ext == "xml" { return "application/xml" }
+    if ext == "svg" { return "image/svg+xml" }
+    if ext == "png" { return "image/png" }
+    if ext == "jpg" || ext == "jpeg" { return "image/jpeg" }
+    if ext == "gif" { return "image/gif" }
+    if ext == "webp" { return "image/webp" }
+    if ext == "ico" { return "image/x-icon" }
+    if ext == "woff" { return "font/woff" }
+    if ext == "woff2" { return "font/woff2" }
+    if ext == "ttf" { return "font/ttf" }
+    if ext == "wasm" { return "application/wasm" }
+    if ext == "pdf" { return "application/pdf" }
+    if ext == "mp4" { return "video/mp4" }
+    if ext == "webm" { return "video/webm" }
+    if ext == "mp3" { return "audio/mpeg" }
+    if ext == "ogg" { return "audio/ogg" }
+    return "application/octet-stream"
+}
+
+/// Parses the single byte range in a `Range` header.
+fn byte_range(header: String, size: Int) -> List<Int> {
+    var none: List<Int> = []
+    if !header.starts_with("bytes=") || header.contains(",") { return none }
+    let spec = header.slice(6, header.len())
+    let at = spec.find("-")
+    var cut = -1
+    match at {
+        Some(i) => { cut = i }
+        None => { return none }
+    }
+    let first = spec.slice(0, cut)
+    let last = spec.slice(cut + 1, spec.len())
+    var start = 0
+    var end = size - 1
+    if first == "" {
+        match parse_int(last) {
+            Ok(n) => {
+                if n <= 0 { return [-1] }
+                start = size - n
+                if start < 0 { start = 0 }
+            }
+            Err(e) => { return none }
+        }
+    } else {
+        match parse_int(first) {
+            Ok(n) => { start = n }
+            Err(e) => { return none }
+        }
+        if last != "" {
+            match parse_int(last) {
+                Ok(n) => { if n < end { end = n } }
+                Err(e) => { return none }
+            }
+        }
+    }
+    if start < 0 || start >= size || start > end { return [-1] }
+    return [start, end]
+}
+
+/// Streams `count` bytes of the file from `start` as pieces.
+fn pieces(path: String, start: Int, count: Int) -> Stream<Bytes> {
+    match fs.open(path) {
+        Ok(file) => {
+            let moved = file.seek(start)
+            var left = count
+            while left > 0 {
+                var want = PIECE
+                if want > left { want = left }
+                match file.read(want) {
+                    Ok(piece) => {
+                        let b: Bytes = piece
+                        if b.len() == 0 { break }
+                        left = left - b.len()
+                        yield b
+                    }
+                    Err(e) => { break }
+                }
+            }
+            let closed = file.close()
+        }
+        Err(e) => { }
+    }
+}
+
+fn read_range(path: String, start: Int, count: Int) -> Result<Bytes, Error> {
+    let file = fs.open(path)?
+    let moved = file.seek(start)?
+    let out = Bytes()
+    while out.len() < count {
+        let piece = file.read(count - out.len())?
+        if piece.len() == 0 { break }
+        out.extend(piece)
+    }
+    let closed = file.close()
+    return Ok(out)
+}
+
+fn not_found() -> Error {
+    return Error.new(ErrorKind.NotFound, "not found")
+}
+
+/// The real path of `path`, or a plain not-found.
+fn real_of(path: String) -> Result<String, Error> {
+    match fs.canonicalize(path) {
+        Ok(real) => { return Ok(real) }
+        Err(e) => { return Err(not_found()) }
+    }
+}
+
+fn stat_of(path: String) -> Result<Stat, Error> {
+    match fs.stat(path) {
+        Ok(s) => { return Ok(s) }
+        Err(e) => { return Err(not_found()) }
+    }
+}
+
+/// The real path of `path` when it lies inside the root.
+fn inside(root: String, prefix: String, path: String) -> Result<String, Error> {
+    let real = real_of(path)?
+    if real == root || real.starts_with(prefix) { return Ok(real) }
+    return Err(not_found())
+}
+
+fn http_date(millis: Int) -> String {
+    return dates.datetime_from_unix_millis(millis, 0).format("%a, %d %b %Y %H:%M:%S GMT")
+}
+
+/// Builds the reply for a request path in `files`.
+pub fn reply(files: Files, rest: String, range: String, none_match: String, since: String, if_range: String) -> Result<std_server.Response, Error> {
+    var parts: List<String> = []
+    for part in rest.split("/") {
+        if part == ".." || part.contains("\\") { return Err(not_found()) }
+        if part == "" || part == "." { continue }
+        if part.starts_with(".") { return Err(not_found()) }
+        parts.push(part)
+    }
+    let root = real_of(files.dir)?
+    var prefix = root
+    if !prefix.ends_with("/") { prefix = prefix + "/" }
+    var path = root
+    if parts.len() > 0 { path = prefix + strings.join(parts, "/") }
+    var real = inside(root, prefix, path)?
+    let first = stat_of(real)?
+    if first.is_dir() {
+        match inside(root, prefix, real + "/index.html") {
+            Ok(found) => { real = found }
+            Err(e) => { return Err(not_found()) }
+        }
+    }
+    let info = stat_of(real)?
+    if !info.is_file() { return Err(not_found()) }
+    let size = info.size
+    let etag = "W/\"${size}-${info.modified}\""
+    let dated = http_date(info.modified)
+    var cache = ""
+    if files.seconds >= 0 { cache = "public, max-age=${files.seconds}" }
+    var unchanged = false
+    if none_match != "" {
+        unchanged = none_match.contains(etag)
+    } else if since != "" {
+        unchanged = since == dated
+    }
+    if unchanged {
+        var answer = std_server.Response.empty(304).header("etag", etag).header("last-modified", dated)
+        if cache != "" { answer = answer.header("cache-control", cache) }
+        return Ok(answer)
+    }
+    var status = 200
+    var start = 0
+    var count = size
+    var span = ""
+    var wanted: List<Int> = []
+    if if_range == "" || if_range == etag || if_range == dated { wanted = byte_range(range, size) }
+    if wanted.len() == 1 {
+        return Ok(std_server.Response.empty(416).header("content-range", "bytes */${size}"))
+    }
+    if wanted.len() == 2 {
+        let first_byte: Int = wanted.get(0)
+        let last_byte: Int = wanted.get(1)
+        status = 206
+        start = first_byte
+        count = last_byte - first_byte + 1
+        span = "bytes ${first_byte}-${last_byte}/${size}"
+    }
+    var answer: std_server.Response = std_server.Response.empty(status)
+    if count <= WHOLE_LIMIT {
+        let body = read_range(real, start, count)?
+        answer = std_server.Response.new(status, body)
+    } else {
+        answer = std_server.Response.stream(status, pieces(real, start, count)).header("content-length", "${count}")
+    }
+    answer = answer.header("content-type", content_type(real)).header("etag", etag).header("last-modified", dated).header("accept-ranges", "bytes")
+    if span != "" { answer = answer.header("content-range", span) }
+    if cache != "" { answer = answer.header("cache-control", cache) }
+    return Ok(answer)
+}

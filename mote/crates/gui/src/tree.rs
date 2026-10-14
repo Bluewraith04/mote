@@ -1,4 +1,4 @@
-//! The node tree: flat arrays indexed by node id, with taffy layout, damage tracking and hit testing.
+//! The node tree: flat node arrays with taffy layout, damage tracking and hit testing.
 
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
@@ -70,7 +70,7 @@ impl UiNode {
     const FREE: UiNode = UiNode { parent: NONE, first_child: NONE, last_child: NONE, next_sibling: NONE, kind: Kind::Free, style_id: NO_STYLE };
 }
 
-/// A stretch of a text node's text that looks different from the node's style: `len` bytes with the fields that are set.
+/// A stretch of a text node's text that looks different from the node's style.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Run {
     pub len: usize,
@@ -101,7 +101,7 @@ pub struct MeasureNode<'a> {
     pub style: &'a StyleDef,
 }
 
-/// Gives text its size. `max_width` is the width the text may wrap to, or `None` for no limit.
+/// Gives text its size.
 pub trait Measure {
     fn measure(&mut self, node: &MeasureNode<'_>, max_width: Option<f32>) -> [f32; 2];
 }
@@ -314,7 +314,7 @@ impl Tree {
         Ok(())
     }
 
-    /// Moves a node to sit just before its sibling `before`, or last when `before` is `None`.
+    /// Moves a node to sit just before its sibling `before`.
     pub fn move_before(&mut self, node: u32, before: Option<u32>) -> Result<(), String> {
         let n = self.live(node)?;
         if node == 0 {
@@ -379,7 +379,7 @@ impl Tree {
         Ok(changed)
     }
 
-    /// Sets a text or button node's text to `text` split into `runs`, which must cover it exactly on character boundaries.
+    /// Sets a text or button node's text to `text` split into `runs`.
     pub fn set_runs(&mut self, node: u32, text: &str, runs: Vec<Run>) -> Result<(), String> {
         let n = self.live(node)?;
         if !matches!(self.nodes[n].kind, Kind::Text | Kind::Button) {
@@ -461,7 +461,7 @@ impl Tree {
         }
     }
 
-    /// The style to paint: the node's own, with the paint fields of its pressed or hover style while it is held or under the pointer.
+    /// The style to paint, with the hover or pressed paint fields applied.
     pub fn painted_style(&self, node: u32) -> StyleDef {
         let base = self.style(node);
         let state = self.state.get(node as usize).copied().unwrap_or(0);
@@ -530,7 +530,7 @@ impl Tree {
         out
     }
 
-    /// Live nodes in paint order: parents before children, earlier siblings before later ones.
+    /// Live nodes in paint order.
     pub fn paint_order(&self) -> &[u32] {
         &self.order
     }
@@ -620,7 +620,7 @@ impl Tree {
         self.nodes[n].kind == Kind::Scroll || self.style(n as u32).clips()
     }
 
-    /// Recomputes rectangles, clips and visible regions from taffy's layout and the scroll offsets, and records what changed as damage.
+    /// Recomputes rectangles, clips and visible regions from taffy's layout.
     fn refresh(&mut self) {
         if self.order_dirty {
             self.rebuild_order();
@@ -667,7 +667,7 @@ impl Tree {
         }
     }
 
-    /// Marks a node for repainting at the next layout, for a change that moves nothing (a colour, a hover).
+    /// Marks a node for repainting at the next layout.
     pub fn damage_node(&mut self, node: u32) {
         if let Some(d) = self.paint_dirty.get_mut(node as usize) {
             *d = true;
@@ -690,12 +690,12 @@ impl Tree {
         true
     }
 
-    /// The node under the point: the last one in paint order whose visible region holds it.
+    /// The node under the point.
     pub fn hit(&self, x: f32, y: f32) -> Option<u32> {
         self.order.iter().rev().copied().find(|&i| self.visible[i as usize].contains(x, y))
     }
 
-    /// Scrolls the nearest scrollable ancestor of the node under the point that can move; returns it.
+    /// Scrolls the nearest scrollable ancestor of the node under the point.
     pub fn scroll_at(&mut self, x: f32, y: f32, dx: f32, dy: f32) -> Option<u32> {
         let mut cur = self.hit(x, y)?;
         loop {
@@ -733,7 +733,7 @@ impl Tree {
         rects
     }
 
-    /// The ids removed since the last call, so per-node resources can be dropped.
+    /// The ids removed since the last call.
     pub fn take_removed(&mut self) -> Vec<u32> {
         std::mem::take(&mut self.removed)
     }

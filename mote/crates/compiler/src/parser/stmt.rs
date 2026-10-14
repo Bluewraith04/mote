@@ -474,12 +474,18 @@ impl Parser {
             let value = self.parse_expr(0)?;
             let span = expr.span().merge(&value.span());
             self.consume_statement_terminator();
+            if self.slice_sites.contains(&expr.span()) {
+                return Ok(Self::set_slice_stmt(expr, value, span));
+            }
             Ok(Stmt::Assign {
                 target: expr,
                 value,
                 span,
             })
         } else if let Some(op) = self.match_compound_assign_op() {
+            if self.slice_sites.contains(&expr.span()) {
+                return Err(("a slice takes `=` only; write the elements one by one for `+=` and the like".to_string(), expr.span()));
+            }
             let value = self.parse_expr(0)?;
             let span = expr.span().merge(&value.span());
             self.consume_statement_terminator();
@@ -494,6 +500,15 @@ impl Parser {
             self.consume_statement_terminator();
             Ok(Stmt::Expr { expr, span })
         }
+    }
+
+    /// `x[a..b] = v` (parsed as the call `x.slice(a, b)`) as the call `x.set_slice(a, b, v)`.
+    fn set_slice_stmt(target: Expr, value: Expr, span: Span) -> Stmt {
+        let Expr::Call { callee, mut args, names, .. } = target else { unreachable!("a slice site is a call") };
+        let Expr::MemberAccess { object, span: member_span, .. } = *callee else { unreachable!("a slice site calls a method") };
+        args.push(value);
+        let callee = Expr::MemberAccess { object, member: "set_slice".to_string(), span: member_span };
+        Stmt::Expr { expr: Expr::Call { callee: Box::new(callee), args, names, span }, span }
     }
 
     pub(crate) fn match_compound_assign_op(&mut self) -> Option<AssignOp> {

@@ -1,4 +1,4 @@
-//! `std.dev.libtools` opens a C library and calls its functions through `bind<F>`.
+//! `std.libtools` opens a C library and calls its functions through `bind<F>`.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -17,6 +17,7 @@ void bump(void) { count++; }
 int64_t total(void) { return count; }
 int64_t nap(int64_t ms) { usleep(ms * 1000); return ms; }
 int64_t six(int64_t a, int64_t b, int64_t c, int64_t d, int64_t e, int64_t f) { return a + b + c + d + e + f; }
+int64_t twelve(int64_t a, int64_t b, int64_t c, int64_t d, int64_t e, int64_t f, int64_t g, int64_t h, int64_t i, int64_t j, int64_t k, int64_t l) { return a + 2*b + 3*c + 4*d + 5*e + 6*f + 7*g + 8*h + 9*i + 10*j + 11*k + 12*l; }
 int64_t reverse(const char *in, int64_t n, char *out, int64_t cap) { if (n > cap) return n; for (int64_t i = 0; i < n; i++) out[i] = in[n - 1 - i]; return n; }
 int64_t slow_fill(char *out, int64_t n) { usleep(300000); for (int64_t i = 0; i < n; i++) out[i] = (char)(97 + i % 26); return n; }
 int64_t reject(const char *in, int64_t n, char *out, int64_t cap) { const char *m = \"bad input\"; for (int64_t i = 0; i < 9 && i < cap; i++) out[i] = m[i]; return -1; }
@@ -41,7 +42,7 @@ fn mote(verb: &str, body: &str, tag: &str, extra: &[&str], env: &[(&str, &str)])
     let dir = std::env::temp_dir().join(format!("mote_libtools_run_{tag}_{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let file = dir.join("main.mote");
-    let source = format!("import {{ open, bind, bind_blocking }} from std.dev.libtools\n\nfn main() {{\n{body}\n}}\n");
+    let source = format!("import {{ open, bind, bind_blocking }} from std.libtools\n\nfn main() {{\n{body}\n}}\n");
     std::fs::write(&file, source).unwrap();
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_mote"));
     cmd.arg(verb).arg(&file).args(extra);
@@ -54,7 +55,7 @@ fn mote(verb: &str, body: &str, tag: &str, extra: &[&str], env: &[(&str, &str)])
 }
 
 fn run(body: &str, tag: &str) -> String {
-    let (ok, text) = mote("run", body, tag, &["--allow-native"], &[]);
+    let (ok, text) = mote("run", body, tag, &[], &[]);
     assert!(ok, "{text}");
     text
 }
@@ -210,13 +211,13 @@ fn test_a_buffer_survives_collections_while_c_writes_to_it() {
          \x20   println(buf[27])\n\
          \x20   println(churn.join()?)"
     );
-    let (ok, text) = mote("run", &body, "bytes_gc", &["--allow-native", "--workers", "1", "--mem-stats"], &[]);
+    let (ok, text) = mote("run", &body, "bytes_gc", &["--workers", "1", "--mem-stats"], &[]);
     assert!(ok, "{text}");
     assert!(text.starts_with("40\n97\n98\n600000\n"), "{text}");
     assert!(text.contains("mem.gc.collections = ") && !text.contains("mem.gc.collections = 0\n"), "{text}");
 }
 
-/// A package `app` with a granted path dependency `cl` carrying `libmotecl` for this machine; `main` is the body of `fn main()`.
+/// A package `app` with a path dependency `cl` carrying `libmotecl` for this machine; `main` is the body of `fn main()`.
 fn native_app(tag: &str, main: &str) -> PathBuf {
     let root = std::env::temp_dir().join(format!("mote_libtools_pkg_{tag}_{}", std::process::id()));
     std::fs::remove_dir_all(&root).ok();
@@ -232,10 +233,10 @@ fn native_app(tag: &str, main: &str) -> PathBuf {
     std::fs::write(root.join("app/cl/src/lib.mote"), "pub fn v() -> Int { return 1 }\n").unwrap();
     std::fs::write(
         root.join("app/mote.toml"),
-        "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[dependencies]\ncl = { path = \"cl\", native = true }\n",
+        "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[dependencies]\ncl = { path = \"cl\" }\n",
     )
     .unwrap();
-    let source = format!("import {{ open_package, bind }} from std.dev.libtools\n\nfn main() {{\n{main}\n}}\n");
+    let source = format!("import {{ open_package, bind }} from std.libtools\n\nfn main() {{\n{main}\n}}\n");
     std::fs::write(root.join("app/src/main.mote"), source).unwrap();
     root.join("app")
 }
@@ -248,7 +249,7 @@ fn mote_in(dir: &Path, args: &[&str]) -> (bool, String) {
 const ADD_FROM_PACKAGE: &str = "    match open_package(\"cl\", \"motecl\") {\n        Ok(lib) => {\n            let add = bind<(Int, Int) -> Int>(lib, \"add_i\")?\n            println(add(40, 2))\n        }\n        Err(e) => { println(e.message) }\n    }";
 
 #[test]
-fn test_a_granted_package_opens_its_library_without_the_flag() {
+fn test_an_installed_package_opens_its_library() {
     if !have_cc() {
         return;
     }
@@ -284,18 +285,18 @@ fn test_a_built_program_finds_its_libraries_in_the_lib_directory() {
     let out = Command::new(&exe).current_dir(&elsewhere).output().unwrap();
     let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
     assert!(!text.contains("42"), "a program without its .lib directory cannot open the library: {text}");
-    assert!(text.contains("cl is not granted native access"), "{text}");
+    assert!(text.contains("cl has no native libraries"), "{text}");
     std::fs::remove_dir_all(app.parent().unwrap()).ok();
 }
 
 #[test]
-fn test_a_package_that_is_not_granted_cannot_open_a_library() {
+fn test_a_package_without_libraries_cannot_open_one() {
     let app = native_app("pkg_denied", "    match open_package(\"other\", \"motecl\") {\n        Ok(_) => { println(\"opened\") }\n        Err(e) => { println(e.message) }\n    }");
     let (ok, text) = mote_in(&app, &["sync"]);
     assert!(ok, "{text}");
     let (ok, text) = mote_in(&app, &["run"]);
     assert!(ok, "{text}");
-    assert_eq!(text, "other is not granted native access\n");
+    assert_eq!(text, "other has no native libraries\n");
     std::fs::remove_dir_all(app.parent().unwrap()).ok();
 }
 
@@ -313,7 +314,7 @@ fn test_a_slow_c_call_does_not_hold_the_worker() {
          \x20   slow.join()?\n\
          \x20   quick.join()?"
     );
-    let (ok, text) = mote("run", &body, "nap", &["--allow-native", "--workers", "1"], &[]);
+    let (ok, text) = mote("run", &body, "nap", &["--workers", "1"], &[]);
     assert!(ok, "{text}");
     assert_eq!(text, "other\nnapped\n");
 }
@@ -332,7 +333,7 @@ fn test_an_inline_c_call_holds_the_worker_until_it_returns() {
          \x20   slow.join()?\n\
          \x20   quick.join()?"
     );
-    let (ok, text) = mote("run", &body, "nap_inline", &["--allow-native", "--workers", "1"], &[]);
+    let (ok, text) = mote("run", &body, "nap_inline", &["--workers", "1"], &[]);
     assert!(ok, "{text}");
     assert_eq!(text, "napped\nother\n");
 }
@@ -361,24 +362,15 @@ fn test_a_task_cancelled_inside_a_c_call_stops_after_it_returns() {
          \x20   t.cancel()\n\
          \x20   match t.join() {{\n        Ok(_) => {{ println(\"finished\") }}\n        Err(_) => {{ println(\"cancelled\") }}\n    }}"
     );
-    let (ok, text) = mote("run", &body, "nap_cancel", &["--allow-native", "--workers", "1"], &[]);
+    let (ok, text) = mote("run", &body, "nap_cancel", &["--workers", "1"], &[]);
     assert!(ok, "{text}");
     assert!(text == "cancelled\n" || text == "finished\n", "{text}");
 }
 
 #[test]
-fn test_open_needs_the_flag() {
+fn test_open_needs_no_flag() {
     let body = "    match open(\"libm.so.6\") {\n        Ok(_) => { println(\"opened\") }\n        Err(e) => { println(e.message) }\n    }";
-    let (ok, text) = mote("run", body, "refused", &[], &[]);
-    assert!(ok, "{text}");
-    assert_eq!(text, "native libraries are off; run with --allow-native\n");
-}
-
-#[test]
-#[cfg(target_os = "linux")]
-fn test_the_environment_can_allow_it() {
-    let body = "    match open(\"libm.so.6\") {\n        Ok(_) => { println(\"opened\") }\n        Err(e) => { println(e.message) }\n    }";
-    let (ok, text) = mote("run", body, "env", &[], &[("MOTE_ALLOW_NATIVE", "1")]);
+    let (ok, text) = mote("run", body, "no_flag", &[], &[]);
     assert!(ok, "{text}");
     assert_eq!(text, "opened\n");
 }
@@ -395,6 +387,30 @@ fn test_a_missing_library_and_a_missing_symbol_are_errors() {
          \x20   match bind<() -> Int>(lib, \"nothing_here\") {{\n        Ok(_) => {{ println(\"bound\") }}\n        Err(e) => {{ println(\"no symbol\") }}\n    }}"
     );
     assert_eq!(run(&body, "missing"), "no library\nno symbol\n");
+}
+
+#[test]
+fn test_a_function_takes_twelve_parameters_and_not_thirteen() {
+    if !have_cc() {
+        return;
+    }
+    let lib = lib_literal(&build_lib("twelve"));
+    let body = format!(
+        "    let lib = open(\"{lib}\")?\n\
+         \x20   let twelve = bind<(Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int) -> Int>(lib, \"twelve\")?\n\
+         \x20   println(twelve(1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1))\n\
+         \x20   println(twelve(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12))"
+    );
+    assert_eq!(run(&body, "twelve"), "78\n650\n");
+    let (ok, text) = mote(
+        "check",
+        "    let lib = open(\"x\")?\n    let f = bind<(Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int) -> Int>(lib, \"f\")?\n    println(f(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13))",
+        "thirteen",
+        &[],
+        &[],
+    );
+    assert!(!ok);
+    assert!(text.contains("a C function takes at most 12 parameters here"), "{text}");
 }
 
 #[test]

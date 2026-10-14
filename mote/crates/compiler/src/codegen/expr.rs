@@ -281,6 +281,17 @@ impl CodeGenerator {
                         return Ok(winner);
                     }
 
+                    if func_name == "__sem_acquire" || func_name == "__sem_release" {
+                        let arg = self.compile_expr(
+                            args.first()
+                                .ok_or_else(|| (format!("`{func_name}` needs one argument"), *span))?,
+                        )?;
+                        let id = if func_name == "__sem_acquire" { isa::intrinsics::SEM_ACQUIRE_INTRINSIC } else { isa::intrinsics::SEM_RELEASE_INTRINSIC };
+                        let done = self.emit_native_regs(id, &[arg]);
+                        self.reg_alloc.free_temp(arg);
+                        return Ok(done);
+                    }
+
                     if func_name == "__task_pin" {
                         let arg = self.compile_expr(
                             args.first()
@@ -422,7 +433,14 @@ impl CodeGenerator {
                 self.current_insts.push(0);
                 self.exit_regions_above(0);
                 self.exit_withs_above(0);
-                self.emit_ret(r);
+                match self.types.try_failure(*span).cloned() {
+                    Some(failure) => {
+                        let converted = self.emit_failure_conversion(r, &failure)?;
+                        self.emit_ret(converted);
+                        self.reg_alloc.free_temp(converted);
+                    }
+                    None => self.emit_ret(r),
+                }
                 let after = self.current_insts.len() as i32;
                 self.current_insts[site] =
                     encode_jc(Opcode::JMPIFNOT, fail, (after - site as i32) as i16);
@@ -480,6 +498,7 @@ impl CodeGenerator {
                     returns_param: std::mem::take(&mut self.next_lambda_returns_param),
                     prebuilt: None,
                     module: self.module.clone(),
+                    table: self.instance_table.clone(),
                 });
                 let value = self.emit_function_value(code_idx, &capture_regs, *span);
                 for (_, reg) in type_captures {

@@ -1,8 +1,9 @@
-/// std.iter: eager list adapters. Each walks a `List` and returns a new `List`; callbacks are typed, so `map(xs, |x| x * 2)` answers `List<Int>`. `std.stream` has the lazy versions.
+/// std.iter: eager list adapters that each return a new `List`.
 
 import { * } from std.prelude
+import { Eq, Ord } from std.traits
 
-/// `[0, 1, …, n-1]`.
+/// The list of integers from 0 up to `n`.
 pub fn range(n: Int) -> List<Int> {
     var out: List<Int> = []
     for i in 0..n {
@@ -20,8 +21,7 @@ pub fn map<T, U>(xs: List<T>, f: (T) -> U) -> List<U> {
     return out
 }
 
-/// `f` applied to every element, then flattened one level — `map` immediately
-/// followed by manual flattening collapsed into one call.
+/// `f` applied to every element, then flattened one level.
 pub fn flat_map<T, U>(xs: List<T>, f: (T) -> List<U>) -> List<U> {
     var out: List<U> = []
     for x in xs {
@@ -75,7 +75,7 @@ pub fn any<T>(xs: List<T>, pred: (T) -> Bool) -> Bool {
     return false
 }
 
-/// True if `pred` is true for every element (vacuously true on an empty list).
+/// True if `pred` is true for every element.
 pub fn all<T>(xs: List<T>, pred: (T) -> Bool) -> Bool {
     for x in xs {
         if pred(x) == false {
@@ -85,8 +85,7 @@ pub fn all<T>(xs: List<T>, pred: (T) -> Bool) -> Bool {
     return true
 }
 
-/// Left fold: `f(f(f(init, x0), x1), …)`. The accumulator type `A` comes from
-/// `init`, not from `f`, so it stays real.
+/// Left fold of the elements from `init`.
 pub fn fold<T, A>(xs: List<T>, init: A, f: (A, T) -> A) -> A {
     var acc = init
     for x in xs {
@@ -115,7 +114,7 @@ pub fn reverse<T>(xs: List<T>) -> List<T> {
     return out
 }
 
-/// The first `n` elements (fewer if the list is shorter).
+/// The first `n` elements.
 pub fn take<T>(xs: List<T>, n: Int) -> List<T> {
     var out: List<T> = []
     var i = 0
@@ -129,7 +128,7 @@ pub fn take<T>(xs: List<T>, n: Int) -> List<T> {
     return out
 }
 
-/// `[(0, x0), (1, x1), …]` as a list of real tuples.
+/// The elements paired with their indexes.
 pub fn enumerate<T>(xs: List<T>) -> List<(Int, T)> {
     var out: List<(Int, T)> = []
     var i = 0
@@ -140,7 +139,7 @@ pub fn enumerate<T>(xs: List<T>) -> List<(Int, T)> {
     return out
 }
 
-/// True if any element equals `target` (`==` semantics).
+/// True if any element equals `target`.
 pub fn contains<T: Eq>(xs: List<T>, target: T) -> Bool {
     for x in xs {
         if x == target {
@@ -150,44 +149,47 @@ pub fn contains<T: Eq>(xs: List<T>, target: T) -> Bool {
     return false
 }
 
-/// A new list sorted by `less(a, b) -> Bool` (true when `a` should come before
-/// `b`). A stable insertion sort, O(n^2); the input list is untouched.
+/// A new list sorted by `less`, with a stable merge sort.
 pub fn sort_by<T>(xs: List<T>, less: (T, T) -> Bool) -> List<T> {
-    var out: List<T> = []
-    for x in xs {
-        out.push(x)
-        var k = out.len() - 1
-        while k > 0 {
-            let prev = out.get(k - 1)
-            if less(x, prev) {
-                out.set(k, prev)
-                out.set(k - 1, x)
-                k = k - 1
-            } else {
-                k = 0
-            }
+    if xs.len() < 2 { return xs }
+    let mid = xs.len() / 2
+    var left: List<T> = []
+    var right: List<T> = []
+    var i = 0
+    while i < xs.len() {
+        if i < mid {
+            left.push(xs.get(i))
+        } else {
+            right.push(xs.get(i))
         }
+        i = i + 1
+    }
+    let a = sort_by(left, less)
+    let b = sort_by(right, less)
+    var out: List<T> = []
+    var x = 0
+    var y = 0
+    while x < a.len() && y < b.len() {
+        if less(b.get(y), a.get(x)) {
+            out.push(b.get(y))
+            y = y + 1
+        } else {
+            out.push(a.get(x))
+            x = x + 1
+        }
+    }
+    while x < a.len() {
+        out.push(a.get(x))
+        x = x + 1
+    }
+    while y < b.len() {
+        out.push(b.get(y))
+        y = y + 1
     }
     return out
 }
 
-/// A new list in ascending order by `Ord.compare` — any `T: Ord`,
-/// not just numbers. Other orderings need `sort_by` with an explicit comparator.
+/// A new list in ascending order by `Ord.compare`.
 pub fn sort<T: Ord>(xs: List<T>) -> List<T> {
-    var out: List<T> = []
-    for x in xs {
-        out.push(x)
-        var k = out.len() - 1
-        while k > 0 {
-            let prev = out.get(k - 1)
-            if x.compare(prev) < 0 {
-                out.set(k, prev)
-                out.set(k - 1, x)
-                k = k - 1
-            } else {
-                k = 0
-            }
-        }
-    }
-    return out
+    return sort_by(xs, |a, b| a.compare(b) < 0)
 }

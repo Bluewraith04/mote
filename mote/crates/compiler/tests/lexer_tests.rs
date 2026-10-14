@@ -262,3 +262,44 @@ fn test_automatic_statement_insertion() {
         ]
     );
 }
+
+fn docs_of(src: &str) -> Vec<(String, Option<String>)> {
+    let tokens = Lexer::new(src).tokenize().expect("Tokenization failed");
+    tokens.into_iter().filter(|t| !matches!(t.kind, TokenKind::Newline | TokenKind::Eof)).map(|t| (t.kind.describe(), t.doc.map(|d| d.to_string()))).collect()
+}
+
+#[test]
+fn test_a_doc_comment_is_kept_on_the_next_token() {
+    let got = docs_of("/// one\n/// two\nstruct P {\n    /// the x\n    x: Int\n}\n");
+    assert_eq!(got[0], ("the keyword `struct`".to_string(), Some("one\ntwo".to_string())));
+    assert_eq!(got[1].1, None);
+    let x = got.iter().find(|(d, _)| d == "`x`").unwrap();
+    assert_eq!(x.1.as_deref(), Some("the x"));
+}
+
+#[test]
+fn test_a_doc_comment_before_an_attribute_sits_on_the_at_sign() {
+    let got = docs_of("/// help\n@arg(x = a)\nstruct P {}\n");
+    assert_eq!(got[0], ("`@`".to_string(), Some("help".to_string())));
+}
+
+#[test]
+fn test_plain_comments_are_not_docs() {
+    assert!(docs_of("// plain\nstruct P {}\n").iter().all(|(_, d)| d.is_none()));
+    assert!(docs_of("//// four\nstruct P {}\n").iter().all(|(_, d)| d.is_none()));
+    assert!(docs_of("/* block */\nstruct P {}\n").iter().all(|(_, d)| d.is_none()));
+    assert!(docs_of("let a = 1 /// trailing\nlet b = 2\n").iter().all(|(_, d)| d.is_none()));
+}
+
+#[test]
+fn test_a_doc_comment_removes_one_leading_space_only() {
+    let got = docs_of("///no space\n///  two spaces\n///\nstruct P {}\n");
+    assert_eq!(got[0].1.as_deref(), Some("no space\n two spaces\n"));
+}
+
+#[test]
+fn test_a_doc_comment_does_not_change_the_newlines() {
+    let with = Lexer::new("let a = 1\n/// doc\nlet b = 2\n").tokenize().unwrap().into_iter().map(|t| t.kind).collect::<Vec<_>>();
+    let without = Lexer::new("let a = 1\nlet b = 2\n").tokenize().unwrap().into_iter().map(|t| t.kind).collect::<Vec<_>>();
+    assert_eq!(with, without);
+}

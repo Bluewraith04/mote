@@ -1,4 +1,4 @@
-//! The mote home: a cache of fetched git packages by commit, and the directories programs are installed into.
+//! The mote home: a cache of fetched git packages and the directories programs install into.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -13,14 +13,7 @@ const SUM_FILE: &str = ".sum";
 
 /// The mote home: `$MOTE_HOME`, else `.mote` in the user's home directory.
 pub fn home() -> Result<PathBuf, String> {
-    if let Some(dir) = std::env::var_os("MOTE_HOME").filter(|d| !d.is_empty()) {
-        return Ok(PathBuf::from(dir));
-    }
-    let var = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
-    std::env::var_os(var)
-        .filter(|d| !d.is_empty())
-        .map(|d| PathBuf::from(d).join(".mote"))
-        .ok_or_else(|| format!("no home directory; set MOTE_HOME or {var}"))
+    modules::core::home()
 }
 
 /// Where `mote install` puts programs.
@@ -49,7 +42,7 @@ impl Store {
         Store { root }
     }
 
-    /// The files of `repo` at `commit`: the kept copy when it is intact, else what `fetch` answers, which is then kept.
+    /// The files of `repo` at `commit`, from the kept copy or else `fetch`.
     pub fn files(&self, repo: &Repo, commit: &str, fetch: impl FnOnce() -> Result<Vec<(String, Vec<u8>)>, String>) -> Result<Vec<(String, Vec<u8>)>, String> {
         if commit.len() != 40 || !commit.chars().all(|c| c.is_ascii_hexdigit()) {
             return fetch();
@@ -64,7 +57,7 @@ impl Store {
     }
 }
 
-/// The files of `repo` at `commit` through the store in the mote home, fetched with `git` when they are not kept.
+/// The files of `repo` at `commit` through the store in the mote home.
 pub fn fetch_files(git: &Git, repo: &Repo, commit: &str) -> Result<Vec<(String, Vec<u8>)>, String> {
     match Store::open() {
         Some(store) => store.files(repo, commit, || git.files(repo, commit)),
@@ -72,9 +65,13 @@ pub fn fetch_files(git: &Git, repo: &Repo, commit: &str) -> Result<Vec<(String, 
     }
 }
 
-/// A directory name for a repository: its text with unsafe characters as `_`, then a short hash of the exact text.
+/// A directory name for a repository.
 fn slug(repo: &Repo) -> String {
-    let spec = repo.spec();
+    slug_of(&repo.spec())
+}
+
+/// A directory name for `spec`.
+pub(crate) fn slug_of(spec: &str) -> String {
     let readable: String = spec.chars().map(|c| if c.is_ascii_alphanumeric() || matches!(c, '.' | '-') { c } else { '_' }).take(48).collect();
     let digest = Sha256::digest(spec.as_bytes());
     let hash: String = digest.iter().take(4).map(|b| format!("{b:02x}")).collect();
@@ -100,7 +97,7 @@ fn read_entry(dir: &Path) -> Option<Vec<(String, Vec<u8>)>> {
     }
 }
 
-/// Keeps `files` in `dir`, through a temporary directory renamed into place, so no reader sees half of them.
+/// Keeps `files` in `dir`.
 fn write_entry(dir: &Path, files: &[(String, Vec<u8>)]) -> Result<(), String> {
     static COUNT: AtomicU32 = AtomicU32::new(0);
     let parent = dir.parent().ok_or("a kept package has a parent directory")?;

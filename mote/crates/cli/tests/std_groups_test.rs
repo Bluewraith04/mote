@@ -1,4 +1,4 @@
-//! `std.data`, `std.sys` and `std.dev` are groups: a member is imported by path, through the group, or by name from the group.
+//! Traits listed on a type work without the program importing their derive modules.
 
 use std::process::Command;
 
@@ -14,75 +14,14 @@ fn run(source: &str, tag: &str) -> String {
 }
 
 #[test]
-fn a_group_opens_its_members_as_a_namespace() {
-    let src = "import std.data
-
-fn main() {
-    println(data.base64.encode(\"hi\".bytes()))
-    println(data.json.to_text(data.json.parse(\"{\\\"a\\\": [1, 2]}\").unwrap()).unwrap())
-    println(data.uuid.v4().version())
-}
-";
-    assert_eq!(run(src, "namespace"), "aGk=\n{\"a\":[1,2]}\n4\n");
-}
-
-#[test]
-fn a_group_can_be_renamed() {
-    let src = "import std.sys as os
-
-fn main() {
-    println(os.fs.exists(\"/no/such/path/here\"))
-}
-";
-    assert_eq!(run(src, "renamed"), "false\n");
-}
-
-#[test]
-fn members_import_by_name_from_the_group_or_by_path() {
-    let src = "import { json, uuid } from std.data
-import std.data.base64 as b64
-import { Json } from std.data.json
-
-fn main() {
-    let j: Json = json.parse(\"{\\\"a\\\": 1}\").unwrap()
-    println(json.to_text(j).unwrap())
-    println(uuid.v7().version())
-    println(b64.encode(\"a\".bytes()))
-}
-";
-    assert_eq!(run(src, "by_name"), "{\"a\":1}\n7\nYQ==\n");
-}
-
-#[test]
-fn a_type_and_a_pattern_are_named_through_the_group() {
-    let src = "import std.data
-
-fn describe(j: data.json.Json) -> String {
-    match j {
-        data.json.Json.Str(s) => { return \"text ${s}\" }
-        data.json.Json.Int(n) => { return \"number ${n}\" }
-        _ => { return \"other\" }
-    }
-}
-
-fn main() {
-    println(describe(data.json.Json.Str(\"x\")))
-    println(describe(data.json.Json.Int(4)))
-    println(describe(data.json.Json.Null))
-}
-";
-    assert_eq!(run(src, "types"), "text x\nnumber 4\nother\n");
-}
-
-#[test]
-fn derives_still_work_without_naming_the_group() {
-    let src = "@derive(Json)
-struct P {
+fn listed_traits_work_without_naming_the_derive_modules() {
+    let src = "import { JsonCodec } from std.json
+import { Args } from std.args
+struct P: (JsonCodec) {
     x: Int
 }
 
-@derive(Args)
-struct Opts {
+struct Opts: (Args) {
     verbose: Bool
 }
 
@@ -92,4 +31,19 @@ fn main() {
 }
 ";
     assert_eq!(run(src, "derives"), "2\ntrue\n");
+}
+
+#[test]
+fn std_modules_import_by_flat_path_and_by_name() {
+    let src = "import std.base64 as b64
+import std.json as json
+import { Json } from std.json
+
+fn main() {
+    let j: Json = json.parse(\"{\\\"a\\\": 1}\").unwrap()
+    println(json.to_text(j).unwrap())
+    println(b64.encode(\"a\".bytes()))
+}
+";
+    assert_eq!(run(src, "flat"), "{\"a\":1}\nYQ==\n");
 }

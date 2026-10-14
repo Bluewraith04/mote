@@ -1,4 +1,4 @@
-//! `Channel<T>(n)` makes a `Sender` and a `Receiver`; senders move into `spawn`, and the channel closes with its last one.
+//! `Channel<T>(n)` makes a `Sender` and a `Receiver`, and the channel closes with its last sender.
 
 use std::process::Command;
 
@@ -176,9 +176,49 @@ fn main() {
 }
 
 #[test]
-fn a_receiver_cannot_close() {
-    let src = "fn main() {\n    let (tx, rx) = Channel<Int>(1)\n    rx.close()\n}\n";
-    fails("check", src, "rx_close", "a `Receiver` can't close a channel; close its `Sender`s");
+fn a_closed_receiver_drops_its_items_and_receives_nothing() {
+    let src = "\
+fn main() {
+    let (tx, rx) = Channel<Int>(2)
+    tx.send(1)
+    rx.close()
+    println(rx.recv().is_none())
+}
+";
+    runs(src, "rx_close", "true\n");
+}
+
+#[test]
+fn a_send_after_the_receiver_closed_fails() {
+    let src = "\
+fn main() {
+    let (tx, rx) = Channel<Int>(2)
+    rx.close()
+    let t = spawn { tx.send(1) }
+    println(t.join().is_err())
+}
+";
+    runs(src, "send_after_close", "true\n");
+}
+
+#[test]
+fn closing_the_receiver_wakes_a_parked_sender() {
+    let src = "\
+fn main() {
+    let (tx, rx) = Channel<Int>(1)
+    let t = spawn {
+        var i = 0
+        while i < 5 {
+            tx.send(i)
+            i = i + 1
+        }
+    }
+    println(rx.recv().unwrap())
+    rx.close()
+    println(t.join().is_err())
+}
+";
+    runs(src, "wake_sender", "0\ntrue\n");
 }
 
 #[test]

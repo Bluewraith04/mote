@@ -241,15 +241,90 @@ pub(super) fn fs_rename(ctx: &mut NativeCallContext<'_>) -> PlatformNative {
     Ok((PlatformRequest::Rename { from, to }, done))
 }
 
+/// A stat as seven values: kind, size, modified, mode, inode, device, links.
+fn stat_values(s: &contracts::FileStat) -> [Value; 7] {
+    [
+        Value::int(s.kind as i64),
+        Value::int(s.size),
+        Value::int(s.modified_millis),
+        Value::int(s.mode),
+        Value::int(s.inode),
+        Value::int(s.device),
+        Value::int(s.links),
+    ]
+}
+
 pub(super) fn fs_stat(ctx: &mut NativeCallContext<'_>) -> PlatformNative {
     let path = path_arg(ctx, 0, "stat(path)")?;
     let done = answering(format!("stat: {path}"), |c, r| match r {
-        PlatformResponse::Stat(s) => {
-            alloc_list(c, &[Value::int(s.kind as i64), Value::int(s.size), Value::int(s.modified_millis)])
-        }
+        PlatformResponse::Stat(s) => alloc_list(c, &stat_values(&s)),
         other => Err(format!("stat: platform returned {other:?}")),
     });
     Ok((PlatformRequest::Stat { path }, done))
+}
+
+pub(super) fn fs_lstat(ctx: &mut NativeCallContext<'_>) -> PlatformNative {
+    let path = path_arg(ctx, 0, "lstat(path)")?;
+    let done = answering(format!("lstat: {path}"), |c, r| match r {
+        PlatformResponse::Stat(s) => alloc_list(c, &stat_values(&s)),
+        other => Err(format!("lstat: platform returned {other:?}")),
+    });
+    Ok((PlatformRequest::Lstat { path }, done))
+}
+
+pub(super) fn fs_symlink(ctx: &mut NativeCallContext<'_>) -> PlatformNative {
+    let target = path_arg(ctx, 0, "symlink(target, link)")?;
+    let link = path_arg(ctx, 1, "symlink(target, link)")?;
+    let done = unit(format!("symlink: {link}"));
+    Ok((PlatformRequest::Symlink { target, link }, done))
+}
+
+pub(super) fn fs_set_modified(ctx: &mut NativeCallContext<'_>) -> PlatformNative {
+    let path = path_arg(ctx, 0, "set_modified(path, millis)")?;
+    let millis = arg_int(ctx, 1);
+    let done = unit(format!("set_modified: {path}"));
+    Ok((PlatformRequest::SetModified { path, millis }, done))
+}
+
+pub(super) fn fs_set_mode(ctx: &mut NativeCallContext<'_>) -> PlatformNative {
+    let path = path_arg(ctx, 0, "set_mode(path, mode)")?;
+    let mode = arg_int(ctx, 1);
+    let done = unit(format!("set_mode: {path}"));
+    Ok((PlatformRequest::SetMode { path, mode }, done))
+}
+
+pub(super) fn fs_read_dir(ctx: &mut NativeCallContext<'_>) -> PlatformNative {
+    let path = path_arg(ctx, 0, "read_dir(path)")?;
+    let done = answering(format!("read_dir: {path}"), |c, r| match r {
+        PlatformResponse::Entries(entries) => {
+            let mut flat = Vec::with_capacity(entries.len() * 8);
+            for (name, s) in &entries {
+                flat.push(c.heap.alloc_string(name.as_bytes())?);
+                flat.extend(stat_values(s));
+            }
+            alloc_list(c, &flat)
+        }
+        other => Err(format!("read_dir: platform returned {other:?}")),
+    });
+    Ok((PlatformRequest::ReadDir { path }, done))
+}
+
+pub(super) fn fs_read_link(ctx: &mut NativeCallContext<'_>) -> PlatformNative {
+    let path = path_arg(ctx, 0, "read_link(path)")?;
+    let done = answering(format!("read_link: {path}"), |c, r| match r {
+        PlatformResponse::Text(s) => c.heap.alloc_string(s.as_bytes()),
+        other => Err(format!("read_link: platform returned {other:?}")),
+    });
+    Ok((PlatformRequest::ReadLink { path }, done))
+}
+
+pub(super) fn fs_canonicalize(ctx: &mut NativeCallContext<'_>) -> PlatformNative {
+    let path = path_arg(ctx, 0, "canonicalize(path)")?;
+    let done = answering(format!("canonicalize: {path}"), |c, r| match r {
+        PlatformResponse::Text(s) => c.heap.alloc_string(s.as_bytes()),
+        other => Err(format!("canonicalize: platform returned {other:?}")),
+    });
+    Ok((PlatformRequest::Canonicalize { path }, done))
 }
 
 pub(super) fn string_list_arg(ctx: &NativeCallContext<'_>, idx: usize, who: &str) -> Result<Vec<String>, String> {
@@ -474,5 +549,60 @@ pub(super) fn time_ticker(ctx: &mut NativeCallContext<'_>) -> Result<SourceSpec,
         }
     }
     Ok(SourceSpec { request: SourceRequest::Timer { period_nanos: period as u64 }, capacity: 8, overflow: Overflow::Pause, decode: tick })
+}
+
+fn terminal_unit(who: &'static str) -> ContinuationFn {
+    Box::new(move |_, result| match result {
+        Ok(_) => Ok(Value::null()),
+        Err(e) => Err(NativeError::failure(e.kind as i32, format!("{who}: {}", e.message))),
+    })
+}
+
+pub(super) fn term_open(ctx: &mut NativeCallContext<'_>) -> PlatformNative {
+    Ok((PlatformRequest::TermOpen { mouse: arg_int(ctx, 0) != 0 }, terminal_unit("term.open")))
+}
+
+pub(super) fn term_close(_: &mut NativeCallContext<'_>) -> PlatformNative {
+    Ok((PlatformRequest::TermClose, terminal_unit("term.close")))
+}
+
+pub(super) fn term_size(_: &mut NativeCallContext<'_>) -> PlatformNative {
+    let done: ContinuationFn = Box::new(|_, result| match result {
+        Ok(PlatformResponse::Int(n)) => Ok(Value::int(n)),
+        Ok(other) => Err(NativeError::from(format!("term.size: platform returned {other:?}"))),
+        Err(e) => Err(NativeError::failure(e.kind as i32, format!("term.size: {}", e.message))),
+    });
+    Ok((PlatformRequest::TermSize, done))
+}
+
+pub(super) fn term_events(_: &mut NativeCallContext<'_>) -> Result<SourceSpec, String> {
+    fn decode(cx: &mut dyn NativeCtx, payload: EventPayload) -> Result<Value, String> {
+        let EventPayload::List(items) = payload else { return Err("a terminal event is a list".to_string()) };
+        let list = cx.alloc_header(LIST_TYPE_ID, 2)?;
+        let backing = cx.alloc_backing(items.len())?;
+        for (i, item) in items.iter().enumerate() {
+            let EventPayload::Int(n) = item else { return Err("a terminal event holds integers".to_string()) };
+            cx.set_slot(backing, BACKING_DATA_BASE + i, Value::int(*n))?;
+        }
+        cx.set_slot(list, HEADER_LEN_SLOT, Value::uint(items.len() as u64))?;
+        cx.set_slot(list, HEADER_BACKING_SLOT, backing)?;
+        Ok(list)
+    }
+    Ok(SourceSpec { request: SourceRequest::Terminal, capacity: 256, overflow: Overflow::Coalesce, decode })
+}
+
+pub(super) fn signal_watch(ctx: &mut NativeCallContext<'_>) -> Result<SourceSpec, String> {
+    let mask = arg_int(ctx, 0);
+    let codes: Vec<i64> = (0..5).filter(|code| mask & (1 << code) != 0).collect();
+    if codes.is_empty() {
+        return Err("signal.watch: name at least one signal".to_string());
+    }
+    fn code(_: &mut dyn NativeCtx, payload: EventPayload) -> Result<Value, String> {
+        match payload {
+            EventPayload::Int(n) => Ok(Value::int(n)),
+            other => Err(format!("signal.watch: unexpected event {other:?}")),
+        }
+    }
+    Ok(SourceSpec { request: SourceRequest::Signals { codes }, capacity: 8, overflow: Overflow::Coalesce, decode: code })
 }
 

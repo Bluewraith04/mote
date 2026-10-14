@@ -50,7 +50,7 @@ impl Surface {
         Ok(())
     }
 
-    /// Applies one input and answers the events it raises; a resize that cannot be honoured is dropped.
+    /// Applies one input and answers the events it raises.
     pub fn input(&mut self, input: &Input) -> Vec<UiEvent> {
         match *input {
             Input::Resize { width, height } => match self.resize(width, height) {
@@ -75,7 +75,7 @@ impl Surface {
         self.tree.focus().filter(|n| self.tree.kind(*n) == Some(Kind::TextArea))
     }
 
-    /// A wheel turn over a text area that has text to scroll to moves its text; true if it did.
+    /// A wheel turn over a text area scrolls its text.
     fn scroll_area(&mut self, x: f32, y: f32, dy: f32) -> bool {
         let Some(node) = self.tree.hit(x, y).filter(|n| self.tree.kind(*n) == Some(Kind::TextArea)) else { return false };
         let Some(layout) = self.painter.area_layout(&self.tree, node) else { return false };
@@ -137,7 +137,7 @@ impl Surface {
         }
     }
 
-    /// A press on a focused input puts the caret under the pointer; a drag with it held extends the selection.
+    /// A press on a focused input puts the caret under the pointer.
     fn place_caret(&mut self, input: &Input) {
         let (x, y, dragging) = match *input {
             Input::PointerDown { x, y } => (x, y, false),

@@ -40,7 +40,7 @@ pub enum Opcode {
     JMPIF = 30,
     JMPIFNOT = 31,
 
-    /// `CALL rA, bx`: code object `bx` over the window `rA+1..`; the result lands in `rA`.
+    /// `CALL rA, bx`: calls code object `bx` over the window `rA+1..`, result in `rA`.
     CALL = 32,
     RET = 33,
 
@@ -57,26 +57,17 @@ pub enum Opcode {
     /// `rA = new heap string from string_table[bx]` of the current code object.
     NEWSTR = 41,
 
-    /// Indirect call: `rA = call(value in rB)(args at rC..)`. `rB` holds a
-    /// function value (a `FUNCTION_TYPE_ID` heap object); its slot 0 is the
-    /// callee code-object index. Same frame setup as `CALL`.
+    /// Indirect call: `rA = call(value in rB)(args at rC..)`.
     CALLV = 42,
 
-    /// `rA = the current frame's closure captures[bx]` — slot `1 + bx` of the
-    /// `FUNCTION_TYPE_ID` object this frame was entered through (`CALLV`). Only
-    /// emitted at the top of a lambda body that captures.
+    /// `rA = the current frame's closure captures[bx]`.
     GETCAPTURE = 43,
 
     /// Module-level globals; `bx` indexes a flat, program-wide array.
-    /// - `GETGLOBAL rA, bx`: `rA = globals[bx]` (out of range reads `null`).
-    /// - `SETGLOBAL rA, bx`: `globals[bx] = rA` (grows the array to fit).
     GETGLOBAL = 44,
     SETGLOBAL = 45,
 
-    /// Structured concurrency.
-    /// - `SCOPEENTER`: open a child-task set on the running task.
-    /// - `SCOPEEXIT rA`: block until every child in the innermost set has completed; `rA` receives `null`, or the message of a child fault nobody observed with `join`.
-    /// - `SPAWN rA, rB`: start the zero-parameter closure in `rB` as a child of the innermost scope; `rA` receives its `Task<T>` handle.
+    /// Structured concurrency: open a child-task set, wait for it, spawn a child.
     SCOPEENTER = 46,
     SCOPEEXIT = 47,
     SPAWN = 48,
@@ -84,8 +75,8 @@ pub enum Opcode {
     /// `COPYVAL rA, rB`: `rA = rB`, except a boxed value-type object is first deep-copied into a fresh object.
     COPYVAL = 49,
 
-    /// Generators. `MKGEN` runs first in a generator function: it packs the frame's registers, closure and next `pc` into a `Generator` object and returns it.
-    /// `RESUME rA, rB, rC` runs generator `rB` until it yields (`rA` = the value, `rC` = 1) or ends (`rA` = null, `rC` = 0). `YIELD rA` hands `rA` to the `RESUME` and suspends.
+    /// Generators: `MKGEN` packs the frame into a `Generator` object.
+    /// `RESUME` runs a generator until it yields or ends; `YIELD` suspends it.
     MKGEN = 50,
     RESUME = 51,
     YIELD = 52,
@@ -93,34 +84,34 @@ pub enum Opcode {
     /// `CALLNATIVEW rA, bx`: native `native_table[bx]` over the window `rA+1..`; the result lands in `rA`.
     CALLNATIVEW = 53,
 
-    /// `CALLINTRINSIC rA, id, rC`: scheduler-aware intrinsic `id` (an index into the runtime's intrinsic name table) over `rC..`; result in `rA`.
+    /// `CALLINTRINSIC rA, id, rC`: scheduler-aware intrinsic `id` over `rC..`, result in `rA`.
     CALLINTRINSIC = 54,
 
-    /// `STAMP rA, bx`: the fresh object in `rA` takes `type_descriptors[bx]`, a copy of its descriptor that records its type arguments.
+    /// `STAMP rA, bx`: the object in `rA` takes the descriptor `type_descriptors[bx]`.
     STAMP = 55,
 
-    /// `LOADTYPE rA, bx`: `rA` = the interned id of the type on `type_descriptors[bx]`, register forms resolved in this frame; `null` if one can't be.
+    /// `LOADTYPE rA, bx`: `rA` = the interned id of the type on `type_descriptors[bx]`.
     LOADTYPE = 56,
 
-    /// `STAMPT rA, rB`: the object in `rA`, if unrecorded, records the type whose id `rB` holds; a `null` `rB` does nothing.
+    /// `STAMPT rA, rB`: the object in `rA` records the type whose id `rB` holds.
     STAMPT = 57,
 
-    /// `ASTYPE rA, rB`: faults unless the value in `rA` fits the type whose id `rB` holds; a `null` `rB` passes.
+    /// `ASTYPE rA, rB`: faults unless the value in `rA` fits the type whose id `rB` holds.
     ASTYPE = 58,
 
-    /// `ISTYPE rA, rB, rC`: `rA` = whether the value in `rB` fits the type whose id `rC` holds; faults on a `null` `rC`.
+    /// `ISTYPE rA, rB, rC`: `rA` = whether the value in `rB` fits the type whose id `rC` holds.
     ISTYPE = 59,
 
-    /// `SOME rA, rB`: `rA` = `Some(rB)`: `rB` itself, or a new `Some` cell when `rB` is `None` or a cell.
+    /// `SOME rA, rB`: `rA` = `Some(rB)`.
     SOME = 60,
 
-    /// `UNSOME rA, rB`: `rA` = the payload of the `Some` in `rB`: a cell's slot, or `rB` itself.
+    /// `UNSOME rA, rB`: `rA` = the payload of the `Some` in `rB`.
     UNSOME = 61,
 
-    /// `RETN rA, n`: return the `n` registers `rA..` to the caller's `CALL` destination register and the `n - 1` after it.
+    /// `RETN rA, n`: returns the `n` registers `rA..` to the caller.
     RETN = 62,
 
-    /// `CALLNATIVEF rA, bx`: `CALLNATIVEW` for a fallible native. On success `rA` holds the value and `rA+1` holds `-1`; on a recoverable failure `rA` is `null`, `rA+1` is the `ErrorKind` code and `rA+2` the message. The window holds at least two registers.
+    /// `CALLNATIVEF rA, bx`: `CALLNATIVEW` for a fallible native.
     CALLNATIVEF = 63,
 }
 

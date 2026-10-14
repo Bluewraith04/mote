@@ -351,7 +351,83 @@ fn test_parse_pub_on_top_level_let_var() {
 }
 
 #[test]
+fn test_a_try_at_line_end_is_not_a_ternary_before_a_typed_declaration() {
+    let src = "fn g() -> Result<Int, String> {\n    let a = f()?\n    var b: Int = 1\n    return Ok(b)\n}";
+    parse_str(src).expect("`?` at the end of a line is a try");
+}
+
+#[test]
 fn test_pub_before_a_non_declaration_is_an_error() {
     let err = parse_str("pub if true { }").expect_err("`pub if` must not parse");
     assert!(err.0.contains("pub"), "got: {}", err.0);
+}
+
+fn struct_of(src: &str) -> StructDecl {
+    match parse_str(src).expect("parses").items.remove(0) {
+        Item::Struct(s) => s,
+        other => panic!("expected a struct, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_docs_are_attached_to_a_type_a_field_and_a_variant() {
+    let s = struct_of("/// the point\nstruct P {\n    /// across\n    x: Int\n    y: Int\n}\n");
+    assert_eq!(s.doc, "the point");
+    assert_eq!(s.fields[0].doc, "across");
+    assert_eq!(s.fields[1].doc, "");
+    let Item::Enum(e) = parse_str("/// shapes\nenum S {\n    /// a dot\n    Dot\n    /// a box\n    @arg(w = w)\n    Box {\n        /// wide\n        w: Int\n    }\n}\n").unwrap().items.remove(0) else { panic!("enum") };
+    assert_eq!(e.doc, "shapes");
+    assert_eq!(e.variants[0].doc, "a dot");
+    assert_eq!(e.variants[1].doc, "a box");
+    assert_eq!(e.variants[1].attrs.len(), 1);
+    let EnumVariantKind::Struct(fields) = &e.variants[1].kind else { panic!("struct variant") };
+    assert_eq!(fields[0].doc, "wide");
+    let Item::Class(c) = parse_str("/// a class\n@stable\npub class C {\n    /// n\n    pub var n: Int\n}\n").unwrap().items.remove(0) else { panic!("class") };
+    assert_eq!((c.doc.as_str(), c.fields[0].doc.as_str()), ("a class", "n"));
+}
+
+#[test]
+fn test_a_default_goes_on_every_kind_of_field() {
+    let s = struct_of("struct P {\n    a: Int = 8\n    b: Int = -1\n    c: String = \"x y\"\n    d: Int\n}\n");
+    assert_eq!(s.fields[0].default_text, "8");
+    assert_eq!(s.fields[1].default_text, "-1");
+    assert_eq!(s.fields[2].default_text, "\"x y\"");
+    assert!(s.fields[3].default.is_none() && s.fields[3].default_text.is_empty());
+    let Item::Class(c) = parse_str("class C {\n    pub var xs: List<Int> = []\n    n: Int? = null\n}\n").unwrap().items.remove(0) else { panic!("class") };
+    assert_eq!((c.fields[0].default_text.as_str(), c.fields[1].default_text.as_str()), ("[]", "null"));
+    assert!(c.fields[0].is_pub && c.fields[0].is_mutable);
+    let Item::Enum(e) = parse_str("enum E {\n    V { a: Int = 2, b: String = \"s\" }\n}\n").unwrap().items.remove(0) else { panic!("enum") };
+    let EnumVariantKind::Struct(fields) = &e.variants[0].kind else { panic!("struct variant") };
+    assert_eq!((fields[0].default_text.as_str(), fields[1].default_text.as_str()), ("2", "\"s\""));
+}
+
+#[test]
+fn test_a_default_expression_is_rendered_as_source() {
+    let s = struct_of("struct P {\n    a: Int = 2 * 3 + 1\n    b: String = \"a${1}b\"\n}\n");
+    assert_eq!(s.fields[0].default_text, "2*3+1");
+    assert_eq!(s.fields[1].default_text, "\"a${1}b\"");
+}
+
+#[test]
+fn test_an_attribute_before_a_field_is_an_error() {
+    for src in [
+        "struct P {\n    @arg(x = a)\n    a: Int\n}\n",
+        "class P {\n    @stable\n    a: Int\n}\n",
+        "enum E {\n    V {\n        @arg(x = a)\n        a: Int\n    }\n}\n",
+    ] {
+        let err = parse_str(src).expect_err("an attribute before a field must not parse");
+        assert!(err.0.contains("cannot go on a field"), "got: {}", err.0);
+    }
+}
+
+#[test]
+fn test_an_attribute_value_may_be_a_name() {
+    let Item::Struct(s) = parse_str("@arg(F = fixed, help = \"h\")\nstruct P {}\n").unwrap().items.remove(0) else { panic!("struct") };
+    assert_eq!(s.attrs[0].values, [("F".to_string(), "fixed".to_string()), ("help".to_string(), "h".to_string())]);
+}
+
+#[test]
+fn test_a_default_on_a_generic_type_is_an_error() {
+    let err = parse_str("struct P<T> {\n    a: Int = 1\n    b: T\n}\n").expect_err("generic default");
+    assert!(err.0.contains("not supported on a generic type"), "got: {}", err.0);
 }

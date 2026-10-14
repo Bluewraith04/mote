@@ -28,9 +28,9 @@ fn a_struct_that_contains_itself_is_an_error() {
 
 #[test]
 fn json_payloads_are_typed() {
-    let src = "import std.data.json as json\nimport { Json } from std.data.json\nfn count(j: Json) -> Int {\n    match j {\n        Json.Array(xs) => {\n            var n = 0\n            for x in xs {\n                n += count(x)\n            }\n            return n\n        }\n        Json.Object(ms) => { return ms.len() }\n        _ => { return 1 }\n    }\n}\nfn main() {\n    println(count(json.parse(\"[1, [2, 3], {\\\"a\\\": 1, \\\"b\\\": 2}]\").unwrap()))\n}\n";
+    let src = "import std.json as json\nimport { Json } from std.json\nfn count(j: Json) -> Int {\n    match j {\n        Json.Array(xs) => {\n            var n = 0\n            for x in xs {\n                n += count(x)\n            }\n            return n\n        }\n        Json.Object(ms) => { return ms.len() }\n        _ => { return 1 }\n    }\n}\nfn main() {\n    println(count(json.parse(\"[1, [2, 3], {\\\"a\\\": 1, \\\"b\\\": 2}]\").unwrap()))\n}\n";
     let (ok, text) = run(src, "json");
     assert!(ok && text == "5\n", "{text}");
-    let (ok, text) = run("import { Json } from std.data.json\nfn main() {\n    let bad = Json.Array([1, 2])\n}\n", "json_bad");
+    let (ok, text) = run("import { Json } from std.json\nfn main() {\n    let bad = Json.Array([1, 2])\n}\n", "json_bad");
     assert!(!ok && text.contains("expects 'List<Json>', found 'List<Int>'"), "{text}");
 }

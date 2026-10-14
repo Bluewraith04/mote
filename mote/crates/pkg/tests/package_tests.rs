@@ -160,7 +160,7 @@ fn test_package_manager_cli_commands() {
     assert!(temp.join("mote.toml").exists());
     assert!(temp.join("src").join("main.mote").exists());
 
-    let err = PackageManager::add_dependency(&temp, "logger@^1.0.0").unwrap_err();
+    let err = PackageManager::add_dependency(&temp, "Logger@^1.0.0").unwrap_err();
     assert!(err.contains("not a git repository"), "{err}");
     let manifest = PackageManifest::from_file(&temp.join("mote.toml")).unwrap();
     assert!(!manifest.dependencies.contains_key("logger"));

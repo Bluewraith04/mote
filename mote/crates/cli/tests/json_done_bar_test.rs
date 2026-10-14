@@ -1,4 +1,4 @@
-//! Reads a JSON file, filters and extends its records, orders them, writes the result back pretty-printed and reads it again.
+//! Reads a JSON file, edits its records, writes the result back pretty-printed and reads it again.
 
 use std::process::Command;
 
@@ -20,10 +20,10 @@ fn a_program_transforms_a_json_file_and_writes_it_back() {
     )
     .unwrap();
     let source = format!(
-        r#"import std.sys.io as io
+        r#"import std.io as io
 import std.iter as iter
-import std.data.json as json
-import {{ Json, Member }} from std.data.json
+import std.json as json
+import {{ Json, Member }} from std.json
 
 fn age_of(person: Json) -> Int {{
     match json.get(person, "age") {{

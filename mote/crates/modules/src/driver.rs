@@ -5,7 +5,10 @@ use compiler::codegen::{CodeGenerator, CompiledProgram};
 use compiler::type_check::TypeChecker;
 use compiler::DiagnosticFormatter;
 
+use sha2::{Digest, Sha256};
+
 use crate::graph::DependencyGraph;
+use crate::modifier_host::{ModuleHost, Sessions, World};
 use crate::path::CanonicalModuleId;
 use crate::resolver::ModuleResolver;
 use crate::symbols::{demangle, module_prefixes, register_own_definitions, AliasTarget, ModuleScope};
@@ -15,7 +18,7 @@ use crate::visibility::VisibilityChecker;
 const TEST_FILTER_FN: &str = "mote_test_filter";
 const TEST_FILTER_SRC: &str = "
 import std.regex as mote_test_filter_rx
-import std.sys.process as mote_test_filter_proc
+import std.process as mote_test_filter_proc
 fn mote_test_filter(pattern: String, name: String) -> Bool {
     match mote_test_filter_rx.Regex.compile(pattern) {
         Ok(re) => { return re.is_match(name) }
@@ -28,7 +31,23 @@ fn mote_test_filter(pattern: String, name: String) -> Bool {
 }
 ";
 
-/// A code generation error with its source line, or its position alone when the text was not kept.
+/// The `std` modules a modifier may use: the ones that touch nothing outside the program.
+const STAGE0_STD: &[&str] = &["prelude", "result", "error", "traits", "meta", "string", "iter", "collections", "math"];
+
+/// The entry a stage-0 program runs.
+fn stage0_main(modifier_fn: &str) -> String {
+    format!(
+        "
+import std.meta as __stage0_meta
+import std.env as __stage0_env
+fn main() {{
+    println(__stage0_meta.respond(__stage0_env.args().get(1), {modifier_fn}))
+}}
+"
+    )
+}
+
+/// A code generation error with its source line.
 fn render_codegen_error(err: &str, span: &compiler::span::Span) -> String {
     match compiler::span::source_info(span.source) {
         Some((name, text)) if !text.is_empty() => DiagnosticFormatter::format_error(&text, &name, err, span),
@@ -60,6 +79,8 @@ pub struct MultiFileCompiler {
     resolver: ModuleResolver,
     visibility: VisibilityChecker,
     memory_report: bool,
+    /// Compiling a stage-0 program, where no module may ask for a modifier.
+    stage0: bool,
 }
 
 impl MultiFileCompiler {
@@ -68,6 +89,7 @@ impl MultiFileCompiler {
             resolver: ModuleResolver::new(root_dir),
             visibility: VisibilityChecker::new(),
             memory_report: false,
+            stage0: false,
         }
     }
 
@@ -77,7 +99,7 @@ impl MultiFileCompiler {
         self
     }
 
-    /// Keeps parsed modules under `dir/modules`, reused while a file's text is unchanged.
+    /// Keeps parsed modules under `dir/modules`.
     pub fn with_cache(mut self, dir: PathBuf) -> Self {
         self.resolver.set_cache_dir(dir);
         self
@@ -88,8 +110,128 @@ impl MultiFileCompiler {
         self.compile_program_impl(entry_path, false, None)
     }
 
-    /// `mote test`: compiles `entry_path` with its `test { }` and `@test` declarations wired in as the harness.
-    /// `filter`, when given, is a `std.regex` pattern each test name is matched against at run time.
+    /// Expands every module that asked for a modifier into `(path, source)`.
+    pub fn expanded_sources(&mut self, entry_path: &Path) -> Result<Vec<(String, String)>, String> {
+        let graph = DependencyGraph::build(entry_path.to_path_buf(), &mut self.resolver)?;
+        let order = graph.topological_sort()?;
+        let mut programs = self.load_programs(&graph, &order)?;
+        self.run_modifiers(&graph, &mut programs)?;
+        let mut out = Vec::new();
+        for (mod_id, program) in &programs {
+            if crate::embedded::is_embedded_id(&mod_id.0) || program.applied.is_empty() {
+                continue;
+            }
+            let source = self.resolver.get_source(mod_id).unwrap_or("");
+            out.push((mod_id.display_path(), compiler::modifiers::render(source, &program.applied)));
+        }
+        Ok(out)
+    }
+
+    /// Every module of the graph, parsed, in compile order.
+    fn load_programs(&mut self, graph: &DependencyGraph, order: &[CanonicalModuleId]) -> Result<Vec<(CanonicalModuleId, Program)>, String> {
+        let mut programs = Vec::new();
+        for mod_id in order {
+            let Some(node) = graph.nodes.get(mod_id) else { continue };
+            let prog = self.resolver.parse_module(mod_id, &node.target)?;
+            if let Some(mark) = prog.stable_marks.first() {
+                if !crate::embedded::is_embedded_id(&mod_id.0) {
+                    return Err(format!(
+                        "'{}' in module '{}' is marked `@stable`, but `@stable` is only legal inside `std`",
+                        mark.name, mod_id.display_path()
+                    ));
+                }
+            }
+            programs.push((mod_id.clone(), prog));
+        }
+        Ok(programs)
+    }
+
+    /// The modifier pass over every module.
+    fn run_modifiers(&mut self, graph: &DependencyGraph, programs: &mut [(CanonicalModuleId, Program)]) -> Result<(), String> {
+        let mut world = World::new(programs.iter().filter_map(|(id, p)| graph.nodes.get(id).map(|n| (id, &n.target, p))));
+        let mut sessions = Sessions::default();
+        let stage0 = self.stage0;
+        for (id, prog) in programs.iter_mut() {
+            let Some(node) = graph.nodes.get(id) else { continue };
+            let imports = prog.items.iter().filter_map(|i| if let Item::Import(imp) = i { Some(imp.path.clone()) } else { None }).collect();
+            let dir = node.target.parent().unwrap_or_else(|| Path::new(".")).to_path_buf();
+            let result = {
+                let mut host = ModuleHost { world: &mut world, sessions: &mut sessions, resolver: &mut self.resolver, module: id.clone(), imports, dir, stage0 };
+                compiler::modifiers::expand(prog, &mut host)
+            };
+            if let Err((message, span)) = result {
+                let source = self.resolver.get_source(id).unwrap_or("");
+                return Err(DiagnosticFormatter::format_error(source, &id.display_path(), &message, &span));
+            }
+        }
+        Ok(())
+    }
+
+    /// Checks the `@modifier` function `modifier_fn` of `module_path` for stage 0.
+    pub(crate) fn stage0_check(&mut self, module_path: &Path, modifier_fn: &str) -> Result<(String, Vec<String>), String> {
+        let mut reads = Vec::new();
+        let graph = DependencyGraph::build(module_path.to_path_buf(), &mut self.resolver)?;
+        let mut sources: Vec<(String, String)> = Vec::new();
+        for mod_id in graph.topological_sort()? {
+            let Some(node) = graph.nodes.get(&mod_id) else { continue };
+            let embedded = crate::embedded::is_embedded_id(&mod_id.0);
+            let program = self.resolver.parse_module(&mod_id, &node.target)?;
+            let source = self.resolver.get_source(&mod_id).unwrap_or("").to_string();
+            let name = mod_id.display_path();
+            if !embedded {
+                let fail = |message: String, span: &compiler::span::Span| DiagnosticFormatter::format_error(&source, &name, &message, span);
+                for item in &program.items {
+                    let Item::Import(imp) = item else { continue };
+                    if imp.path.is_relative || imp.path.segments.first().map(String::as_str) != Some("std") {
+                        continue;
+                    }
+                    let used = imp.path.segments[1..].join(".");
+                    if !STAGE0_STD.contains(&used.as_str()) {
+                        return Err(fail(format!("a modifier cannot use `std.{used}`; only pure modules can run at compile time"), &imp.span));
+                    }
+                }
+            }
+            if mod_id == graph.entry_id {
+                let Some(mark) = program.modifier_marks.iter().find(|m| m.fn_name == modifier_fn) else {
+                    return Err(format!("`{modifier_fn}` is not a `@modifier` function of '{name}'"));
+                };
+                reads = mark.reads.clone();
+                if program.items.iter().any(|i| matches!(i, Item::Function(f) if f.name == "main")) {
+                    return Err(format!("'{name}' holds the modifier `{modifier_fn}` and defines `main`; move the modifier to a module without one"));
+                }
+            }
+            sources.push((name, source));
+        }
+        sources.sort();
+        let mut hasher = Sha256::new();
+        hasher.update(env!("MOTE_FRONTEND_FINGERPRINT"));
+        hasher.update([0]);
+        hasher.update(modifier_fn);
+        for (name, source) in sources {
+            hasher.update([0]);
+            hasher.update(name);
+            hasher.update([0]);
+            hasher.update(source);
+        }
+        Ok((hasher.finalize().iter().map(|b| format!("{b:02x}")).collect(), reads))
+    }
+
+    /// Compiles the stage-0 program for `modifier_fn` of `module_path`.
+    pub(crate) fn stage0_build(&mut self, module_path: &Path, modifier_fn: &str) -> Result<CompiledProgram, String> {
+        self.stage0 = true;
+        let graph = DependencyGraph::build(module_path.to_path_buf(), &mut self.resolver)?;
+        let entry_id = graph.entry_id.clone();
+        self.resolver.append_source(&entry_id, module_path, &stage0_main(modifier_fn), "<stage 0>")?;
+        self.compile_program_impl(module_path, false, None)
+    }
+
+    /// Checks then builds the stage-0 program.
+    pub fn compile_stage0(&mut self, module_path: &Path, modifier_fn: &str) -> Result<CompiledProgram, String> {
+        self.stage0_check(module_path, modifier_fn)?;
+        self.stage0_build(module_path, modifier_fn)
+    }
+
+    /// Compiles `entry_path` with its tests wired in as the harness.
     pub fn compile_program_for_test(
         &mut self,
         entry_path: &Path,
@@ -111,24 +253,12 @@ impl MultiFileCompiler {
         let graph = DependencyGraph::build(entry_path.to_path_buf(), &mut self.resolver)?;
         let compile_order = graph.topological_sort()?;
 
-        let mut programs: Vec<(CanonicalModuleId, Program)> = Vec::new();
-        for mod_id in &compile_order {
-            if let Some(node) = graph.nodes.get(mod_id) {
-                let path = &node.target;
-                let prog = self.resolver.parse_module(mod_id, path)?;
-                if let Some(mark) = prog.stable_marks.first() {
-                    if !crate::embedded::is_embedded_id(&mod_id.0) {
-                        return Err(format!(
-                            "'{}' in module '{}' is marked `@stable`, but `@stable` is only legal inside `std`",
-                            mark.name, mod_id.display_path()
-                        ));
-                    }
-                }
-                let module_dir = path.parent().unwrap_or_else(|| Path::new(".")).to_path_buf();
-                self.visibility
-                    .register_module_exports(mod_id, &prog, &mut self.resolver, &module_dir)?;
-                programs.push((mod_id.clone(), prog));
-            }
+        let mut programs = self.load_programs(&graph, &compile_order)?;
+        self.run_modifiers(&graph, &mut programs)?;
+        for (mod_id, prog) in &programs {
+            let Some(node) = graph.nodes.get(mod_id) else { continue };
+            let module_dir = node.target.parent().unwrap_or_else(|| Path::new(".")).to_path_buf();
+            self.visibility.register_module_exports(mod_id, prog, &mut self.resolver, &module_dir)?;
         }
 
         let ids: Vec<CanonicalModuleId> = programs.iter().map(|(id, _)| id.clone()).collect();
@@ -153,9 +283,21 @@ impl MultiFileCompiler {
                     .exports_of(&target_id)
                     .cloned()
                     .unwrap_or_default();
+                if !imp.alias.as_deref().is_some_and(|a| a.starts_with("__")) {
+                    scope.note_import(&target_id);
+                    if !imp.path.is_relative {
+                        for (_, path) in crate::embedded::group_members(&imp.path.segments) {
+                            let (member_id, _) = self.resolver.resolve_path(&member_path(&path, imp), &from_dir)?;
+                            scope.note_import(&member_id);
+                        }
+                    }
+                }
 
                 if !imp.symbols.is_empty() {
                     for sym in &imp.symbols {
+                        if crate::symbols::gated_module(&sym.name).is_some_and(|m| crate::embedded::embedded_id(m) == target_id.as_str()) {
+                            continue;
+                        }
                         let is_fn = exports.functions.contains(&sym.name);
                         let is_enum = exports.enums.contains(&sym.name);
                         let is_type = is_enum
@@ -266,6 +408,7 @@ impl MultiFileCompiler {
 
         let mut refs: Vec<&mut Program> = programs.iter_mut().map(|(_, p)| p).collect();
         compiler::impls::copy_trait_defaults(&mut refs);
+        compiler::field_defaults::fill_field_defaults(&mut refs);
 
         let mut type_checker = TypeChecker::new();
         for (mod_id, prog) in &mut programs {

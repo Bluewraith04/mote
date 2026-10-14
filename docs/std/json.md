@@ -1,6 +1,6 @@
-# std.data.json
+# std.json
 
-A JSON value tree, a strict parser and a printer. `import std.data.json as json`.
+A JSON value tree, a strict parser and a printer. `import std.json as json`.
 
 ```mote,skip
 pub enum Json {
@@ -24,7 +24,7 @@ An `Object` keeps its members in source order and may repeat a key; build a `Mem
 | `get(j, key)`, `at(j, index)` | the last member named `key`, or the element, as a `T?` |
 
 ```mote
-import std.data.json as json
+import std.json as json
 
 match json.parse("{\"name\": \"mote\", \"tags\": [1, 2]}") {
     Ok(doc) => println(json.as_str(json.get(doc, "name")!)!)
@@ -38,19 +38,18 @@ mote
 
 ## Records
 
-`@derive(Json)` on a struct, class or enum adds `fn to_json(self) -> Json` and a static `fn from_json(j: Json) -> Result<T, Error>`.
+Listing `JsonCodec` on a struct, class or enum, `struct P: (JsonCodec)` with `import { JsonCodec } from std.json`, writes `fn to_json(self) -> Json` and a static `fn from_json(j: Json) -> Result<T, Error>`.
 
 ```mote
-import std.data.json as json
+import std.json as json
+import { JsonCodec } from std.json
 
-@derive(Json)
-struct Address {
+struct Address: (JsonCodec) {
     city: String
     zip: Int
 }
 
-@derive(Json)
-class Person {
+class Person: (JsonCodec) {
     name: String
     age: Int?
     homes: List<Address>

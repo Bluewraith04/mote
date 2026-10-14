@@ -6,7 +6,7 @@ pub(super) const HOVER: u8 = 1;
 pub(super) const PRESSED: u8 = 2;
 pub(super) const FOCUS: u8 = 4;
 
-/// What the window system reports; coordinates are window pixels, wheel deltas are pixels of content moved (positive scrolls down).
+/// What the window system reports.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Input {
     PointerMove { x: f32, y: f32 },
@@ -15,15 +15,15 @@ pub enum Input {
     PointerUp { x: f32, y: f32 },
     PointerLeave,
     Wheel { x: f32, y: f32, dx: f32, dy: f32 },
-    /// A key by its code (see [`crate::keys`]); a focused input takes the editing keys.
+    /// A key by its code.
     Key { code: u32, mods: u32, down: bool },
-    /// Text the user committed, typed or composed; a focused input inserts it.
+    /// Text the user committed, typed or composed.
     Text(String),
     Resize { width: u32, height: u32 },
     Close,
 }
 
-/// What a program is told; `Enter`, `Leave` and `Click` name buttons and inputs, the others the node under the pointer.
+/// What a program is told.
 #[derive(Clone, Debug, PartialEq)]
 pub enum UiEvent {
     Click(u32),
@@ -43,12 +43,12 @@ pub enum UiEvent {
     Close,
     /// A number another task sent with `post`.
     User(i64),
-    /// A press and release on the same link run of a text node: the node and the run's link id.
+    /// A press and release on the same link run of a text node.
     Link(u32, u32),
 }
 
 impl Tree {
-    /// Applies pointer, wheel and key input to the tree and answers the events it raises; resize and close are the window's.
+    /// Applies pointer, wheel and key input to the tree and answers the events it raises.
     pub fn input(&mut self, input: &Input) -> Vec<UiEvent> {
         let mut out = Vec::new();
         if let Input::Text(text) = input {

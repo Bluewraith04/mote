@@ -3,7 +3,7 @@
 use crate::encoding::Instruction;
 use crate::value::Value;
 
-/// The source text behind instructions `[start_pc, end_pc)`: `len` bytes at `offset` of source `source`, starting at `line`:`col`.
+/// The source text behind instructions `[start_pc, end_pc)`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SourceSpan {
     pub start_pc: u32,
@@ -22,8 +22,7 @@ pub struct CodeObject {
     pub constants: Vec<Value>,
     pub register_count: u16,
     pub param_count: u8,
-    /// String literals for the `NEWSTR` opcode: `NEWSTR rA, bx` allocates a heap
-    /// string from `string_table[bx]`.
+    /// String literals for the `NEWSTR` opcode.
     pub string_table: Vec<String>,
     /// Source spans of the AST nodes that produced the instructions; empty in a release build.
     pub spans: Vec<SourceSpan>,

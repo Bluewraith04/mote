@@ -70,7 +70,7 @@ fn three_thousand_sleeping_tasks_wake_together() {
 #[test]
 fn idle_connections_past_the_pool_size_do_not_stall_a_new_request() {
     raise_fd_limit();
-    let source = "import std.sys.http_server as server\n\
+    let source = "import std.http_server as server\n\
         fn handle(conn: server.Connection) {\n\
             var requests = conn.requests()\n\
             while true {\n\

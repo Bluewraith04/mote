@@ -17,7 +17,7 @@ pub struct ModuleNode {
 pub struct DependencyGraph {
     pub nodes: HashMap<CanonicalModuleId, ModuleNode>,
     pub entry_id: CanonicalModuleId,
-    /// Modules in DFS post-order: each appears after every module it imports, in the order its own imports appear.
+    /// Modules in DFS post-order, each after every module it imports.
     pub discovery_order: Vec<CanonicalModuleId>,
 }
 
@@ -149,7 +149,7 @@ impl DependencyGraph {
         None
     }
 
-    /// A dependency-first topological sort of the modules; ties between ready modules are broken by `discovery_order`, so the init order is stable.
+    /// A dependency-first topological sort of the modules with a stable order.
     pub fn topological_sort(&self) -> Result<Vec<CanonicalModuleId>, String> {
         let discovery_index: HashMap<&CanonicalModuleId, usize> = self
             .discovery_order

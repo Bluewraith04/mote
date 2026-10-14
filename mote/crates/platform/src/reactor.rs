@@ -1,5 +1,4 @@
-//! The reactor: one thread holding every wait for time or socket readiness, so a sleeping
-//! or idle task holds no thread. Timers are a heap; readiness comes from the OS poller.
+//! The reactor: one thread holding every wait for time or socket readiness.
 
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap};
@@ -96,8 +95,8 @@ impl Reactor {
         let _ = self.poller.notify();
     }
 
-    pub(crate) fn sleep(&self, delay: Duration, wake: Wake) {
-        self.insert(Entry::Sleep { wake }, Some(delay));
+    pub(crate) fn sleep(&self, delay: Duration, wake: Wake) -> usize {
+        self.insert(Entry::Sleep { wake }, Some(delay))
     }
 
     pub(crate) fn readable(
@@ -106,7 +105,7 @@ impl Reactor {
         request: PlatformRequest,
         limit: Option<Duration>,
         wake: Wake,
-    ) -> Result<(), Box<(PlatformRequest, Wake)>> {
+    ) -> Result<usize, Box<(PlatformRequest, Wake)>> {
         let mut st = self.state.lock().unwrap();
         let key = st.next_key;
         st.next_key += 1;
@@ -117,10 +116,10 @@ impl Reactor {
         self.place(&mut st, key, entry, limit);
         drop(st);
         let _ = self.poller.notify();
-        Ok(())
+        Ok(key)
     }
 
-    /// Wakes every wait on a socket that was just closed, so each runs its request and sees the closed socket.
+    /// Wakes every wait on a socket that was just closed.
     pub(crate) fn release(&self, source: &Pollable) {
         let mut wakes: Vec<(Wake, Woken)> = Vec::new();
         {
@@ -149,6 +148,19 @@ impl Reactor {
 
     pub(crate) fn cancel(&self, key: usize) {
         self.state.lock().unwrap().slots.remove(&key);
+    }
+
+    /// Drops a pending sleep or readiness wait without waking it; false if it already fired.
+    pub(crate) fn cancel_wait(&self, key: usize) -> bool {
+        let slot = self.state.lock().unwrap().slots.remove(&key);
+        match slot {
+            Some(Slot { entry: Entry::Readable { source, .. }, .. }) => {
+                source.delete(&self.poller);
+                true
+            }
+            Some(_) => true,
+            None => false,
+        }
     }
 
     fn insert(&self, entry: Entry, limit: Option<Duration>) -> usize {

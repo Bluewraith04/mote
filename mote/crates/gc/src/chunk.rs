@@ -1,6 +1,4 @@
-//! Size-class chunks: a fixed-size block of same-sized object slots, bump-allocated by one
-//! mutator and swept in place by the collector. A block's memory belongs to its slab (`slab.rs`)
-//! and is re-carved for another size class when the block empties.
+//! Size-class chunks: fixed-size blocks of same-sized object slots, swept in place.
 
 use std::cell::UnsafeCell;
 use std::ptr::NonNull;
@@ -20,8 +18,7 @@ pub const SLAB_BYTES: usize = CHUNK_BYTES * BLOCKS_PER_SLAB;
 
 const _: () = assert!(HEADER_SIZE == BLOCK_UNIT && std::mem::size_of::<isa::value::Value>() == BLOCK_UNIT);
 
-/// The block size in units for an object with `slot_count` slots (at least 2, so a free block
-/// can hold its list link).
+/// The block size in units for an object with `slot_count` slots.
 pub(crate) fn units_for(slot_count: usize) -> usize {
     (1 + slot_count).max(2)
 }
@@ -122,7 +119,6 @@ impl Chunk {
     }
 
     /// Frees every unmarked object, clears the mark on the rest, and returns the bytes freed.
-    /// Only with every mutator stopped.
     pub fn sweep(&mut self) -> usize {
         let size = self.block_size();
         let mut freed = 0;
@@ -152,12 +148,9 @@ impl Chunk {
 }
 
 /// A chunk shared between the collector's registry and its owning mutator.
-///
-/// Access rule: only the owning mutator touches the chunk while mutators run, and only the
-/// collector touches it while every mutator is stopped at a safepoint.
 pub struct ChunkCell(UnsafeCell<Chunk>);
 
-// SAFETY: see the access rule above.
+// SAFETY: only the owning mutator, or the collector with every mutator stopped, touches the chunk.
 unsafe impl Send for ChunkCell {}
 unsafe impl Sync for ChunkCell {}
 

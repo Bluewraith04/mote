@@ -20,6 +20,7 @@ pub struct ResolvedPackage {
 }
 
 /// Picks one version of every dependency that satisfies all constraints.
+#[derive(Clone)]
 pub struct DependencyResolver {
     universe: HashMap<String, Vec<AvailablePackage>>,
 }

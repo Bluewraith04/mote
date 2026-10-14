@@ -82,7 +82,7 @@ pub struct Place {
     pub span: u16,
 }
 
-/// One interned style. Sides are in the order top, right, bottom, left; sizes and gaps are width then height.
+/// One interned style.
 #[derive(Clone, PartialEq, Debug)]
 pub struct StyleDef {
     pub display: Display,
@@ -120,7 +120,7 @@ pub struct StyleDef {
     /// Pixels; 0 means the font's own.
     pub line_height: f32,
     pub text_align: TextAlign,
-    /// Style ids whose paint fields replace these while the pointer is over, or presses, the node; [`NO_STYLE`] for none.
+    /// Style ids whose paint fields replace these while the pointer is over or presses the node.
     pub hover: u32,
     pub pressed: u32,
 }
@@ -171,7 +171,7 @@ impl Default for StyleDef {
 }
 
 impl StyleDef {
-    /// The inner left, top, right and bottom insets (border plus padding) of a box of the given width.
+    /// The inner insets (border plus padding) of a box of the given width.
     pub fn insets(&self, width: f32) -> [f32; 4] {
         let pad = |l: Len| match l {
             Len::Px(v) => v,
@@ -252,7 +252,7 @@ fn placement<S: taffy::CheapCloneStr>(p: Place) -> taffy::Line<taffy::GridPlacem
     taffy::Line { start, end: taffy::GridPlacement::Span(p.span.max(1)) }
 }
 
-/// The taffy style for `s`; a scroll or hidden node clips, and `forced` sets a definite size (the root's).
+/// The taffy style for a style, with an optional forced size.
 pub(crate) fn to_taffy(s: &StyleDef, forced: Option<Rect>) -> taffy::Style {
     taffy::Style {
         display: match s.display {

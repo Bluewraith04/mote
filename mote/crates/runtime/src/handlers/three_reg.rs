@@ -5,7 +5,7 @@ use isa::equality::values_equal;
 use crate::util::decode_r3;
 use crate::{Runtime, TaskContext, VmStatus};
 
-/// The `r3` group: arithmetic, boolean, bitwise, shift and comparison opcodes. Reads `rB` and `rC`, writes `rA`.
+/// The `r3` group: arithmetic, boolean, bitwise, shift and comparison opcodes.
 pub fn binary(
     rt: &Runtime,
     task: &mut TaskContext,
@@ -253,7 +253,7 @@ pub(crate) fn getfield(registers: &mut [Value], src_obj: usize, field_idx: usize
     registers[dest] = val;
 }
 
-/// Stores `registers[val_reg]` into a field; a fault if it points to a region object deeper than the target.
+/// Stores `registers[val_reg]` into a field.
 pub fn setfield(registers: &mut [Value], obj_reg: usize, field_idx: usize, val_reg: usize) -> Result<(), String> {
     let Value::ObjectPtr(ptr) = registers[obj_reg] else {
         panic!("SETFIELD expected ObjectPtr, found {:?}", registers[obj_reg]);

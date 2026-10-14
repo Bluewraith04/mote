@@ -100,12 +100,13 @@ with f = fs.open("x.txt")! {
 
 | Attribute | Effect |
 |---|---|
-| `@derive(Display)`, `@derive(Debug)` | adds `to_string`, `debug` |
-| `@derive(Json)` | adds `to_json` and `from_json` ([std.data.json](std/json.md#records)) |
-| `@derive(Args)` | adds `parse`, `parse_or_exit`, `usage` ([std.dev.args](std/args.md)) |
-| `@arg(…)` | describes a field or variant for `Args` |
+| `@arg(x = field, …)` | gives fields their short flags for `Args`, before a struct, class or variant; an error unless a trait the type lists reads it |
 | `@test`, `@ignore` | mark a function for `mote test`, skip a test |
+| `@modifier`, `@modifier(reads = "arg")` | marks a `pub fn` from `Decl` to `Result<Additions, Diagnostic>`; `reads` names the member attributes it consumes ([std.meta](std/meta.md)) |
+| `@generate(path)` | on a trait: names the modifier that writes its methods ([std.meta](std/meta.md#supplying-a-trait)) |
 | `@stable` | marks a `pub` item inside `std` as part of its checked API |
+
+There is no `@derive`: list the trait, `struct P: (Display)`, and a trait with a modifier has its methods written ([std.meta](std/meta.md)).
 
 ## Known gaps
 

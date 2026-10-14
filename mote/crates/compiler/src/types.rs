@@ -10,7 +10,7 @@ pub enum Type {
     String,
     Null,
     Any,
-    /// A type argument inference has not fixed yet (`Map()`, `Ok(1)`'s error type); context fills it, a binding may not keep it.
+    /// A type argument inference has not fixed yet; context fills it.
     Hole,
     Struct {
         name: String,
@@ -25,7 +25,7 @@ pub enum Type {
         fields: Vec<(String, Type)>,
     },
     Nullable(Box<Type>),
-    /// An anonymous structural tuple: equal by arity and element types, never by declaration. `()` is `Tuple(vec![])`.
+    /// An anonymous structural tuple, equal by arity and element types.
     Tuple(Vec<Type>),
     List(Box<Type>),
     Map(Box<Type>, Box<Type>),
@@ -37,16 +37,16 @@ pub enum Type {
     Sender(Box<Type>),
     /// A lazy, single-pass, task-local sequence: a generator's result. Never `Send`.
     Stream(Box<Type>),
-    /// A `spawn { }` handle; `T` is the body's result, `.join()` returns `Result<T, String>` and `.cancel()` requests cancellation.
+    /// A `spawn { }` handle; `T` is the body's result.
     Task(Box<Type>),
     /// A read-only, Sendable view of a sealed graph; the runtime value is the sealed object itself.
     Shared(Box<Type>),
     /// A type parameter inside its declaration: opaque, assignable only to itself and `Any`.
     Param(String),
     Result(Box<Type>, Box<Type>),
-    /// A function value. `sendable`: every capture is Sendable and none is a local `var`. `modes[i]`: parameter `i` is `var`; empty when none is.
+    /// A function value; `sendable` means every capture is Sendable and none is a local `var`.
     Function { params: Vec<Type>, ret: Box<Type>, sendable: bool, modes: Vec<bool> },
-    /// A user or `std` `enum`; `variants` maps each variant name to its payload types (empty for a unit variant).
+    /// A user or `std` `enum`; `variants` maps each variant name to its payload types.
     Enum {
         name: String,
         /// The type arguments of a generic enum, in declaration order; empty otherwise.
@@ -70,7 +70,7 @@ impl PartialEq for Members {
 impl Eq for Members {}
 
 impl Type {
-    /// The union of `members`, flattened and deduplicated; one member is itself. A `Null` or optional member makes the union optional.
+    /// The union of `members`, flattened and deduplicated.
     pub fn union(members: Vec<Type>) -> Type {
         let mut flat: Vec<Type> = Vec::new();
         let mut optional = false;
@@ -112,12 +112,12 @@ impl Type {
         }
     }
 
-    /// This type as the runtime records it; `None` when it names a type parameter. A hole is recorded as `_`.
+    /// This type as the runtime records it; `None` when it names a type parameter.
     pub(crate) fn runtime_term(&self) -> Option<TypeTerm> {
         self.term_with(&|_| None)
     }
 
-    /// This type as a runtime term, each type parameter replaced by `param`'s answer; `None` if one has none. A hole is `_`.
+    /// This type as a runtime term, each type parameter replaced by `param`'s answer.
     pub(crate) fn term_with(&self, param: &dyn Fn(&str) -> Option<TypeTerm>) -> Option<TypeTerm> {
         let terms = |tys: &[Type]| tys.iter().map(|t| t.term_with(param)).collect::<Option<Vec<_>>>();
         let named = |name: &str, args: &[Type]| Some(TypeTerm::Named(name.to_string(), terms(args)?));
@@ -177,7 +177,7 @@ impl Type {
         }
     }
 
-    /// Whether a value of this type is, or holds, a `Sender` or `Receiver` (which `spawn` moves).
+    /// Whether a value of this type is, or holds, a `Sender` or `Receiver`.
     pub(crate) fn holds_end(&self) -> bool {
         self.holds_end_in(&mut Vec::new())
     }
@@ -199,12 +199,12 @@ impl Type {
         }
     }
 
-    /// The full type a value of this generic type records on its descriptor; `None` for a non-generic type or an unknown argument.
+    /// The full type a value of this generic type records on its descriptor.
     pub(crate) fn instance_term(&self) -> Option<TypeTerm> {
         if self.records_instance() { self.runtime_term() } else { None }
     }
 
-    /// Whether a value of this type records its full type: a user type, a generic container, tuple, function or stream.
+    /// Whether a value of this type records its full type.
     pub(crate) fn records_instance(&self) -> bool {
         match self {
             Type::List(_) | Type::Map(..) | Type::Set(_) | Type::Receiver(_) | Type::Sender(_) | Type::Task(_) | Type::Stream(_) => true,
@@ -215,7 +215,7 @@ impl Type {
         }
     }
 
-    /// Whether this type is exactly the type of any value it describes (no covariant view), so a value may be recorded from it.
+    /// Whether this type is exactly the type of any value it describes.
     pub(crate) fn is_exact(&self) -> bool {
         matches!(
             self,
@@ -245,7 +245,7 @@ impl Type {
         })
     }
 
-    /// The `List`, `Map` or `Set` that makes this unfit as a `Map`/`Set` key (it could change after insert).
+    /// The `List`, `Map` or `Set` that makes this unfit as a `Map`/`Set` key.
     pub(crate) fn mutable_key_part(&self) -> Option<&Type> {
         match self {
             Type::List(_) | Type::Map(..) | Type::Set(_) => Some(self),
@@ -255,7 +255,7 @@ impl Type {
         }
     }
 
-    /// Whether a value of this type fits `target`; an `Any` value fits anything and is checked at run time.
+    /// Whether a value of this type fits `target`.
     pub(crate) fn is_assignable_to(&self, target: &Type) -> bool {
         matches!(self, Type::Any) || self.fits_within(target)
     }
@@ -326,7 +326,7 @@ impl Type {
         }
     }
 
-    /// The same type, as a type argument must be: `Any` matches only `Any`, a hole matches anything.
+    /// The same type, as a type argument must be.
     pub fn same_as(&self, other: &Type) -> bool {
         let all = |a: &[Type], b: &[Type]| a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.same_as(y));
         match (self, other) {

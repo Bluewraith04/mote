@@ -1,6 +1,6 @@
 # Prelude
 
-These names are in scope in every module with no import.
+These names are in scope in every module with no import. `List`, `Map`, `Bytes`, `Channel`, `Sender`, `Receiver` and `Shared` are built in too. Three built-in types are imported: `import { Set } from std.collections`, `import { Stream } from std.stream` and `import { Task } from std.task`.
 
 | Name | What |
 |---|---|
@@ -9,9 +9,10 @@ These names are in scope in every module with no import.
 | `T?`, `Some`, `None` | the optional type, also spelled `Option<T>` |
 | `Result<T, E>` | `Ok(T)` or `Err(E)` |
 | `Error`, `ErrorKind` | the error type of every fallible std operation ([error](error.md)) |
-| `Display`, `Debug`, `Eq`, `Ord`, `Closeable` | the std traits |
 
 Every value has `.to_string()`, which `${…}` and `print` use. `.clone()` gives a mutable deep copy; strings, channels, tasks and `Shared` cells are shared instead.
+
+The std traits are not in the prelude; import them from `std.traits`.
 
 | Trait | Required method |
 |---|---|
@@ -46,7 +47,7 @@ A `Some` around a `None` stays distinct from `None`: `T??` is legal.
 | `Set<T>` | `len is_empty add contains remove clear items` |
 | `Bytes` | `len is_empty get get_or set push contains clear extend slice decode` |
 | `Sender<T>` | `send close clone` |
-| `Receiver<T>` | `recv iter stream clone` |
+| `Receiver<T>` | `recv iter stream clone close` |
 | `Stream<T>` | `next iter` |
 | `Task<T>` | `join cancel is_ready` |
 | `Shared<T>` | `get update set wait_until` |

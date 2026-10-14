@@ -37,7 +37,7 @@ fn run_mote_with_stdin(script: &str, stdin_data: &str) -> (String, String, bool)
 #[test]
 fn test_read_line_reads_a_real_pipe_then_eof() {
     let script = "\
-import std.sys.io as io
+import std.io as io
 
 pub fn main() {
     let sin = io.stdin()
@@ -66,7 +66,7 @@ fn test_blocking_read_line_does_not_stall_other_tasks() {
     use std::time::Duration;
 
     let script = "\
-import std.sys.io as io
+import std.io as io
 
 fn main() -> Int {
     spawn { io.stdout().write_line(\"child ran\") }

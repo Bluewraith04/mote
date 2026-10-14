@@ -1,10 +1,10 @@
-# std.data.uuid
+# std.uuid
 
-UUIDs of version 4 (random) and 7 (time-ordered), by the Rust `uuid` crate. `import std.data.uuid as uuid`.
+UUIDs of version 4 (random) and 7 (time-ordered), by the Rust `uuid` crate. `import std.uuid as uuid`.
 
 ```mote
-import std.data.uuid as uuid
-import { Uuid } from std.data.uuid
+import std.uuid as uuid
+import { Uuid } from std.uuid
 
 let id = Uuid.parse("0189F7C0-1234-7ABC-8DEF-0123456789AB")!
 println("id: ${id}")
@@ -29,6 +29,6 @@ id: 0189f7c0-1234-7abc-8def-0123456789ab
 | `Uuid.from_bytes(b)` | `Result`; exactly 16 bytes |
 | `u.to_string()`, `"${u}"` | lowercase `8-4-4-4-12` |
 | `u.to_bytes()`, `u.version()` | the 16 bytes; the version number |
-| `u.to_json()`, `Uuid.from_json(j)` | a string, so a `Uuid` can be a field of a [`@derive(Json)`](json.md#records) type |
+| `u.to_json()`, `Uuid.from_json(j)` | a string, so a `Uuid` can be a field of a [`JsonCodec`](json.md#records) type |
 
 An `Err` has kind `InvalidData`. Random bits come from the operating system's secure source.

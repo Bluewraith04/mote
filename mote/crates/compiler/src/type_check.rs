@@ -96,10 +96,11 @@ pub struct TypeChecker {
     in_function_body: bool,
     current_fn_ret: Option<Type>,
     gen_elem: Option<Type>,
-    /// The resolved type of every expression the checker visited, keyed by span; codegen resolves field indices from it.
+    /// The resolved type of every expression the checker visited, keyed by span.
     pub expr_types: HashMap<Span, Type>,
     any_checks: HashMap<Span, Type>,
     type_tests: HashMap<Span, Type>,
+    try_failures: HashMap<Span, Type>,
     some_lifts: HashMap<Span, u8>,
     narrowed_reads: HashMap<Span, u8>,
     narrowings: Vec<narrowing::Narrowing>,
@@ -161,6 +162,7 @@ impl TypeChecker {
             expr_types: HashMap::new(),
             any_checks: HashMap::new(),
             type_tests: HashMap::new(),
+            try_failures: HashMap::new(),
             some_lifts: HashMap::new(),
             narrowed_reads: HashMap::new(),
             narrowings: Vec::new(),
@@ -709,8 +711,14 @@ impl TypeChecker {
                 self.set_read_only(&p.name, modes::ReadOnly::Param);
             }
         }
+        let errors_before = self.errors.len();
         for stmt in &f.body {
             self.check_stmt(stmt);
+        }
+        if f.name.contains("::default_") {
+            for (msg, _) in &mut self.errors[errors_before..] {
+                *msg = msg.replace("function returns", "the field is").replace("this expression is", "its default is");
+            }
         }
         self.pop_scope();
 
@@ -1722,6 +1730,24 @@ impl TypeChecker {
             Type::Shared(_) => true,
             Type::Function { sendable, .. } => *sendable,
             Type::Struct { fields, .. } => fields.iter().all(|(_, t)| self.is_sendable_in(t, seen)),
+            Type::Tuple(elems) => elems.iter().all(|t| self.is_sendable_in(t, seen)),
+            Type::Result(ok, err) => self.is_sendable_in(ok, seen) && self.is_sendable_in(err, seen),
+            Type::Enum { name, args, variants } => {
+                if !seen.insert(format!("{ty:?}")) {
+                    return true;
+                }
+                let declared;
+                let variants = if variants.is_empty() {
+                    declared = self.instantiate_type(name, args);
+                    match &declared {
+                        Type::Enum { variants, .. } => variants,
+                        _ => return false,
+                    }
+                } else {
+                    variants
+                };
+                variants.iter().all(|(_, payload)| payload.iter().all(|t| self.is_sendable_in(t, seen)))
+            }
             _ => false,
         }
     }
@@ -1729,7 +1755,7 @@ impl TypeChecker {
     fn is_mutating_method(method: &str) -> bool {
         matches!(
             method,
-            "push" | "set" | "clear" | "pop" | "remove" | "add" | "extend"
+            "push" | "set" | "set_slice" | "clear" | "pop" | "remove" | "add" | "extend"
         )
     }
 }
@@ -1742,8 +1768,9 @@ impl TypeChecker {
             .with_calls(type_args, lists)
             .with_any_checks(std::mem::take(&mut self.any_checks))
             .with_type_tests(std::mem::take(&mut self.type_tests))
+            .with_try_failures(std::mem::take(&mut self.try_failures))
             .with_rewraps(self.take_rewraps());
-        let mut instances = crate::ast::Program { items: Vec::new(), span: Span::default(), stable_marks: Vec::new(), test_marks: Vec::new() };
+        let mut instances = crate::ast::Program { items: Vec::new(), span: Span::default(), stable_marks: Vec::new(), test_marks: Vec::new(), applied: Vec::new(), modifier_marks: Vec::new() };
         for (decl, table) in std::mem::take(&mut self.instance_done) {
             types.add_instance(decl.name.clone(), table);
             instances.items.push(Item::Function(decl));

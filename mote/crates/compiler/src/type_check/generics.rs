@@ -42,7 +42,7 @@ impl TypeChecker {
             for b in &p.bounds {
                 match crate::impls::trait_ref_name(b) {
                     Some(n) if self.traits.contains_key(n) => traits.push(n.to_string()),
-                    Some(n) => self.errors.push((format!("`{n}` is not a trait, so it cannot bound `{}`", p.name), p.span)),
+                    Some(n) => self.errors.push((shared::missing_import(n).unwrap_or_else(|| format!("`{n}` is not a trait, so it cannot bound `{}`", p.name)), p.span)),
                     None => self.errors.push((format!("a bound on `{}` must be a trait name", p.name), p.span)),
                 }
             }
@@ -62,7 +62,50 @@ impl TypeChecker {
         }
     }
 
+    /// The `Err` payload type of a `Result` type.
+    pub(super) fn err_payload(ty: &Type) -> Option<Type> {
+        Self::variants_of(ty)?.into_iter().find(|(v, _)| v == "Err").and_then(|(_, p)| p.first().cloned())
+    }
+
+    /// Checks that `?` on `inner` may return its `Err` from a function that returns `ret`.
+    pub(super) fn check_failure_flow(&mut self, inner: &Type, ret: &Type, span: Span) {
+        let (Some(from), Some(to)) = (Self::err_payload(inner), Self::err_payload(ret)) else { return };
+        let open = |t: &Type| matches!(t, Type::Any | Type::Hole) || t.has_hole() || Self::has_param(t);
+        if open(&from) || open(&to) || from.is_assignable_to(&to) {
+            return;
+        }
+        let nominal = matches!(from, Type::Struct { .. } | Type::Class { .. } | Type::Enum { .. });
+        let failure = self.traits.keys().find(|k| *k == "Failure" || k.ends_with("_error_Failure")).cloned();
+        if nominal && to == self.error_type() && failure.is_some_and(|f| self.bound_mismatch(&from, &f).is_none()) {
+            self.try_failures.insert(span, from);
+            return;
+        }
+        self.errors.push((format!("`?` would return `{}`, but this function returns `{}`", Self::describe(&from), Self::describe(&to)), span));
+    }
+
+    /// Whether `name` is `short` as declared in `std.json`, mangled (`_m<hash>_json_`) or not.
+    fn is_std_json_name(name: &str, short: &str) -> bool {
+        let hashed = |p: &str| p.strip_prefix("_m").and_then(|p| p.strip_suffix("_json_")).is_some_and(|h| !h.is_empty() && h.bytes().all(|b| b.is_ascii_hexdigit()));
+        name == short || name.strip_suffix(short).is_some_and(hashed)
+    }
+
+    /// Whether `ty` is one of the types that read and write themselves as JSON without `JsonCodec`.
+    fn json_shape_mismatch(&mut self, ty: &Type) -> Option<Option<String>> {
+        match ty {
+            Type::Int | Type::Float | Type::Bool | Type::String | Type::Null => Some(None),
+            Type::Enum { name, .. } if Self::is_std_json_name(name, "Json") => Some(None),
+            Type::List(e) | Type::Set(e) | Type::Nullable(e) => Some(self.bound_mismatch(e, "JsonCodec")),
+            Type::Map(k, v) => Some(if matches!(**k, Type::String) { self.bound_mismatch(v, "JsonCodec") } else { Some("only a `Map` with `String` keys is JSON".into()) }),
+            _ => None,
+        }
+    }
+
     fn bound_mismatch(&mut self, ty: &Type, trait_name: &str) -> Option<String> {
+        if Self::is_std_json_name(trait_name, "JsonCodec")
+            && let Some(answer) = self.json_shape_mismatch(ty)
+        {
+            return answer;
+        }
         match ty {
             Type::Any => None,
             Type::Param(q) if self.param_bounds.get(q).is_some_and(|b| b.iter().any(|x| x == trait_name)) => None,
@@ -348,6 +391,73 @@ impl TypeChecker {
         (args, lists)
     }
 
+    /// Writes the type a type parameter stands for in place of `T` in `T.method(..)`.
+    fn name_bound_types(decl: &mut FunctionDecl, subst: &HashMap<String, Type>) {
+        let named: HashMap<&str, &str> = subst
+            .iter()
+            .filter_map(|(p, ty)| match ty {
+                Type::Struct { name, args, .. } | Type::Class { name, args, .. } | Type::Enum { name, args, .. } if args.is_empty() => Some((p.as_str(), name.as_str())),
+                _ => None,
+            })
+            .collect();
+        if named.is_empty() {
+            return;
+        }
+        crate::ast_walk::function_exprs_mut(decl, &mut |e| {
+            if let Expr::MemberAccess { object, .. } = e
+                && let Expr::Ident(n, _) = object.as_mut()
+                && let Some(real) = named.get(n.as_str())
+            {
+                *n = (*real).to_string();
+            }
+        });
+    }
+
+    /// Writes the body of `__codec_encode<T>` or `__codec_decode<T>` for a `T` that is not a user type.
+    fn write_codec_body(&mut self, decl: &mut FunctionDecl, template: &str) {
+        let (encode, prefix) = match (template.strip_suffix("__codec_encode"), template.strip_suffix("__codec_decode")) {
+            (Some(p), _) => (true, p),
+            (_, Some(p)) => (false, p),
+            _ => return,
+        };
+        let Some(ty) = self.param_subst.get("T").cloned() else { return };
+        let wrap_in = "|x: @Json| { return @__codec_decode<E0>(x) }";
+        let wrap_out = "|x: E0| { return @__codec_encode(x) }";
+        let (text, elem): (String, Option<Type>) = match (&ty, encode) {
+            (Type::Class { .. } | Type::Struct { .. }, _) => return,
+            (Type::Enum { name, .. }, _) if !Self::is_std_json_name(name, "Json") => return,
+            (Type::Enum { .. }, true) => ("return v".into(), None),
+            (Type::Enum { .. }, false) => ("return Ok(j)".into(), None),
+            (Type::Int, true) => ("return @Json.Int(v)".into(), None),
+            (Type::Float, true) => ("return @Json.Float(v)".into(), None),
+            (Type::Bool, true) => ("return @Json.Bool(v)".into(), None),
+            (Type::String, true) => ("return @Json.Str(v)".into(), None),
+            (Type::Null, true) => ("return @Json.Null".into(), None),
+            (Type::Int, false) => ("return @__int(j)".into(), None),
+            (Type::Float, false) => ("return @__float(j)".into(), None),
+            (Type::Bool, false) => ("return @__bool(j)".into(), None),
+            (Type::String, false) => ("return @__str(j)".into(), None),
+            (Type::Null, false) => ("if @is_null(j) { return Ok(null) }\nreturn Err(@__wrong(\"null\", j))".into(), None),
+            (Type::List(e), true) => (format!("return @__to_list(v, {wrap_out})"), Some((**e).clone())),
+            (Type::Set(e), true) => (format!("return @__to_list(v.items(), {wrap_out})"), Some((**e).clone())),
+            (Type::Map(_, e), true) => (format!("return @__to_map(v, {wrap_out})"), Some((**e).clone())),
+            (Type::Nullable(e), true) => (format!("return @__to_nullable(v, {wrap_out})"), Some((**e).clone())),
+            (Type::List(e), false) => (format!("return @__list(j, {wrap_in})"), Some((**e).clone())),
+            (Type::Set(e), false) => (format!("return @__set(j, {wrap_in})"), Some((**e).clone())),
+            (Type::Map(_, e), false) => (format!("return @__map(j, {wrap_in})"), Some((**e).clone())),
+            (Type::Nullable(e), false) => (format!("return @__nullable(j, {wrap_in})"), Some((**e).clone())),
+            _ => return,
+        };
+        if let Some(e) = elem {
+            self.param_subst.insert("E0".into(), e);
+        }
+        let source = format!("fn body() {{\n{}\n}}\n", text.replace('@', prefix));
+        let parsed = crate::lexer::Lexer::new(&source).tokenize().ok().and_then(|tokens| crate::parser::Parser::new(tokens).parse().ok());
+        if let Some(Item::Function(f)) = parsed.and_then(|p| p.items.into_iter().next()) {
+            decl.body = f.body;
+        }
+    }
+
     pub(super) fn check_pending_instances(&mut self) {
         while let Some((name, template, binding)) = self.pending_instances.pop() {
             if self.instance_seen.len() > 512 {
@@ -359,13 +469,16 @@ impl TypeChecker {
             let outer_generic_calls = std::mem::take(&mut self.calls);
             let outer_checks = std::mem::take(&mut self.any_checks);
             let outer_tests = std::mem::take(&mut self.type_tests);
+            let outer_failures = std::mem::take(&mut self.try_failures);
             let outer_lifts = std::mem::take(&mut self.some_lifts);
             let outer_reads = std::mem::take(&mut self.narrowed_reads);
             let outer_narrowings = std::mem::take(&mut self.narrowings);
             let outer_subst = std::mem::replace(&mut self.param_subst, binding.into_iter().collect());
             let mut decl = template;
-            decl.name = name;
+            let template_name = std::mem::replace(&mut decl.name, name);
             decl.generic_params.clear();
+            Self::name_bound_types(&mut decl, &self.param_subst);
+            self.write_codec_body(&mut decl, &template_name);
             self.check_function(&decl);
             self.param_subst = outer_subst;
             let (type_args, lists) = self.resolve_calls();
@@ -377,6 +490,7 @@ impl TypeChecker {
             .with_calls(type_args, lists)
             .with_any_checks(std::mem::replace(&mut self.any_checks, outer_checks))
             .with_type_tests(std::mem::replace(&mut self.type_tests, outer_tests))
+            .with_try_failures(std::mem::replace(&mut self.try_failures, outer_failures))
             .with_rewraps(self.take_rewraps());
             self.some_lifts = outer_lifts;
             self.narrowed_reads = outer_reads;

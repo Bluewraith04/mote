@@ -1,4 +1,4 @@
-//! Key codes and modifier bits: a printable key is its Unicode code point, a named key is one of these.
+//! Key codes and modifier bits for keyboard input.
 
 pub const BACKSPACE: u32 = 8;
 pub const TAB: u32 = 9;

@@ -1,4 +1,4 @@
-//! `std.sys.gui` over a headless window, run as real programs.
+//! `std.gui` over a headless window, run as real programs.
 
 use std::process::Command;
 
@@ -27,7 +27,7 @@ fn run(source: &str, tag: &str) -> Vec<String> {
 #[test]
 fn a_styled_box_paints_its_pixels() {
     let got = run(
-        r#"import std.sys.gui as gui
+        r#"import std.gui as gui
 
 fn main() {
     let win = gui.headless(200, 100).unwrap()
@@ -51,7 +51,7 @@ fn main() {
 #[test]
 fn flex_grow_splits_the_free_space() {
     let got = run(
-        r#"import std.sys.gui as gui
+        r#"import std.gui as gui
 
 fn main() {
     let win = gui.headless(300, 100).unwrap()
@@ -75,7 +75,7 @@ fn main() {
 #[test]
 fn a_point_hits_the_front_most_node() {
     let got = run(
-        r#"import std.sys.gui as gui
+        r#"import std.gui as gui
 
 fn main() {
     let win = gui.headless(100, 100).unwrap()
@@ -106,7 +106,7 @@ fn id_at(win: gui.Window, x: Float, y: Float) -> Int {
 #[test]
 fn move_before_reorders_a_nodes_siblings() {
     let got = run(
-        r#"import std.sys.gui as gui
+        r#"import std.gui as gui
 
 fn main() {
     let win = gui.headless(100, 100).unwrap()
@@ -134,7 +134,7 @@ fn main() {
 #[test]
 fn frame_calls_on_a_window_with_no_display_do_nothing() {
     let got = run(
-        r#"import std.sys.gui as gui
+        r#"import std.gui as gui
 
 fn main() {
     let win = gui.headless(100, 100).unwrap()
@@ -157,7 +157,7 @@ fn main() {
 #[test]
 fn a_bad_window_or_node_is_an_error() {
     let got = run(
-        r#"import std.sys.gui as gui
+        r#"import std.gui as gui
 
 fn main() {
     println(gui.headless(0, 10).is_err())
@@ -177,7 +177,7 @@ fn main() {
 #[test]
 fn input_raises_events_a_program_reads_in_order() {
     let got = run(
-        r#"import std.sys.gui as gui
+        r#"import std.gui as gui
 
 fn main() {
     let win = gui.headless(200, 100).unwrap()
@@ -226,7 +226,7 @@ fn main() {
 #[test]
 fn typing_into_an_input_raises_changed_and_submit() {
     let got = run(
-        r#"import std.sys.gui as gui
+        r#"import std.gui as gui
 
 fn main() {
     let win = gui.headless(240, 60).unwrap()
@@ -262,7 +262,7 @@ fn main() {
 #[test]
 fn a_window_has_one_event_reader() {
     let (ok, text) = run_text(
-        r#"import std.sys.gui as gui
+        r#"import std.gui as gui
 
 fn main() {
     let win = gui.headless(10, 10).unwrap()
@@ -325,7 +325,7 @@ fn the_demo_responds_to_clicks_typing_and_posts() {
 #[test]
 fn a_window_on_a_display_opens_only_from_a_pinned_task() {
     let got = run(
-        r#"import std.sys.gui as gui
+        r#"import std.gui as gui
 
 fn main() {
     match gui.open("hello", 100, 100) {
@@ -342,7 +342,7 @@ fn main() {
 #[test]
 fn a_window_with_no_display_is_an_error_not_a_crash() {
     let got = run(
-        r#"import std.sys.gui as gui
+        r#"import std.gui as gui
 import std.task as task
 
 fn main() {
@@ -359,7 +359,7 @@ fn main() {
 #[test]
 fn a_picture_encodes_as_png() {
     let got = run(
-        r#"import std.sys.gui as gui
+        r#"import std.gui as gui
 
 fn main() {
     let win = gui.headless(8, 8).unwrap()
@@ -378,7 +378,7 @@ fn main() {
 #[test]
 fn runs_give_a_text_node_rich_text_and_links() {
     let got = run(
-        r#"import std.sys.gui as gui
+        r#"import std.gui as gui
 
 fn main() {
     let win = gui.headless(300, 100).unwrap()
@@ -416,7 +416,7 @@ fn main() {
 #[test]
 fn runs_on_a_box_are_an_error() {
     let got = run(
-        r#"import std.sys.gui as gui
+        r#"import std.gui as gui
 
 fn main() {
     let win = gui.headless(50, 50).unwrap()

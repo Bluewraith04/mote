@@ -2,8 +2,8 @@
 use std::process::Command;
 
 const SCRIPT: &str = "\
-import std.sys.io as io
-import std.sys.env as env
+import std.io as io
+import std.env as env
 import { Rng } from std.random
 import { Clock, Duration } from std.time
 

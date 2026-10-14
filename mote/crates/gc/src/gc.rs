@@ -267,8 +267,7 @@ impl Drop for GcMutator {
     }
 }
 
-/// GC Controller implementing `NoGC` and `MarkSweep`: a basic full-heap mark/sweep with an
-/// in-place old-gen promotion bit.
+/// The collector: a full-heap mark/sweep over size-class chunks.
 pub struct GCController {
     pub config: GCConfig,
     shared: Arc<Shared>,
@@ -322,16 +321,14 @@ impl GCController {
         self.shared.total_freed_bytes.load(Ordering::Relaxed)
     }
 
-    /// Allocates an object on the GC-managed heap and tracks it. The slot count
-    /// comes from the type descriptor's declared fields.
+    /// Allocates an object on the GC-managed heap with the slot count its descriptor declares.
     pub fn alloc_object(&self, type_ptr: NonNull<TypeDescriptor>) -> NonNull<ObjectHeader> {
         // SAFETY: the caller passes a live type descriptor.
         let field_count = unsafe { type_ptr.as_ref().slots as usize };
         self.alloc_object_with_slots(type_ptr, field_count)
     }
 
-    /// Allocates an object with an explicit slot count — needed for heap strings
-    /// and any other object whose size is not fixed by its descriptor.
+    /// Allocates an object with an explicit slot count.
     pub fn alloc_object_with_slots(
         &self,
         type_ptr: NonNull<TypeDescriptor>,

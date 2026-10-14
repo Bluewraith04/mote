@@ -72,7 +72,7 @@ fn give_segment(segment: Segment) {
     unsafe { dealloc(segment.ptr.as_ptr(), segment_layout(segment.class)) };
 }
 
-/// Ages every pooled segment by one collection and frees those idle for [`POOL_IDLE_COLLECTIONS`].
+/// Ages every pooled segment by one collection and frees the idle ones.
 pub(crate) fn decay_segments() {
     let mut pool = POOL.lock().unwrap();
     for (class, kept) in pool.free.iter_mut().enumerate() {
@@ -97,10 +97,10 @@ pub(crate) fn pooled_segment_bytes() -> usize {
     pool.free.iter().enumerate().map(|(class, kept)| kept.len() * SEGMENT_SIZES[class]).sum()
 }
 
-/// Upper bounds of the fill buckets in [`RegionStats`], in bytes; the last bucket is everything above.
+/// Upper bounds of the fill buckets in [`RegionStats`], in bytes.
 pub const FILL_BUCKETS: [usize; 5] = [256, 1024, 4096, 16 * 1024, 64 * 1024];
 
-/// Upper bounds of the object-size buckets in [`RegionStats`], in slots; the last bucket is everything above.
+/// Upper bounds of the object-size buckets in [`RegionStats`], in slots.
 pub const OBJECT_BUCKETS: [usize; 6] = [2, 4, 8, 16, 32, 63];
 
 /// What regions did, for `--mem-stats`.
@@ -108,13 +108,13 @@ pub const OBJECT_BUCKETS: [usize; 6] = [2, 4, 8, 16, 32, 63];
 pub struct RegionStats {
     pub scopes_entered: u64,
     pub objects: u64,
-    /// Bytes in use summed over every region at its exit, and the most any one region held.
+    /// Bytes in use summed over every region at its exit.
     pub bytes: u64,
     pub peak_fill: usize,
     pub peak_depth: usize,
     /// The most segment bytes one task held at once.
     pub peak_segment_bytes: usize,
-    /// Allocations placed on the heap because regions were nested past the depth an object records.
+    /// Allocations placed on the heap because regions were nested too deep.
     pub too_deep: u64,
     /// Regions by their fill at exit, per [`FILL_BUCKETS`].
     pub fill_histogram: [u64; FILL_BUCKETS.len() + 1],
@@ -151,7 +151,7 @@ struct Mark {
     total: usize,
 }
 
-/// A task's regions: segments filled front to back, and a mark per open region. Owns no memory until the first allocation.
+/// A task's regions: segments filled front to back, and a mark per open region.
 #[derive(Default)]
 pub struct ArenaStack {
     segments: Vec<Segment>,
@@ -203,7 +203,7 @@ impl ArenaStack {
         }
     }
 
-    /// Whether the innermost region is deeper than an object's depth can record; the caller allocates on the heap.
+    /// Whether the innermost region is deeper than an object's depth can record.
     pub fn too_deep(&self) -> bool {
         self.marks.len() > MAX_REGION_DEPTH
     }
@@ -239,7 +239,7 @@ impl ArenaStack {
         self.stats.merge(other);
     }
 
-    /// Opens a region; returns the depth. Takes no memory until an object is allocated.
+    /// Opens a region and returns the depth.
     pub fn enter_arena(&mut self) -> usize {
         let offset = self.segments.last().map_or(0, |s| s.used);
         self.marks.push(Mark { segments: self.segments.len(), offset, total: self.used_total });
@@ -289,7 +289,7 @@ impl ArenaStack {
         self.segment_bytes
     }
 
-    /// Calls `f` for each live region object, oldest first: each segment is walked object by object up to its fill.
+    /// Calls `f` for each live region object, oldest first.
     pub fn for_each_object(&self, mut f: impl FnMut(NonNull<ObjectHeader>)) {
         for segment in &self.segments {
             let mut at = 0;
@@ -325,7 +325,7 @@ impl ArenaStack {
         self.marks.is_empty()
     }
 
-    /// Empties the stack when the scheduler recycles a `TaskContext`: every segment goes back to the pool.
+    /// Empties the stack and returns every segment to the pool.
     pub fn clear(&mut self) {
         self.marks.clear();
         for segment in self.segments.drain(..) {
@@ -345,7 +345,7 @@ impl Drop for ArenaStack {
     }
 }
 
-/// The region stacks of suspended generators, by key: a generator keeps its regions across a `yield`.
+/// The region stacks of suspended generators, by key.
 #[derive(Default)]
 pub struct GeneratorRegions {
     stacks: Mutex<std::collections::HashMap<i64, Box<ArenaStack>>>,

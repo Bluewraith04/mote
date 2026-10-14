@@ -1,4 +1,4 @@
-//! `std.sys.net` TCP through `mote run` on real loopback and on the fake network.
+//! `std.socket` TCP through `mote run` on real loopback and on the fake network.
 
 use std::process::Command;
 use std::sync::Arc;
@@ -7,7 +7,7 @@ use isa::value::TypeRegistry;
 use modules::MultiFileCompiler;
 use platform::FakePlatform;
 
-const HEADER: &str = "import std.sys.net as net\nimport { TcpStream, TcpListener } from std.sys.net\n\n";
+const HEADER: &str = "import std.socket as net\nimport { TcpStream, TcpListener } from std.socket\n\n";
 
 fn run_real(name: &str, body: &str) -> String {
     let dir = std::env::temp_dir().join(format!("mote_net_{name}_{}", std::process::id()));
@@ -71,7 +71,7 @@ fn the_same_program_on_the_fake_network() {
 }
 
 const UDP: &str = r#"
-import { UdpSocket, Datagram } from std.sys.net
+import { UdpSocket, Datagram } from std.socket
 
 fn main() {
     let a: UdpSocket = net.bind("127.0.0.1", 0).unwrap()

@@ -1,11 +1,10 @@
 //! Native libraries a package carries under `native/<triple>/`.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::installer::{dir_checksum, tree_checksum};
-use crate::manifest::PackageManifest;
 
 /// The target triple of the running `mote`: the name of its directory under `native/`.
 pub fn host_triple() -> String {
@@ -18,7 +17,7 @@ pub fn host_triple() -> String {
     }
 }
 
-/// The checksum of each `native/<triple>/` tree among `entries` (package-relative paths and contents), by triple.
+/// The checksum of each `native/<triple>/` tree among `entries`, by triple.
 pub(crate) fn archive_checksums(entries: &[(String, Vec<u8>)]) -> BTreeMap<String, String> {
     let mut trees: BTreeMap<&str, Vec<(String, &[u8])>> = BTreeMap::new();
     for (path, data) in entries {
@@ -45,13 +44,10 @@ pub(crate) fn dir_checksums(dir: &Path) -> Result<BTreeMap<String, String>, Stri
     Ok(sums)
 }
 
-/// Fails unless a package with native code `sums` is granted it and carries code for this machine.
-pub(crate) fn require(name: &str, sums: &BTreeMap<String, String>, granted: bool) -> Result<(), String> {
+/// Fails unless a package with native code `sums` carries code for this machine.
+pub(crate) fn require(name: &str, sums: &BTreeMap<String, String>) -> Result<(), String> {
     if sums.is_empty() {
         return Ok(());
-    }
-    if !granted {
-        return Err(format!("{name} carries native code; list it in mote.toml with native = true"));
     }
     let host = host_triple();
     if !sums.contains_key(&host) {
@@ -60,16 +56,71 @@ pub(crate) fn require(name: &str, sums: &BTreeMap<String, String>, granted: bool
     Ok(())
 }
 
-/// The packages `mote.toml` in `root` grants native access, each with where its libraries are installed.
-pub fn grants(root: &Path) -> Vec<(String, PathBuf)> {
-    let Ok(manifest) = PackageManifest::from_file(&root.join("mote.toml")) else { return Vec::new() };
+/// The packages and core libraries under `root` that carry libraries for this machine.
+pub fn libraries(root: &Path) -> Vec<(String, PathBuf)> {
+    let root = if root.as_os_str().is_empty() { Path::new(".") } else { root };
     let host = host_triple();
-    manifest
-        .dependencies
+    let mut grants: Vec<(String, PathBuf)> = fs::read_dir(root.join(".mote_packages"))
+        .into_iter()
+        .flatten()
+        .filter_map(Result::ok)
+        .map(|e| (e.file_name().to_string_lossy().into_owned(), e.path().join("native").join(&host)))
+        .filter(|(_, lib)| lib.is_dir())
+        .collect();
+    grants.sort();
+    let imported = imported_heads(root);
+    let own = |name: &str| root.join(format!("{name}.mote")).is_file() || root.join(name).is_dir() || root.join(".mote_packages").join(name).is_dir();
+    let wanted: Vec<&str> = modules::core::LIBRARIES.into_iter().filter(|name| imported.contains(*name) && !own(name)).collect();
+    if wanted.iter().any(|name| !modules::core::found(name)) {
+        let _ = modules::core::fetch_missing();
+    }
+    let natives: Vec<(String, PathBuf)> = modules::core::core_dirs()
         .iter()
-        .filter(|(_, spec)| spec.native())
-        .map(|(name, _)| (name.clone(), root.join(".mote_packages").join(name).join("native").join(&host)))
-        .collect()
+        .filter_map(|dir| fs::read_dir(dir).ok())
+        .flat_map(|entries| entries.filter_map(Result::ok))
+        .map(|e| (e.file_name().to_string_lossy().into_owned(), e.path().join("native").join(&host)))
+        .filter(|(name, lib)| wanted.contains(&name.as_str()) && lib.is_dir() && !grants.iter().any(|(n, _)| n == name))
+        .collect();
+    grants.extend(natives);
+    grants
+}
+
+const SCAN_DEPTH: usize = 4;
+const SCAN_FILES: usize = 1000;
+
+/// The first segment of every module the `.mote` files near `root` import.
+fn imported_heads(root: &Path) -> BTreeSet<String> {
+    let mut heads = BTreeSet::new();
+    let mut files = 0;
+    let mut dirs = vec![(root.to_path_buf(), 0)];
+    while let Some((dir, depth)) = dirs.pop() {
+        let Ok(entries) = fs::read_dir(&dir) else { continue };
+        for path in entries.filter_map(Result::ok).map(|e| e.path()) {
+            let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            if (name.starts_with('.') && name != ".mote_packages") || matches!(name.as_str(), "target" | "native" | "dist" | "node_modules") {
+                continue;
+            }
+            if path.is_dir() {
+                if depth < SCAN_DEPTH {
+                    dirs.push((path, depth + 1));
+                }
+            } else if path.extension().is_some_and(|x| x == "mote") && files < SCAN_FILES {
+                files += 1;
+                let Ok(text) = fs::read_to_string(&path) else { continue };
+                heads.extend(text.lines().filter_map(import_head));
+            }
+        }
+    }
+    heads
+}
+
+/// The first segment of the module an `import` line names, if the line is one.
+fn import_head(line: &str) -> Option<String> {
+    let line = line.trim();
+    let rest = line.strip_prefix("pub ").unwrap_or(line).strip_prefix("import ")?;
+    let path = rest.split_once(" from ").map_or(rest, |(_, module)| module);
+    let head = path.trim().split(|c: char| c == '.' || c.is_whitespace()).next()?;
+    (!head.is_empty()).then(|| head.to_string())
 }
 
 /// The directory beside a built program that holds its native libraries, `<name>.lib`.
@@ -79,7 +130,7 @@ pub fn lib_dir(exe: &Path) -> PathBuf {
 }
 
 /// The packages a built program carries libraries for: the subdirectories of its `.lib` directory.
-pub fn built_grants(exe: &Path) -> Vec<(String, PathBuf)> {
+pub fn built_libraries(exe: &Path) -> Vec<(String, PathBuf)> {
     let Ok(entries) = fs::read_dir(lib_dir(exe)) else { return Vec::new() };
     entries
         .filter_map(Result::ok)
@@ -88,14 +139,14 @@ pub fn built_grants(exe: &Path) -> Vec<(String, PathBuf)> {
         .collect()
 }
 
-/// Copies the host's libraries of every granted package into `<exe>.lib/<package>/`; answers how many packages.
+/// Copies the host's libraries of every installed package into `<exe>.lib/<package>/`.
 pub fn copy_libraries(root: &Path, exe: &Path) -> Result<usize, String> {
     let dir = lib_dir(exe);
     if dir.exists() {
         fs::remove_dir_all(&dir).map_err(|e| format!("Failed to clear '{}': {e}", dir.display()))?;
     }
     let mut copied = 0;
-    for (name, from) in grants(root) {
+    for (name, from) in libraries(root) {
         if !from.is_dir() {
             continue;
         }
@@ -113,17 +164,17 @@ pub fn copy_libraries(root: &Path, exe: &Path) -> Result<usize, String> {
     Ok(copied)
 }
 
-/// How many library files [`install_libraries`] wrote and how many it found already in place.
+/// How many library files were written and how many were already in place.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Installed {
     pub copied: usize,
     pub kept: usize,
 }
 
-/// Puts the host's libraries of every granted package in `<exe>.lib/<package>/`: a file already there with the same bytes stays, a changed one is replaced, and what the program no longer carries is removed.
+/// Puts the host's libraries of every installed package in `<exe>.lib/<package>/`.
 pub fn install_libraries(root: &Path, exe: &Path) -> Result<Installed, String> {
     let dir = lib_dir(exe);
-    let grants: Vec<(String, PathBuf)> = grants(root).into_iter().filter(|(_, from)| from.is_dir()).collect();
+    let grants: Vec<(String, PathBuf)> = libraries(root).into_iter().filter(|(_, from)| from.is_dir()).collect();
     if let Ok(entries) = fs::read_dir(&dir) {
         for entry in entries.filter_map(Result::ok) {
             let name = entry.file_name().to_string_lossy().into_owned();
@@ -150,7 +201,6 @@ pub fn install_libraries(root: &Path, exe: &Path) -> Result<Installed, String> {
             if fs::read(&target).is_ok_and(|have| have == bytes) {
                 done.kept += 1;
             } else {
-                // Written beside the target and renamed over it, so a running program that has the old library mapped keeps it.
                 let tmp = to.join(format!("{}.mote-tmp", file.to_string_lossy()));
                 fs::write(&tmp, &bytes).map_err(|e| format!("Failed to write '{}': {e}", tmp.display()))?;
                 fs::rename(&tmp, &target).map_err(|e| format!("Failed to write '{}': {e}", target.display()))?;
@@ -221,6 +271,16 @@ mod tests {
         let sums = archive_checksums(&entries);
         assert_eq!(sums.keys().collect::<Vec<_>>(), ["a-b-c", "d-e-f"]);
         assert_ne!(sums["a-b-c"], sums["d-e-f"]);
+    }
+
+    #[test]
+    fn an_import_line_names_its_first_segment() {
+        assert_eq!(import_head("import sqlite").as_deref(), Some("sqlite"));
+        assert_eq!(import_head("  import sqlite.pool as p").as_deref(), Some("sqlite"));
+        assert_eq!(import_head("import { Db } from sqlite").as_deref(), Some("sqlite"));
+        assert_eq!(import_head("pub import { Db } from sqlite.db").as_deref(), Some("sqlite"));
+        assert_eq!(import_head("import ..src.lib as pane"), None);
+        assert_eq!(import_head("let import_x = 1"), None);
     }
 
     #[test]

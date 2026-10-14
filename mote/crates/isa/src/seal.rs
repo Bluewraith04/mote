@@ -1,6 +1,4 @@
-//! Deep-seal support for `freeze`.
-//! `freeze(x)` sets a `sealed` bit on `x`'s [`ObjectHeader`] and on every object reachable from it, and never clears it.
-//! `SETFIELD` checks the bit and rejects the write.
+//! Deep-seal support for `freeze`: seals an object and everything reachable from it.
 
 use std::ptr::NonNull;
 use std::sync::atomic::Ordering;
@@ -44,7 +42,6 @@ fn type_id(header_ptr: NonNull<ObjectHeader>) -> u64 {
 }
 
 /// Seals `root` and every object transitively reachable from it, except the types shared by design.
-/// The seal bit doubles as the visited marker; a no-op if `root` is already sealed.
 pub fn seal_deep(root: NonNull<ObjectHeader>) {
     if is_sealed(root) || is_shared_by_design(type_id(root)) {
         return;
@@ -80,7 +77,7 @@ pub fn reaches_type(root: NonNull<ObjectHeader>, type_id: u64) -> bool {
     false
 }
 
-/// The objects of type `type_id` reachable from `root` through plain data, without entering the types shared by design.
+/// The objects of type `type_id` reachable from `root` through plain data.
 pub fn collect_of_type(root: NonNull<ObjectHeader>, type_id_wanted: u64) -> Vec<NonNull<ObjectHeader>> {
     let mut found = Vec::new();
     let mut seen = std::collections::HashSet::new();

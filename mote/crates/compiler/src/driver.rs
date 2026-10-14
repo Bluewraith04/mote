@@ -25,6 +25,7 @@ impl Compiler {
         items.append(&mut program.items);
         program.items = items;
         crate::impls::copy_trait_defaults(&mut [&mut program]);
+        crate::field_defaults::fill_field_defaults(&mut [&mut program]);
 
         let mut checker = TypeChecker::new();
         if let Err(errors) = checker.check_program(&program) {

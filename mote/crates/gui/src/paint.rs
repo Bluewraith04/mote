@@ -36,14 +36,14 @@ fn gunzip(bytes: &[u8]) -> Vec<u8> {
     out
 }
 
-/// An input's text placement; see [`Painter::input_geometry`].
+/// An input's text placement.
 pub struct InputGeometry {
     pub content: Rect,
     pub xs: Vec<f32>,
     pub shift: f32,
 }
 
-/// What a measured size depends on: the text, its runs, font size, weight, line height and the width it wraps to.
+/// What a measured size depends on.
 type MeasureKey = (String, Vec<Run>, u32, u16, u32, u32);
 
 /// Paints a [`Tree`] into a pixmap and gives its text a size.
@@ -52,7 +52,7 @@ pub struct Painter {
     swash: SwashCache,
     images: HashMap<u32, Pixmap>,
     measured: HashMap<MeasureKey, [f32; 2]>,
-    /// Each painted text node's shaped buffer, with the hash of what it was shaped from.
+    /// Each painted text node's shaped buffer.
     shapes: HashMap<u32, (u64, Buffer)>,
     /// What the window is cleared to before anything paints.
     pub background: u32,
@@ -102,7 +102,7 @@ fn rounded(pb: &mut PathBuilder, r: &Rect, radius: f32) {
     pb.close();
 }
 
-/// The pixel columns or rows a span covers: those whose centers lie inside it.
+/// The pixel columns or rows a span covers.
 fn span(lo: f32, hi: f32) -> (i32, i32) {
     ((lo - 0.5).ceil() as i32, (hi - 0.5).ceil() as i32)
 }
@@ -154,7 +154,7 @@ fn blend_rect(pixmap: &mut Pixmap, clip: Clip, rect: [f32; 4], rgb: [u8; 3], alp
     }
 }
 
-/// What a shaped buffer depends on: the text, its runs, the style's font and color, and the width it wraps to.
+/// What a shaped buffer depends on.
 fn shape_key(text: &str, style: &StyleDef, runs: &[Run], width: Option<f32>) -> u64 {
     let mut h = DefaultHasher::new();
     text.hash(&mut h);
@@ -225,7 +225,7 @@ impl Painter {
         }
     }
 
-    /// Decodes a PNG for an image node and gives the node that pixel size unless its style sets one.
+    /// Decodes a PNG for an image node.
     pub fn load_image(&mut self, tree: &mut Tree, node: u32, png: &[u8]) -> Result<(), String> {
         let pixmap = Pixmap::decode_png(png).map_err(|e| format!("not a PNG image: {e}"))?;
         tree.set_image_size(node, pixmap.width() as f32, pixmap.height() as f32)?;
@@ -264,7 +264,7 @@ impl Painter {
         Metrics::new(size, if style.line_height > 0.0 { style.line_height } else { (size * 1.2).ceil() })
     }
 
-    /// A shaped buffer for `text`, split into `runs` when it has any, wrapping at `width`.
+    /// A shaped buffer for `text`, wrapping at `width`.
     fn shaped(&mut self, text: &str, style: &StyleDef, runs: &[Run], width: Option<f32>) -> Buffer {
         let mut buffer = Buffer::new(&mut self.fonts, Self::metrics(style));
         buffer.set_size(width, None);
@@ -289,7 +289,7 @@ impl Painter {
         buffer
     }
 
-    /// The buffer of a node's text: the one kept from the last paint if `key` still matches, else a new one.
+    /// The buffer of a node's text, kept from the last paint when its key matches.
     fn take_shaped(&mut self, node: u32, key: u64, text: &str, style: &StyleDef, runs: &[Run], width: Option<f32>) -> Buffer {
         match self.shapes.remove(&node) {
             Some((kept, buffer)) if kept == key => buffer,
@@ -390,7 +390,7 @@ impl Painter {
         xs
     }
 
-    /// Where an input's text sits: its content box, the x of each character boundary, and how far the text is shifted left to keep the caret in view.
+    /// Where an input's text sits in its content box.
     pub fn input_geometry(&mut self, tree: &Tree, node: u32) -> Option<InputGeometry> {
         if tree.kind(node) != Some(Kind::Input) {
             return None;
@@ -413,7 +413,7 @@ impl Painter {
         nearest.map(|(i, _)| i)
     }
 
-    /// How far down a text node's lines sit in its content box: buttons and inputs centre them.
+    /// How far down a text node's lines sit in its content box.
     fn text_dy(kind: Option<Kind>, box_height: f32, text_height: f32) -> f32 {
         if matches!(kind, Some(Kind::Button | Kind::Input)) { ((box_height - text_height) / 2.0).max(0.0) } else { 0.0 }
     }

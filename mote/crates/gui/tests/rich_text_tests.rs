@@ -1,4 +1,4 @@
-//! Text nodes with runs: weight, italic, mono, colour, underline and links, painted with only the bundled fonts.
+//! Text nodes with runs: weight, italic, mono, colour, underline and links.
 
 use gui::{Align, Dim, Direction, Input, Kind, Painter, Rect, Run, StyleDef, Surface, UiEvent};
 

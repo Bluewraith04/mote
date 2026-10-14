@@ -23,12 +23,14 @@ pub enum Whence {
     End,
 }
 
-/// What a path names; ordinals are what `std.sys.fs` sees.
+/// What a path names; ordinals are what `std.fs` sees.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FileKind {
     File = 0,
     Dir = 1,
     Other = 2,
+    /// Only `Lstat` answers it.
+    Symlink = 3,
 }
 
 /// The answer to `Stat`.
@@ -37,6 +39,12 @@ pub struct FileStat {
     pub kind: FileKind,
     pub size: i64,
     pub modified_millis: i64,
+    /// The permission bits, `st_mode & 0o7777`.
+    pub mode: i64,
+    pub inode: i64,
+    pub device: i64,
+    /// The hard-link count.
+    pub links: i64,
 }
 
 /// What a finished child left behind; `status` is `-1` when a signal ended it.
@@ -91,6 +99,8 @@ pub enum PlatformRequest {
     FileClose { id: i64 },
     /// Entry names, sorted, without `.` and `..`.
     ListDir { path: String },
+    /// Entry names, sorted, each with its `Lstat`; answers `Entries`.
+    ReadDir { path: String },
     /// An existing directory is `AlreadyExists` unless `recursive`, which also creates the parents.
     CreateDir { path: String, recursive: bool },
     RemoveFile { path: String },
@@ -100,15 +110,27 @@ pub enum PlatformRequest {
     Rename { from: String, to: String },
     /// Follows symlinks.
     Stat { path: String },
-    /// Runs `program` to completion and captures its output. `env` is `KEY=VALUE` overrides; empty `cwd` inherits.
+    /// The path with `.`, `..` and every symlink resolved; answers `Text`.
+    Canonicalize { path: String },
+    /// `Stat` that does not follow a symlink; a link answers `FileKind::Symlink`.
+    Lstat { path: String },
+    /// Where a symlink points; answers `Text`.
+    ReadLink { path: String },
+    /// Makes `link` point at `target`, which need not exist.
+    Symlink { target: String, link: String },
+    /// Sets the modified time in Unix milliseconds; follows a symlink.
+    SetModified { path: String, millis: i64 },
+    /// Sets the permission bits; follows a symlink.
+    SetMode { path: String, mode: i64 },
+    /// Runs `program` to completion and captures its output.
     RunProcess { program: String, args: Vec<String>, env: Vec<String>, stdin: Vec<u8>, cwd: String },
     /// Seconds east of UTC that the machine's zone applies at `unix_seconds`; answers `Int`.
     LocalOffset { unix_seconds: i64 },
     /// Answers `Int(id)` of a connected stream.
     TcpConnect { host: String, port: u16 },
-    /// A TCP connection with a TLS client session finished against the bundled root certificates; answers `Int(id)`.
+    /// A TCP connection with a finished TLS client session; answers `Int(id)`.
     TlsConnect { host: String, port: u16 },
-    /// A listener whose accepted streams are TLS server sessions for a PEM chain and key; answers `Int(id)`.
+    /// A listener whose accepted streams are TLS server sessions; answers `Int(id)`.
     TlsListen { host: String, port: u16, cert_pem: String, key_pem: String },
     /// Port `0` picks a free one; answers `Int(id)` of a listener.
     TcpListen { host: String, port: u16 },
@@ -131,17 +153,22 @@ pub enum PlatformRequest {
     UdpSendTo { id: i64, host: String, port: u16, bytes: Vec<u8> },
     /// Answers `Datagram`; a longer datagram is truncated to `max`.
     UdpRecvFrom { id: i64, max: usize },
-    /// Loads a shared library; answers `Int(id)`. `PermissionDenied` unless the run allows native libraries.
+    /// Loads a shared library; answers `Int(id)`.
     LibOpen { path: String },
     /// Loads library `name` from the native directory of a package the run grants; answers `Int(id)`.
     LibOpenPackage { package: String, name: String },
-    /// Looks `name` up in a library and binds it to `signature` (`"fi>f"`: `i` Int, `f` Float, `b` Bool, `s` String, `p` Bytes, `v` no result); answers `Int(id)`.
+    /// Looks `name` up in a library and binds it to `signature`; answers `Int(id)`.
     LibSymbol { lib: i64, name: String, signature: String },
-    /// Calls a bound symbol; answers `Int` (a Float as its bits), `Text` or `Unit` by the signature's result.
-    /// `blocking` runs it on the offload pool; otherwise it runs inline on the worker.
+    /// Calls a bound symbol; `blocking` runs it on the offload pool.
     LibCall { symbol: i64, args: Vec<CArg>, blocking: bool },
     /// Drops the handle; symbols already bound keep the library loaded.
     LibClose { lib: i64 },
+    /// Raw mode and the alternate screen, with mouse reporting when `mouse`.
+    TermOpen { mouse: bool },
+    /// Leaves raw mode and the alternate screen; closing twice is fine.
+    TermClose,
+    /// Answers `Int(cols * 65536 + rows)`.
+    TermSize,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -157,6 +184,8 @@ pub enum PlatformResponse {
     Strings(Vec<String>),
     Pairs(Vec<(String, String)>),
     Stat(FileStat),
+    /// A directory's entries as `(name, lstat)`.
+    Entries(Vec<(String, FileStat)>),
     Process(ProcessOutput),
     /// One UDP datagram and its sender as `host:port`.
     Datagram { bytes: Vec<u8>, from: String },
@@ -194,6 +223,9 @@ pub enum Woken {
 /// Called once, from any thread, when a wait ends.
 pub type Wake = Box<dyn FnOnce(Woken) + Send>;
 
+/// Ends a wait without calling its `Wake`; answers whether the wait was still pending.
+pub type WaitCancel = Box<dyn FnOnce() -> bool + Send>;
+
 /// The outside world: it executes requests, and may wait on the reactor.
 pub trait Platform: Send + Sync {
     fn execute(&self, request: PlatformRequest) -> Result<PlatformResponse, PlatformError>;
@@ -201,9 +233,8 @@ pub trait Platform: Send + Sync {
     /// Whether the runtime should park the task and run `request` off the worker.
     fn blocking(&self, request: &PlatformRequest) -> bool;
 
-    /// Waits for time or readiness without holding a thread, then calls `wake` once; a request that
-    /// does not wait is handed back and runs on the offload pool.
-    fn wait(&self, request: PlatformRequest, wake: Wake) -> Result<(), Box<(PlatformRequest, Wake)>> {
+    /// Waits for time or readiness without holding a thread, then calls `wake` once.
+    fn wait(&self, request: PlatformRequest, wake: Wake) -> Result<Option<WaitCancel>, Box<(PlatformRequest, Wake)>> {
         Err(Box::new((request, wake)))
     }
 

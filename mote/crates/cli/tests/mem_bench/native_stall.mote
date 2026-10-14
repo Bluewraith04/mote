@@ -1,0 +1,41 @@
+/// One task sits in a long native call (hashing {N} MiB) while another allocates.
+import { sha256 } from std.crypto
+
+struct Node {
+    id: Int
+    label: String
+}
+
+fn churn() -> Int {
+    var total = 0
+    var round = 0
+    while round < 40000 {
+        var tmp: List<Node> = []
+        var j = 0
+        while j < 100 {
+            tmp.push(Node { id: j, label: "n" })
+            j += 1
+        }
+        total += tmp.len()
+        round += 1
+    }
+    return total
+}
+
+fn main() {
+    scope {
+        spawn {
+            let data = Bytes({N} * 1048576)
+            var k = 0
+            while k < 4 {
+                sha256(data)
+                k += 1
+            }
+            return 0
+        }
+        spawn {
+            return churn()
+        }
+    }
+    println("done")
+}

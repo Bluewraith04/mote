@@ -1,4 +1,4 @@
-//! `std.data.json` and the number parsing it needs, through `mote run`.
+//! `std.json` and the number parsing it needs, through `mote run`.
 
 use std::process::Command;
 
@@ -64,8 +64,8 @@ fn main() {
     assert_eq!(run("parse_float", body), "true\n".repeat(15).trim_end());
 }
 
-const TREE: &str = r#"import std.data.json as json
-import { Json, Member } from std.data.json
+const TREE: &str = r#"import std.json as json
+import { Json, Member } from std.json
 
 fn sample() -> Json {
     let inner = Json.Object([json.member("ok", Json.Bool(true)), json.member("none", Json.Null)])
@@ -225,7 +225,7 @@ fn accepted_documents_print_back_in_canonical_form() {
         ("[[],[[]],{}]", "[[],[[]],{}]"),
         ("\"caf\u{e9} \u{1f600}\"", "\"caf\u{e9} \u{1f600}\""),
     ];
-    let mut body = String::from("import std.data.json as json\n\nfn main() {\n");
+    let mut body = String::from("import std.json as json\n\nfn main() {\n");
     for (input, _) in cases {
         body.push_str(&format!("    println(json.to_text(json.parse({}).unwrap()).unwrap())\n", mote_str(input)));
     }
@@ -243,7 +243,7 @@ fn malformed_documents_are_errors() {
         "\"\\ud800x\"", "[1] x", "{}{}", "// c\n[]", "/* c */ []", "\u{feff}[]", "[1e999]", "\"unterminated\\", "[\"a\" \"b\"]",
         "{\"a\":1 \"b\":2}", "[}", "{]", "'single'", "0x10", "1.5.5", "--1", "[1,,2]",
     ];
-    let mut body = String::from("import std.data.json as json\n\nfn main() {\n    var accepted = 0\n");
+    let mut body = String::from("import std.json as json\n\nfn main() {\n    var accepted = 0\n");
     for text in bad {
         body.push_str(&format!(
             "    if json.parse({}).is_ok() {{\n        accepted = accepted + 1\n        println({})\n    }}\n",
@@ -257,7 +257,7 @@ fn malformed_documents_are_errors() {
 
 #[test]
 fn errors_name_the_line_and_column_of_the_fault() {
-    let body = r#"import std.data.json as json
+    let body = r#"import std.json as json
 
 fn message(text: String) -> String {
     match json.parse(text) {
@@ -295,7 +295,7 @@ expected ',' or '}' at line 2 column 2"
 
 #[test]
 fn nesting_is_limited_and_large_numbers_fall_back_to_float() {
-    let body = r#"import std.data.json as json
+    let body = r#"import std.json as json
 import std.string as string
 
 fn nested(n: Int) -> String {
@@ -330,4 +330,126 @@ fn main() {{
 "#
     );
     assert_eq!(run("pretty_round_trip", &body), "true\n3");
+}
+
+/// A Mote string literal for `text`, any control byte written as `\u{..}`.
+fn mote_lit(text: &str) -> String {
+    let mut out = String::from("\"");
+    for c in text.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            c if (c as u32) < 32 => out.push_str(&format!("\\u{{{:x}}}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+/// What `to_text` must answer for a string: the escapes JSON requires and nothing else.
+fn quoted(text: &str) -> String {
+    let mut out = String::from("\"");
+    for c in text.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\u{8}' => out.push_str("\\b"),
+            '\t' => out.push_str("\\t"),
+            '\n' => out.push_str("\\n"),
+            '\u{c}' => out.push_str("\\f"),
+            '\r' => out.push_str("\\r"),
+            c if (c as u32) < 32 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+#[test]
+fn every_control_byte_and_long_runs_survive_a_round_trip() {
+    let run_of = |c: char, n: usize| c.to_string().repeat(n);
+    let mut cases: Vec<String> = vec![String::new(), run_of('a', 300), format!("{}\"{}", run_of('a', 300), run_of('b', 300))];
+    for byte in 0u8..32 {
+        cases.push(format!("x{}y", byte as char));
+        cases.push(format!("{}{}{}", run_of('p', 70), byte as char, run_of('q', 70)));
+    }
+    cases.push(format!("{}\\{}", run_of('é', 200), run_of('😀', 50)));
+    cases.push("\"\"\\\\\n\n\t".to_string());
+    cases.push(format!("{}\u{7f}\u{80}\u{ff}", run_of('z', 5)));
+    let mut body = String::from("import std.json as json\n\nfn main() {\n");
+    for text in &cases {
+        body.push_str(&format!(
+            "    let s = {}\n    let t = json.to_text(Json.Str(s)).unwrap()\n    println(t)\n    println(json.as_str(json.parse(t).unwrap()).unwrap() == s)\n",
+            mote_lit(text)
+        ));
+    }
+    body.push_str("}\n");
+    let body = body.replace("import std.json as json\n", "import std.json as json\nimport { Json } from std.json\n");
+    let expected: Vec<String> = cases.iter().flat_map(|c| [quoted(c), "true".to_string()]).collect();
+    assert_eq!(run("control_bytes", &body), expected.join("\n"));
+}
+
+#[test]
+fn an_escape_after_a_long_plain_run_and_a_fault_after_one_keep_their_place() {
+    let body = format!(
+        r#"import std.json as json
+
+fn message(text: String) -> String {{
+    match json.parse(text) {{
+        Ok(v) => {{ return "accepted" }}
+        Err(e) => {{
+            let er: Error = e
+            return er.message
+        }}
+    }}
+}}
+
+fn main() {{
+    let a = "a".repeat(300)
+    let b = "b".repeat(300)
+    let v = json.parse("\"" + a + "\\n" + b + "\\u00e9\"").unwrap()
+    println(json.as_str(v).unwrap() == a + "\n" + b + "\u{{e9}}")
+    println(message("\"" + a + "\n"))
+    println(message("\"" + a))
+    println(message("[\"" + a + "\\x\"]"))
+    println(message("{{\"" + a + "\":\n \"" + b))
+    println(json.to_text(json.parse("[1234567890123.25, -98765432101234, 7]").unwrap()).unwrap())
+    println(json.to_text(json.parse("[   \n\t [1 ,\r\n 2 ] ,{{ \"k\" :  \"v\" }} ]  \n").unwrap()).unwrap())
+}}
+"#
+    );
+    assert_eq!(
+        run("long_runs", &body),
+        "true\n\
+control character in string at line 1 column 302\n\
+unterminated string at line 1 column 302\n\
+bad escape at line 1 column 304\n\
+unterminated string at line 2 column 303\n\
+[1234567890123.25,-98765432101234,7]\n\
+[[1,2],{\"k\":\"v\"}]"
+    );
+}
+
+#[test]
+fn string_join_puts_the_separator_between_pieces() {
+    let body = r#"import std.string as string
+
+fn main() {
+    let none: List<String> = []
+    println("[" + string.join(none, ",") + "]")
+    println(string.join(["a"], ", "))
+    println(string.join(["a", "b", "c"], ", "))
+    println(string.join(["", "", ""], "-"))
+    println(string.join(["x", "y"], ""))
+    println(string.join(["é", "日本", "😀"], "·"))
+    var big: List<String> = []
+    for i in 0..5000 {
+        big.push("p")
+    }
+    println(string.join(big, "ab").len())
+}
+"#;
+    assert_eq!(run("join", body), "[]\na\na, b, c\n--\nxy\né·日本·😀\n14998");
 }

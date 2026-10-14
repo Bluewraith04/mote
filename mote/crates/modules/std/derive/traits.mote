@@ -1,0 +1,34 @@
+/// std.derive.traits: the modifiers behind `Display` and `Debug`.
+
+import { * } from std.prelude
+import std.meta as meta
+import std.string as str
+
+/// The text a `Display` for a struct or class returns.
+fn fields_text(d: meta.Decl) -> String {
+    if d.fields.len() == 0 {
+        return "\"" + d.name + "\""
+    }
+    var parts: List<String> = []
+    for f in d.fields {
+        parts.push(f.name + ": \${self." + f.name + "}")
+    }
+    return "\"" + d.name + "(" + str.join(parts, ", ") + ")\""
+}
+
+@stable
+@modifier
+pub fn display_modifier(d: meta.Decl) -> Result<meta.Additions, meta.Diagnostic> {
+    var body = fields_text(d)
+    match d.kind {
+        meta.DeclKind.Enum => { body = "__debug_raw(self)" }
+        _ => {}
+    }
+    return Ok(meta.Additions.new("fn to_string(self) -> String { return " + body + " }"))
+}
+
+@stable
+@modifier
+pub fn debug_modifier(d: meta.Decl) -> Result<meta.Additions, meta.Diagnostic> {
+    return Ok(meta.Additions.new("fn debug(self) -> String { return __debug_raw(self) }"))
+}

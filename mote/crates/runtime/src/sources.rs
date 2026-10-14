@@ -1,6 +1,4 @@
 //! Event sources: a `Channel` fed by a platform source through a bounded queue.
-//!
-//! The source thread only touches the queue. Events move into the channel when a task calls `recv`, on that worker.
 
 use std::collections::HashMap;
 use std::ptr::NonNull;

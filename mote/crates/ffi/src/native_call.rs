@@ -12,7 +12,7 @@ use crate::local_refs::LocalReferenceScope;
 pub struct NativeCallContext<'a> {
     pub args: &'a [Value],
     pub local_scope: &'a mut LocalReferenceScope,
-    /// The allocation seam: collection and channel natives allocate GC objects through it; leaf natives ignore it.
+    /// The allocation seam that collection and channel natives allocate GC objects through.
     pub heap: &'a mut dyn NativeCtx,
 }
 
@@ -42,7 +42,7 @@ pub type ContinuationFn = Box<dyn FnOnce(&mut NativeCallContext, PlatformResult)
 /// Reads the arguments and names the platform request plus its continuation.
 pub type RequestFn = fn(&mut NativeCallContext) -> Result<(PlatformRequest, ContinuationFn), String>;
 
-/// What a source native opens: the request, the channel capacity, the overflow policy and the payload decoder.
+/// What a source native opens: the request, capacity, overflow policy and decoder.
 pub struct SourceSpec {
     pub request: SourceRequest,
     pub capacity: usize,
@@ -66,7 +66,7 @@ pub enum NativeBody {
     Source(SourceFn),
 }
 
-/// A builtin as a [`NativeFn`]: runs its body under a fresh [`NativeCallContext`] and reports the outcome.
+/// A builtin as a [`NativeFn`] that runs its body under a fresh [`NativeCallContext`].
 pub struct BuiltinNative {
     body: NativeBody,
 }
@@ -135,12 +135,12 @@ impl NativeFunctionRegistry {
         self.add(name, NativeBody::Plain(func))
     }
 
-    /// Register a native declared `-> __Fallible<T>`: it may fail with a recoverable [`NativeError`].
+    /// Register a native that may fail with a recoverable [`NativeError`].
     pub(crate) fn register_fallible(&self, name: &str, func: FallibleNativeFn) -> u16 {
         self.add(name, NativeBody::Fallible(func))
     }
 
-    /// Register a native that asks the platform; takes one registry slot, like [`register`](Self::register).
+    /// Register a native that asks the platform.
     pub(crate) fn register_platform(&self, name: &str, request: RequestFn) -> u16 {
         self.add(name, NativeBody::Platform(request))
     }
@@ -163,8 +163,7 @@ impl NativeFunctionRegistry {
         self.name_map.read().get(name).copied()
     }
 
-    /// Invokes a registered native by index. A platform native returns its request and continuation
-    /// for the runtime to run (inline, or off the worker while the task parks).
+    /// Invokes a registered native by index.
     pub fn call(&self, idx: u16, args: &[Value], cx: &mut dyn NativeCtx) -> NativeOutcome {
         match self.get(idx) {
             Some(entry) => entry.callable.call(cx, args),

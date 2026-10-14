@@ -20,7 +20,7 @@ fn spawn_closure(code_idx: u16, handle_reg: u8) -> Vec<isa::encoding::Instructio
     ]
 }
 
-/// Records `(tag, thread, on_home_thread)` for every call of native 0, with the tag in its first argument.
+/// Records the tag, thread and home-thread flag of every call of native 0.
 fn recorder(rt: &mut Runtime) -> Seen {
     let seen: Seen = Arc::default();
     let log = seen.clone();

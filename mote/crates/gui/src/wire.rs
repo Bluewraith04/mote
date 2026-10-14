@@ -1,7 +1,4 @@
 //! A style as a flat list of numbers, the form that crosses into Mote and back.
-//!
-//! Slots 0 to 72 are fixed (the `*_AT` constants); the grid column tracks then the row tracks follow, each a count and that many `(kind, value)` pairs.
-//! A length is `(kind, value)`: a [`Dim`] is auto 0, px 1, percent 2; a [`Len`] is px 0, percent 1; a [`Track`] is px 0, fr 1, auto 2, min-content 3, max-content 4.
 
 use crate::style::{Align, Dim, Direction, Display, Len, NO_STYLE, Overflow, Place, Position, StyleDef, TextAlign, Track};
 use crate::tree::{Input, UiEvent};
@@ -169,9 +166,7 @@ fn style_id_code(id: u32) -> f64 {
 }
 
 impl UiEvent {
-    /// The event as `[code, node, a, b, c]`: codes 0 Click, 1 PointerDown, 2 PointerUp, 3 PointerMove, 4 Enter, 5 Leave, 6 Wheel, 7 Key, 8 Changed, 9 Submit, 10 Resize, 11 Close, 12 User, 13 Link.
-    ///
-    /// Pointer events carry `x, y` in `a, b`; Wheel `dx, dy`; Key `code, mods, down`; Resize `width, height`; User the number in `a`; Link the link id in `a`. Unused slots are 0.
+    /// The event as the flat list `[code, node, a, b, c]`.
     pub fn to_wire(&self) -> [f64; 5] {
         let n = |v: u32| f64::from(v);
         match *self {
@@ -194,7 +189,7 @@ impl UiEvent {
 }
 
 impl Input {
-    /// An input from the numbers `__ui_input` passes: `kind` 0 PointerMove, 1 PointerDown, 2 PointerUp, 3 PointerLeave, 4 Wheel, 5 Key, 6 Resize, 7 Close.
+    /// An input from the numbers `__ui_input` passes.
     pub fn from_wire(kind: i64, a: f64, b: f64, c: f64, d: f64) -> Result<Input, String> {
         let (x, y) = (a as f32, b as f32);
         let whole = |v: f64, what: &str| -> Result<u32, String> {
@@ -277,7 +272,7 @@ impl StyleDef {
         o
     }
 
-    /// A style from a flat list of numbers; a message names the first bad value.
+    /// A style from a flat list of numbers.
     pub fn from_wire(wire: &[f64]) -> Result<StyleDef, String> {
         let mut r = Reader { wire, at: 0 };
         let display = match r.code("display", 3)? {

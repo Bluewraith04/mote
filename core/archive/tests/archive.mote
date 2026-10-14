@@ -1,0 +1,83 @@
+import std.fs as fs
+import ..src.lib as archive
+import { Entry } from ..src.lib
+
+/// Shows one line per entry.
+fn show(entries: List<Entry>) -> List<String> {
+    var out: List<String> = []
+    for e in entries { out.push("${e.name} ${e.is_dir()} ${e.data.len()}") }
+    return out
+}
+
+test "tar and zip round trip files and directories" {
+    let entries = [
+        archive.dir("docs"),
+        archive.file("docs/a.txt", "hello".bytes()),
+        archive.file("b.bin", Bytes(300)),
+        archive.file("empty", Bytes()),
+    ]
+    let want = ["docs/ true 0", "docs/a.txt false 5", "b.bin false 300", "empty false 0"]
+    assert_eq(show(archive.unpack_tar(archive.pack_tar(entries).unwrap()).unwrap()), want)
+    let back = archive.unpack_zip(archive.pack_zip(entries).unwrap()).unwrap()
+    assert_eq(show(back), want)
+    assert_eq(back.get(1).data.decode().unwrap(), "hello")
+}
+
+test "the same entries pack to the same bytes" {
+    let entries = [archive.file("a", "x".bytes()), archive.dir("d")]
+    let one = archive.pack_tar(entries).unwrap()
+    let two = archive.pack_tar(entries).unwrap()
+    assert(one.len() == two.len() && one.len() % 512 == 0)
+    var same = true
+    var i = 0
+    while i < one.len() {
+        if one.get(i) != two.get(i) { same = false }
+        i = i + 1
+    }
+    assert(same)
+}
+
+test "unsafe names are refused on every path" {
+    var got: List<String> = []
+    for name in ["../x", "/etc/x", "a/../../x", "a\\b", "", "C:/x"] {
+        match archive.pack_zip([archive.file(name, Bytes())]) {
+            Ok(b) => { got.push("packed") }
+            Err(e) => { got.push(e.message) }
+        }
+    }
+    match archive.extract([archive.file("a/../../x", Bytes())], "/tmp/mote_archive_test_out") {
+        Ok(n) => { got.push("written") }
+        Err(e) => { got.push(e.message) }
+    }
+    assert_eq(got, [
+        "unsafe entry name ../x",
+        "unsafe entry name /etc/x",
+        "unsafe entry name a/../../x",
+        "unsafe entry name a\\b",
+        "unsafe entry name ",
+        "unsafe entry name C:/x",
+        "unsafe entry name a/../../x",
+    ])
+}
+
+test "bad archives are errors" {
+    assert(archive.unpack_zip("not a zip".bytes()).is_err())
+    assert(archive.unpack_tar("not a tar".bytes()).is_err())
+    let z = archive.pack_zip([archive.file("a", Bytes(100))]).unwrap()
+    assert(archive.unpack_zip(z.slice(0, z.len() - 10)).is_err())
+}
+
+test "a directory tree packs and extracts" {
+    let base = "/tmp/mote_archive_test_tree"
+    fs.remove_dir_all(base)
+    fs.create_dir_all("${base}/src/sub").unwrap()
+    fs.write_text("${base}/src/top.txt", "top").unwrap()
+    fs.write_text("${base}/src/sub/inner.txt", "inner").unwrap()
+    let entries = archive.read_dir("${base}/src").unwrap()
+    assert_eq(show(entries), ["sub/ true 0", "sub/inner.txt false 5", "top.txt false 3"])
+    let packed = archive.pack_tar(entries).unwrap()
+    archive.extract(archive.unpack_tar(packed).unwrap(), "${base}/copy/deep").unwrap()
+    assert_eq(fs.read_text("${base}/copy/deep/sub/inner.txt").unwrap(), "inner")
+    assert_eq(fs.read_text("${base}/copy/deep/top.txt").unwrap(), "top")
+    fs.remove_dir_all(base)
+}

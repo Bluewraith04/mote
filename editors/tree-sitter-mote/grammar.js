@@ -1,7 +1,4 @@
-/**
- * Tree-sitter grammar for Mote, written for editor highlighting. The compiler's parser is the
- * reference: newlines are insignificant inside brackets there, so they are plain whitespace here.
- */
+/** Tree-sitter grammar for Mote, written for editor highlighting. */
 
 const PREC = {
   ternary: 1,
@@ -73,21 +70,23 @@ module.exports = grammar({
         $._statement,
       ),
 
-    // ---- comments -------------------------------------------------------
-
-    line_comment: () => token(prec(1, /\/\/[^\n]*/)),
-    doc_comment: () => token(prec(2, /\/\/\/[^\n]*/)),
-    // Not nested: the compiler nests `/* /* */ */`, a regex cannot.
+    line_comment: () => token(/\/\/([^\/\n][^\n]*|\/\/[^\n]*)?/),
+    doc_comment: () => token(/\/\/\/([^\/\n][^\n]*)?/),
     block_comment: () => token(/\/\*[^*]*\*+([^/*][^*]*\*+)*\//),
 
-    // ---- attributes and visibility --------------------------------------
-
     attribute: ($) =>
-      prec.right(seq('@', field('name', $.identifier), optional(seq('(', commaSep($.identifier), ')')))),
+      prec.right(seq('@', field('name', $.identifier), optional(seq('(', commaSep($.attribute_argument), ')')))),
+
+    attribute_argument: ($) =>
+      choice(
+        $.identifier,
+        $.attribute_path,
+        seq(field('key', $.identifier), '=', field('value', choice($.identifier, $.attribute_path, $.string))),
+      ),
+
+    attribute_path: ($) => seq($.identifier, repeat1(seq('.', $.identifier))),
 
     visibility: () => 'pub',
-
-    // ---- imports --------------------------------------------------------
 
     import_declaration: ($) =>
       seq(
@@ -117,8 +116,6 @@ module.exports = grammar({
       ),
 
     super: () => 'super',
-
-    // ---- declarations ---------------------------------------------------
 
     function_item: ($) =>
       seq(
@@ -174,6 +171,7 @@ module.exports = grammar({
         'struct',
         field('name', $.identifier),
         optional($.type_parameters),
+        optional($.trait_list),
         field('body', $.member_list),
       ),
 
@@ -183,9 +181,11 @@ module.exports = grammar({
         'class',
         field('name', $.identifier),
         optional($.type_parameters),
-        optional(seq(':', field('parent', $.identifier))),
+        optional($.trait_list),
         field('body', $.member_list),
       ),
+
+    trait_list: ($) => seq(':', '(', commaSep1($._type), ')'),
 
     member_list: ($) => seq('{', repeat(choice($.field_declaration, $.function_item, $.attribute)), '}'),
 
@@ -196,6 +196,7 @@ module.exports = grammar({
         field('name', $.identifier),
         ':',
         field('type', $._type),
+        optional(seq('=', field('default', $._expression))),
       ),
 
     enum_item: ($) =>
@@ -204,8 +205,9 @@ module.exports = grammar({
         'enum',
         field('name', $.identifier),
         optional($.type_parameters),
+        optional($.trait_list),
         '{',
-        repeat(seq($.enum_variant, optional(','))),
+        repeat(choice($.attribute, seq($.enum_variant, optional(',')))),
         '}',
       ),
 
@@ -222,7 +224,13 @@ module.exports = grammar({
       ),
 
     variant_field: ($) =>
-      seq(optional(choice('var', 'let')), field('name', $.identifier), ':', field('type', $._type)),
+      seq(
+        optional(choice('var', 'let')),
+        field('name', $.identifier),
+        ':',
+        field('type', $._type),
+        optional(seq('=', field('default', $._expression))),
+      ),
 
     trait_item: ($) =>
       seq(
@@ -268,8 +276,6 @@ module.exports = grammar({
 
     test_declaration: ($) => seq(field('keyword', $.identifier), $.string, $.block),
 
-    // ---- types ----------------------------------------------------------
-
     _type: ($) => choice($._operand_type, $.union_type),
 
     _operand_type: ($) =>
@@ -314,8 +320,6 @@ module.exports = grammar({
     nullable_type: ($) => seq($._operand_type, choice('?', '??')),
 
     union_type: ($) => prec.left(seq($._operand_type, repeat1(seq('|', $._operand_type)))),
-
-    // ---- statements -----------------------------------------------------
 
     block: ($) => seq('{', repeat($._statement), '}'),
 
@@ -431,8 +435,6 @@ module.exports = grammar({
 
     expression_statement: ($) => seq($._expression),
 
-    // ---- patterns -------------------------------------------------------
-
     _pattern: ($) =>
       choice(
         $.wildcard_pattern,
@@ -482,8 +484,6 @@ module.exports = grammar({
 
     type_pattern: ($) =>
       seq(field('name', choice($.identifier, '_')), ':', field('type', $._operand_type)),
-
-    // ---- expressions ----------------------------------------------------
 
     _expression: ($) =>
       choice(
@@ -539,7 +539,6 @@ module.exports = grammar({
 
     field_initializer: ($) => seq(field('name', $.identifier), ':', field('value', $._expression)),
 
-    // `Name<Args>(…)` and `Name<Args>.member`: type arguments written in an expression.
     generic_expression: ($) =>
       prec.dynamic(
         1,
@@ -599,7 +598,6 @@ module.exports = grammar({
     coalesce_expression: ($) =>
       prec.left(PREC.coalesce, seq($._expression, '??', $._expression)),
 
-    // Same level as the ternary so GLR keeps both readings of `?`; a later `:` decides.
     try_expression: ($) => prec(PREC.ternary, seq($._expression, '?')),
 
     unwrap_expression: ($) => prec(PREC.postfix, seq($._expression, '!')),
@@ -609,7 +607,6 @@ module.exports = grammar({
 
     arguments: ($) => seq('(', commaSep(choice($._expression, $.named_argument)), ')'),
 
-    // `name = value` in a call.
     named_argument: ($) => seq(field('name', $.identifier), '=', field('value', $._expression)),
 
     member_expression: ($) =>
@@ -625,7 +622,21 @@ module.exports = grammar({
     tuple_index: () => token.immediate(/[0-9]+(\.[0-9]+)*/),
 
     index_expression: ($) =>
-      prec(PREC.postfix, seq(field('object', $._expression), '[', field('index', $._expression), ']')),
+      prec(
+        PREC.postfix,
+        seq(field('object', $._expression), '[', choice(field('index', $._expression), $.slice_bounds), ']'),
+      ),
+
+    slice_bounds: ($) =>
+      prec(
+        PREC.range + 1,
+        seq(
+          optional(field('start', $._expression)),
+          choice('..', '..='),
+          optional(field('end', $._expression)),
+          optional(seq('..', field('step', $._expression))),
+        ),
+      ),
 
     lambda_expression: ($) =>
       prec.right(
@@ -641,8 +652,6 @@ module.exports = grammar({
 
     spawn_expression: ($) =>
       prec.right(seq('spawn', choice($.block, prec(90, $._expression)))),
-
-    // ---- literals -------------------------------------------------------
 
     boolean: () => choice('true', 'false'),
 

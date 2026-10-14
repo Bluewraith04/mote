@@ -17,7 +17,7 @@ pub const SHARED_GET_INTRINSIC: u8 = 8;
 pub const SHARED_BEGIN_INTRINSIC: u8 = 9;
 /// Commits the value (sealed by the `SEAL_*` mode in the third argument) and gives up the turn.
 pub const SHARED_COMMIT_INTRINSIC: u8 = 10;
-/// `wait_until`'s step: the current version, parking until a commit while it is the second argument (unless the third is `1`).
+/// `wait_until` step: the current version, parking until a commit.
 pub const SHARED_WAIT_INTRINSIC: u8 = 11;
 /// `t.is_ready()`: whether the task has finished; never waits.
 pub const TASK_IS_READY_INTRINSIC: u8 = 12;
@@ -25,8 +25,12 @@ pub const TASK_IS_READY_INTRINSIC: u8 = 12;
 pub const CHANNEL_SENDER_INTRINSIC: u8 = 13;
 /// `tx.clone()`: another `Sender` of the same channel, owned by the calling task.
 pub const SENDER_CLONE_INTRINSIC: u8 = 14;
-/// `std.task.pin` / `unpin` / `is_pinned`: the argument is a `PIN_*` mode; the answer is whether the task is pinned afterwards.
+/// `std.task.pin` / `unpin` / `is_pinned`, selected by a `PIN_*` mode.
 pub const TASK_PIN_INTRINSIC: u8 = 15;
+/// `Semaphore.acquire`: takes a permit from a counting cell, parking while none is free.
+pub const SEM_ACQUIRE_INTRINSIC: u8 = 16;
+/// `Semaphore.release`: gives back a permit the calling task holds.
+pub const SEM_RELEASE_INTRINSIC: u8 = 17;
 
 /// `TASK_PIN_INTRINSIC` modes.
 pub const PIN_OFF: i64 = 0;
@@ -41,7 +45,7 @@ pub const SEAL_IN_PLACE: i64 = 1;
 pub const SEAL_CLAIM: i64 = 2;
 
 /// Intrinsic names, indexed by id.
-pub const INTRINSIC_NAMES: [&str; 16] = [
+pub const INTRINSIC_NAMES: [&str; 18] = [
     "task.join",
     "task.cancel",
     "channel.new",
@@ -58,6 +62,8 @@ pub const INTRINSIC_NAMES: [&str; 16] = [
     "channel.sender",
     "sender.clone",
     "task.pin",
+    "sem.acquire",
+    "sem.release",
 ];
 
 /// The id of the intrinsic named `name`.
@@ -65,14 +71,13 @@ pub fn intrinsic_id(name: &str) -> Option<u8> {
     INTRINSIC_NAMES.iter().position(|n| *n == name).map(|i| i as u8)
 }
 
-/// `Task<T>` header slots ([`isa::value::TASK_TYPE_ID`]'s doc comment).
+/// `Task<T>` header slots.
 pub const TASK_SLOT_ID: usize = 0;
 pub const TASK_SLOT_STATUS: usize = 1;
 pub const TASK_SLOT_RESULT: usize = 2;
 /// `null` when no task is parked on `join`, else the waiting task's id.
-/// Not `uint(0)`: the main task's id is `0`.
 pub const TASK_SLOT_WAITER: usize = 3;
-/// Set to `1` by `join` once it has handed a resolved status to a caller; `SCOPEEXIT` uses it to tell an observed child fault from an unobserved one.
+/// Set to `1` by `join` once it has handed a resolved status to a caller.
 pub const TASK_SLOT_OBSERVED: usize = 4;
 
 /// `TASK_SLOT_STATUS` values.
@@ -80,7 +85,7 @@ pub const STATUS_PENDING: i64 = 0;
 pub const STATUS_OK: i64 = 1;
 pub const STATUS_ERR: i64 = 2;
 
-/// Channel header slots ([`isa::value::CHANNEL_TYPE_ID`]'s doc comment).
+/// Channel header slots.
 pub const CHAN_SLOT_ID: usize = 0;
 pub const CHAN_SLOT_CAPACITY: usize = 1;
 pub const CHAN_SLOT_HEAD: usize = 2;
@@ -91,7 +96,7 @@ pub const CHAN_SLOT_TAKEN: usize = 6;
 pub const CHAN_SLOT_BACKING: usize = 7;
 pub const CHAN_SLOT_RENDEZVOUS: usize = 8;
 
-/// `Sender<T>` handle slots ([`isa::value::SENDER_TYPE_ID`]'s doc comment).
+/// `Sender<T>` handle slots.
 pub const SENDER_SLOT_CHANNEL: usize = 0;
 pub const SENDER_SLOT_CLOSED: usize = 1;
 
@@ -99,7 +104,7 @@ pub const SENDER_SLOT_CLOSED: usize = 1;
 pub const RECV_EMPTY: i64 = 0;
 pub const RECV_GOT_VALUE: i64 = 1;
 
-/// `Shared<T>` header slots ([`isa::value::SHARED_TYPE_ID`]'s doc comment).
+/// `Shared<T>` header slots.
 pub const SHARED_SLOT_ID: usize = 0;
 pub const SHARED_SLOT_VERSION: usize = 1;
 pub const SHARED_SLOT_HOLDER: usize = 2;

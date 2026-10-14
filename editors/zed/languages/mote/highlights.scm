@@ -1,9 +1,7 @@
-; Comments
 (line_comment) @comment
 (block_comment) @comment
 (doc_comment) @comment.doc
 
-; Literals
 (string) @string
 (string_content) @string
 (escape_sequence) @string.escape
@@ -16,10 +14,8 @@
 (boolean) @boolean
 (null) @constant.builtin
 
-; Names
 (identifier) @variable
 
-; Capitalised names read as constructors unless a later pattern says otherwise
 ((identifier) @constructor
   (#match? @constructor "^[A-Z]"))
 
@@ -40,7 +36,6 @@
 (member_expression property: (identifier) @property)
 (tuple_index) @property
 
-; Types
 (named_type (identifier) @type)
 (struct_item name: (identifier) @type)
 (class_item name: (identifier) @type)
@@ -52,7 +47,6 @@
 ((named_type (identifier) @type.builtin)
   (#any-of? @type.builtin "Int" "Float" "Bool" "Char" "String" "Null" "Bytes"))
 
-; Functions
 (function_item name: (identifier) @function)
 (native_function name: (identifier) @function)
 (trait_method name: (identifier) @function)
@@ -65,19 +59,15 @@
   function: (member_expression property: (identifier) @constructor)
   (#match? @constructor "^[A-Z]"))
 
-; Modules and imports
 (module_path (identifier) @namespace)
 (import_symbol name: (identifier) @variable)
 (import_symbol alias: (identifier) @variable)
 
-; Attributes
 (attribute "@" @attribute)
 (attribute (identifier) @attribute)
 
-; Tests
 (test_declaration keyword: (identifier) @keyword)
 
-; Keywords
 [
   "let"
   "var"
@@ -112,7 +102,6 @@
 (super) @keyword
 (continue_statement) @keyword
 
-; Operators
 [
   "+" "-" "*" "/" "%"
   "==" "!=" "<" "<=" ">" ">="
@@ -123,6 +112,5 @@
   "??" "?" "=>" "->"
 ] @operator
 
-; Punctuation
 ["(" ")" "[" "]" "{" "}"] @punctuation.bracket
 ["," ";" ":" "."] @punctuation.delimiter

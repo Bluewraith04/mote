@@ -19,6 +19,10 @@ impl CodeGenerator {
     pub(crate) fn try_lower_static_call(&mut self, callee: &Expr, args: &[Expr], span: Span) -> Result<Option<u8>, (String, Span)> {
         let Some((name, member)) = self.static_call_target(callee) else { return Ok(None) };
         let written_fn = matches!(callee, Expr::StaticAccess { target: TypeNode::Generic(..), .. });
+        let name = match self.types.instance_call(span) {
+            Some(instance) if written_fn && member == "new" => instance.to_string(),
+            _ => name,
+        };
         if let Some(idx) = self.func_map.get(&name).copied().filter(|_| written_fn && member == "new" && self.reg_alloc.get_var(&name).is_none()) {
             if crate::foreign::is_bind(&name) {
                 return self.emit_bind(&name, args, span).map(Some);
@@ -74,7 +78,7 @@ impl CodeGenerator {
         let (signature, arity) = crate::foreign::signature_of(f.as_ref()).map_err(|m| (m, span))?;
         let blocking = crate::foreign::is_bind_blocking(name);
         let raw = name.replace("libtools_bind_blocking", "libtools_bind").replace("libtools_bind", "libtools___bind_raw");
-        let idx = self.func_map.get(&raw).copied().ok_or_else(|| ("`bind` needs `import std.dev.libtools`".to_string(), span))?;
+        let idx = self.func_map.get(&raw).copied().ok_or_else(|| ("`bind` needs `import std.libtools`".to_string(), span))?;
         let mut all = args.to_vec();
         all.push(Expr::String(signature, span));
         all.push(Expr::Int(arity as i64, span));

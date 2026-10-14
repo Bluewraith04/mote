@@ -1,0 +1,204 @@
+import std.term as term
+import ..src.lib as tile
+
+class State {
+    var count: Int
+    var name: String
+    var picked: Int
+    var ticks: Int
+    var done: Bool
+}
+
+fn fresh() -> State {
+    return State { count: 0, name: "", picked: -1, ticks: 0, done: false }
+}
+
+fn view(s: State) -> tile.Element<State> {
+    return tile.vstack([
+        tile.text("count: ${s.count}"),
+        tile.text("[ + ]").on_click(|var s| { s.count += 1 }),
+        tile.input(s.name, |var s, t| { s.name = t }).on_submit(|var s| { s.done = true }).focus(),
+        tile.list(["a", "b", "c"], s.picked, 0).on_pick(|var s, i| { s.picked = i }),
+    ])
+}
+
+fn app() -> tile.App<State> {
+    return tile.App.new(fresh(), view)
+        .on_key(term.Key.Up, tile.no_mods(), |var s| { s.count += 10 })
+        .on_key(term.Key.Char("x"), tile.mods(false, true, false), |var s| { s.count = 0 })
+        .every(1000, |var s| { s.ticks += 1 })
+        .quit_on(term.Key.Escape)
+}
+
+test "the first frame shows the view, one string per row of the screen" {
+    let r = app().headless(20, 8)
+    assert_eq(r.screen(), ["count: 0", "[ + ]", "", "a", "b", "c", "", ""])
+}
+
+test "a click runs the handler of the element under the cell and draws again" {
+    var r = app().headless(20, 8)
+    r.click(2, 1)
+    r.click(2, 1)
+    assert_eq(r.state().count, 2)
+    assert_eq(r.shows("count: 2"), true)
+}
+
+test "a click outside any handler does nothing" {
+    var r = app().headless(20, 8)
+    r.click(15, 6)
+    assert_eq(r.state().count, 0)
+}
+
+test "a list row click picks its index and the row is marked" {
+    var r = app().headless(20, 8)
+    r.click(0, 4)
+    assert_eq(r.state().picked, 1)
+    assert_eq(r.cell(0, 4).bits, 8)
+}
+
+test "a shortcut matches its key and exact modifiers" {
+    var r = app().headless(20, 8)
+    r.press(term.Key.Up, tile.no_mods())
+    assert_eq(r.state().count, 10)
+    r.press(term.Key.Up, tile.mods(false, true, false))
+    assert_eq(r.state().count, 10)
+    r.press(term.Key.Char("x"), tile.mods(false, true, false))
+    assert_eq(r.state().count, 0)
+}
+
+test "a focused input takes typed characters, backspace and enter" {
+    var r = app().headless(20, 8)
+    r.type_text("héy")
+    assert_eq(r.state().name, "héy")
+    assert_eq(r.shows("héy"), true)
+    r.press(term.Key.Backspace, tile.no_mods())
+    assert_eq(r.state().name, "hé")
+    r.press(term.Key.Enter, tile.no_mods())
+    assert_eq(r.state().done, true)
+}
+
+test "the quit key and Ctrl+C end the app, and a quit_when condition does" {
+    var a = app().headless(20, 8)
+    a.press(term.Key.Escape, tile.no_mods())
+    assert_eq(a.finished(), true)
+    var b = app().headless(20, 8)
+    b.press(term.Key.Char("c"), tile.mods(false, true, false))
+    assert_eq(b.finished(), true)
+    var c = app().quit_when(|s| { s.count >= 2 }).headless(20, 8)
+    c.click(2, 1)
+    assert_eq(c.finished(), false)
+    c.click(2, 1)
+    assert_eq(c.finished(), true)
+}
+
+test "a timer handler runs on tick" {
+    var r = app().headless(20, 8)
+    r.tick()
+    r.tick()
+    assert_eq(r.state().ticks, 2)
+}
+
+test "a resize draws the view again at the new size" {
+    var r = app().headless(20, 8)
+    r.resize(5, 3)
+    assert_eq(r.screen(), ["count", "[ + ]", ""])
+}
+
+test "a frame is written whole the first time and as a change after" {
+    var r = app().headless(20, 8)
+    let first = r.take_output()
+    assert_eq(first.contains("\u{1b}[2J"), true)
+    r.click(2, 1)
+    let second = r.take_output()
+    assert_eq(second.contains("\u{1b}[2J"), false)
+    assert_eq(second.contains("1"), true)
+    assert_eq(second.len() < first.len(), true)
+}
+
+fn long_view(s: State) -> tile.Element<State> {
+    return tile.vstack([
+        tile.list(["a", "b", "c", "d", "e", "f", "g", "h"], s.picked, 0).grow(),
+        tile.text("end"),
+    ])
+}
+
+test "a list follows the selection down and up as the program moves it" {
+    let moving = tile.App.new(fresh(), long_view)
+        .on_key(term.Key.Down, tile.no_mods(), |var s| { s.picked += 1 })
+        .on_key(term.Key.Up, tile.no_mods(), |var s| { s.picked -= 1 })
+    var r = moving.headless(10, 4)
+    var n = 0
+    while n < 5 {
+        r.press(term.Key.Down, tile.no_mods())
+        n = n + 1
+    }
+    assert_eq(r.screen(), ["c", "d", "e", "end"])
+    r.press(term.Key.Up, tile.no_mods())
+    assert_eq(r.screen(), ["c", "d", "e", "end"])
+    r.press(term.Key.Up, tile.no_mods())
+    r.press(term.Key.Up, tile.no_mods())
+    assert_eq(r.screen(), ["b", "c", "d", "end"])
+}
+
+test "the cursor is shown at the end of the focused input" {
+    var r = app().headless(20, 8)
+    r.take_output()
+    r.type_text("ab")
+    assert_eq(r.take_output().contains("\u{1b}[3;3H\u{1b}[?25h"), true)
+}
+
+test "the cursor follows a wide character and one Backspace takes it away" {
+    var r = app().headless(20, 8)
+    r.take_output()
+    r.type_text("a日")
+    assert_eq(r.state().name, "a日")
+    assert_eq(r.take_output().contains("\u{1b}[3;4H\u{1b}[?25h"), true)
+    r.press(term.Key.Backspace, tile.no_mods())
+    assert_eq(r.state().name, "a")
+    r.type_text("e\u{301}")
+    r.press(term.Key.Backspace, tile.no_mods())
+    assert_eq(r.state().name, "a")
+}
+
+class Sized {
+    var cols: Int
+    var rows: Int
+    var sizes: Int
+    var wheel: Int
+}
+
+fn sized_view(s: Sized) -> tile.Element<Sized> {
+    return tile.text("${s.cols}x${s.rows} wheel ${s.wheel}")
+}
+
+fn sized_app() -> tile.App<Sized> {
+    return tile.App.new(Sized { cols: 0, rows: 0, sizes: 0, wheel: 0 }, sized_view)
+        .on_resize(|var s, c, r| {
+            s.cols = c
+            s.rows = r
+            s.sizes += 1
+        })
+        .on_wheel(|var s, d| { s.wheel += d })
+}
+
+test "the state is told the size before the first frame and at every resize" {
+    var r = sized_app().headless(30, 6)
+    assert_eq(r.screen().get(0), "30x6 wheel 0")
+    assert_eq(r.state().sizes, 1)
+    r.resize(12, 4)
+    assert_eq(r.state().cols, 12)
+    assert_eq(r.state().rows, 4)
+    assert_eq(r.state().sizes, 2)
+    assert_eq(r.screen().get(0), "12x4 wheel 0")
+}
+
+test "a wheel step runs the wheel handlers with its direction and draws again" {
+    var r = sized_app().headless(30, 6)
+    r.wheel(1)
+    r.wheel(1)
+    r.wheel(-1)
+    assert_eq(r.state().wheel, 1)
+    assert_eq(r.screen().get(0), "30x6 wheel 1")
+    r.step(term.Event.Mouse(term.Mouse.ScrollUp, 3, 2))
+    assert_eq(r.state().wheel, 0)
+}

@@ -1,6 +1,6 @@
-# std.sys.net
+# std.socket
 
-TCP and UDP sockets. `import std.sys.net as net`. Every operation answers a `Result` whose `Err` is an `Error`. A blocking call parks only the calling task, and a task waiting for data or a connection holds no thread. Sockets have `close()`, so `with s = net.connect(…)! { … }` closes one on every exit.
+TCP and UDP sockets. `import std.socket as net`. Every operation answers a `Result` whose `Err` is an `Error`. A blocking call parks only the calling task, and a task waiting for data or a connection holds no thread. Sockets have `close()`, so `with s = net.connect(…)! { … }` closes one on every exit.
 
 | Function | Answers |
 |---|---|
@@ -18,7 +18,7 @@ TCP and UDP sockets. `import std.sys.net as net`. Every operation answers a `Res
 `read` answers up to `max` bytes, and empty once the peer finished sending.
 
 ```mote
-import std.sys.net as net
+import std.socket as net
 
 let l = net.listen("127.0.0.1", 0)!
 println(l.local_port()! > 0)

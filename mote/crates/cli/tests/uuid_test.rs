@@ -1,11 +1,11 @@
-//! `std.data.uuid`.
+//! `std.uuid`.
 
 use std::process::Command;
 
 fn run(source: &str, tag: &str) -> String {
     let dir = std::env::temp_dir().join(format!("mote_uuid_{}_{}", tag, std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    std::fs::write(dir.join("main.mote"), source).unwrap();
+    std::fs::write(dir.join("main.mote"), format!("import std.json\nimport {{ Set }} from std.collections\n{source}")).unwrap();
     let out = Command::new(env!("CARGO_BIN_EXE_mote")).arg("run").arg(dir.join("main.mote")).output().unwrap();
     std::fs::remove_dir_all(&dir).ok();
     let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
@@ -13,7 +13,7 @@ fn run(source: &str, tag: &str) -> String {
     text
 }
 
-const HEAD: &str = "import { Uuid, v4, v7 } from std.data.uuid\nimport std.data.json as json\n";
+const HEAD: &str = "import { Uuid, v4, v7 } from std.uuid\nimport std.json as json\n";
 
 fn lines(body: &str, tag: &str) -> Vec<String> {
     run(&format!("{HEAD}\nfn main() {{\n{body}}}\n"), tag).lines().map(String::from).collect()
@@ -96,7 +96,7 @@ fn v4_sets_version_and_variant_and_is_random() {
 
 #[test]
 fn v7_carries_the_time_and_sorts_by_it() {
-    let src = "import { Uuid, v7 } from std.data.uuid
+    let src = "import { Uuid, v7 } from std.uuid
 import { unix_millis, sleep, Duration } from std.time
 
 fn main() {
@@ -123,11 +123,11 @@ fn main() {
 
 #[test]
 fn a_uuid_is_a_json_string_and_a_derived_field() {
-    let src = "import { Uuid } from std.data.uuid
-import std.data.json as json
+    let src = "import { Uuid } from std.uuid
+import std.json as json
+import { JsonCodec } from std.json
 
-@derive(Json)
-struct Row {
+struct Row: (JsonCodec) {
     id: Uuid
     name: String
 }

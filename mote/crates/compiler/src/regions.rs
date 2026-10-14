@@ -46,7 +46,7 @@ pub struct ParamInfo {
 pub struct Env<'a> {
     /// Names of the value structs (a copy of one is a new object; a class is shared).
     pub value_structs: &'a HashSet<String>,
-    /// Per analysed function or method (`f`, `Type::m`): for each parameter, whether the callee may keep it.
+    /// Per analysed function or method: for each parameter, whether the callee may keep it.
     pub sigs: &'a HashMap<String, Vec<bool>>,
 }
 
@@ -80,11 +80,6 @@ pub(crate) fn param_infos(f: &FunctionDecl, self_type: Option<&str>) -> Vec<Para
 }
 
 /// Which `let`/`var` struct literals in a function body can live in a region.
-///
-/// A site qualifies when its name is declared once in the function and every use is safe: a field read
-/// or write (`p.f`, `p.f = v`); a copy (a value struct bound, returned, yielded, stored in a literal or
-/// captured by `spawn` is copied, a class is shared); a comparison; a match subject; or an argument or
-/// receiver the callee provably does not keep. Anything else sends it to the collector heap.
 pub(crate) fn analyze(stmts: &[Stmt], params: &[ParamInfo], env: &Env) -> Analysis {
     let mut walk = Walk::new(env, params);
     walk.stmts(stmts, Sc::default());
@@ -112,11 +107,7 @@ pub(crate) fn summarizable(f: &FunctionDecl, owner_generic: bool) -> bool {
         && f.params.iter().all(|p| !matches!(p.kind, Some(ParameterKind::Variadic { .. })))
 }
 
-/// For each function (`key`, declaration, owning type) whether each parameter may be kept by the callee.
-///
-/// A parameter is kept when the body stores, returns, captures or reassigns it, or passes it to a call
-/// that keeps its own. Calls through function values, to natives and to generic functions count as keeping.
-/// The dependencies between functions are solved to a fixed point, so recursion is handled.
+/// For each function, whether each parameter may be kept by the callee.
 pub(crate) fn summarize(fns: &[(String, &FunctionDecl, Option<String>)], value_structs: &HashSet<String>) -> HashMap<String, Vec<bool>> {
     let mut sigs: HashMap<String, Vec<bool>> = fns.iter().map(|(k, f, _)| (k.clone(), vec![false; f.params.len()])).collect();
     type Facts = (Vec<bool>, Vec<Vec<(String, usize)>>);

@@ -1,0 +1,37 @@
+/// Builds the escape strings tile writes.
+
+/// The style bits of a style number.
+pub fn bold() -> Int { return 1 }
+
+pub fn dim() -> Int { return 2 }
+
+pub fn underline() -> Int { return 4 }
+
+pub fn reverse() -> Int { return 8 }
+
+fn esc() -> String { return "\u{1b}[" }
+
+/// Moves the cursor to a cell.
+pub fn cursor_to(col: Int, row: Int) -> String { return esc() + "${row + 1};${col + 1}H" }
+
+pub fn hide_cursor() -> String { return esc() + "?25l" }
+
+pub fn show_cursor() -> String { return esc() + "?25h" }
+
+pub fn clear() -> String { return esc() + "2J" }
+
+pub fn reset() -> String { return esc() + "0m" }
+
+/// Resets, then sets the colours and style bits.
+pub fn style(fg: Int, bg: Int, bits: Int, color: Bool) -> String {
+    var s = esc() + "0"
+    if (bits & 1) != 0 { s = s + ";1" }
+    if (bits & 2) != 0 { s = s + ";2" }
+    if (bits & 4) != 0 { s = s + ";4" }
+    if (bits & 8) != 0 { s = s + ";7" }
+    if color {
+        if fg >= 0 { s = s + ";38;2;${(fg / 65536) % 256};${(fg / 256) % 256};${fg % 256}" }
+        if bg >= 0 { s = s + ";48;2;${(bg / 65536) % 256};${(bg / 256) % 256};${bg % 256}" }
+    }
+    return s + "m"
+}

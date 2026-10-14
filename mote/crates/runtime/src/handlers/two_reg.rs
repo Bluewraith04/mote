@@ -4,7 +4,7 @@ use isa::value::Value;
 use crate::util::decode_r2;
 use crate::{TaskContext, VmStatus};
 
-/// The `r2` group: unary arithmetic and logical ops, `MOVE` and `DEBUGPRINT`. Reads `rB`, writes `rA`.
+/// The `r2` group: unary arithmetic and logical ops, `MOVE` and `DEBUGPRINT`.
 pub fn unary(task: &mut TaskContext, opcode: Opcode, operands: u32) -> Result<VmStatus, String> {
     let (a, b) = decode_r2(operands);
     let base = task.call_stack.last().unwrap().base;
@@ -72,7 +72,7 @@ pub(crate) fn debugprint(registers: &mut [Value], src: usize) {
     }
 }
 
-/// `dest` = the descriptor id of an object, or a negative code for a scalar, so the two never collide.
+/// The descriptor id of an object, or a negative code for a scalar.
 pub(crate) fn typeof_(registers: &mut [Value], src: usize, dest: usize) {
     registers[dest] = Value::int(match registers[src] {
         Value::Int(_) => -1,

@@ -1,6 +1,6 @@
-# std.sys.process
+# std.process
 
-Run a child process to completion and capture its output. There is no shell: `program` is looked up on `PATH`. `import std.sys.process as process`.
+Run a child process to completion and capture its output. There is no shell: `program` is looked up on `PATH`. `import std.process as process`.
 
 | Function | Answers |
 |---|---|
@@ -11,7 +11,7 @@ Run a child process to completion and capture its output. There is no shell: `pr
 `Ok` carries an `Output` with `status` (`-1` if a signal ended the child), `stdout` and `stderr` as `Bytes`, `success()`, and `stdout_text()`, `stderr_text()` (`String?`). `Err` means the program could not be started.
 
 ```mote
-import std.sys.process as process
+import std.process as process
 
 let out = process.run("echo", ["hi"])!
 println(out.stdout_text()!)

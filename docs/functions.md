@@ -178,9 +178,11 @@ A `var` declared in a loop body is new on each pass. A module-level `var` is rea
 
 ## Generators
 
-A function that returns `Stream<T>` and uses `yield` is a generator. Calling it gives a lazy stream: the body runs only as far as the consumer asks.
+A function that returns `Stream<T>` and uses `yield` is a generator. Calling it gives a lazy stream: the body runs only as far as the consumer asks. `Stream` is imported from `std.stream`.
 
 ```mote
+import { Stream } from std.stream
+
 fn countdown(start: Int) -> Stream<Int> {
     var n = start
     while n > 0 {

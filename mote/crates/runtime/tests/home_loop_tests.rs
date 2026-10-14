@@ -1,4 +1,4 @@
-//! The home thread waits in the window system's loop while it has nothing to run, and is woken when a task for it is ready.
+//! The home thread waits in the window system's loop and wakes when a task for it is ready.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex};

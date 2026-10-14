@@ -1,0 +1,231 @@
+/// Holds the grid of cells a frame is painted on.
+
+import std.string as string
+import std.term as term
+import .ansi
+
+/// One cell with a character, colours and style bits.
+pub struct Cell {
+    pub ch: String
+    pub fg: Int
+    pub bg: Int
+    pub bits: Int
+}
+
+pub fn cell(ch: String, fg: Int, bg: Int, bits: Int) -> Cell { return Cell { ch: ch, fg: fg, bg: bg, bits: bits } }
+
+pub fn blank() -> Cell { return Cell { ch: " ", fg: -1, bg: -1, bits: 0 } }
+
+/// `cols` by `rows` cells kept as four lists.
+pub class Screen {
+    pub cols: Int
+    pub rows: Int
+    var chs: List<String>
+    var fgs: List<Int>
+    var bgs: List<Int>
+    var bts: List<Int>
+
+    pub fn new(cols: Int, rows: Int) -> Screen {
+        var chs: List<String> = []
+        var fgs: List<Int> = []
+        var bgs: List<Int> = []
+        var bts: List<Int> = []
+        var i = 0
+        while i < cols * rows {
+            chs.push(" ")
+            fgs.push(-1)
+            bgs.push(-1)
+            bts.push(0)
+            i = i + 1
+        }
+        return Screen { cols: cols, rows: rows, chs: chs, fgs: fgs, bgs: bgs, bts: bts }
+    }
+
+    /// Paints one cell; a cell outside the screen is dropped.
+    pub fn put(var self, col: Int, row: Int, c: Cell) {
+        self.set(col, row, c.ch, c.fg, c.bg, c.bits)
+    }
+
+    /// Paints one cell from its parts.
+    pub fn set(var self, col: Int, row: Int, ch: String, fg: Int, bg: Int, bits: Int) {
+        if col < 0 || row < 0 || col >= self.cols || row >= self.rows { return }
+        let i = row * self.cols + col
+        let old = self.chs.get(i)
+        if old == "" && ch != "" && col > 0 { self.chs.set(i - 1, " ") }
+        if old != "" && col + 1 < self.cols && self.chs.get(i + 1) == "" { self.chs.set(i + 1, " ") }
+        self.chs.set(i, ch)
+        self.fgs.set(i, fg)
+        self.bgs.set(i, bg)
+        self.bts.set(i, bits)
+    }
+
+    /// Blanks the cells from (`x0`, `y0`) up to (`x1`, `y1`) in one look.
+    pub fn fill_rect(var self, x0: Int, y0: Int, x1: Int, y1: Int, fg: Int, bg: Int, bits: Int) {
+        if x1 <= x0 || y1 <= y0 { return }
+        var row = y0
+        while row < y1 {
+            let base = row * self.cols
+            if x0 > 0 && self.chs.get(base + x0) == "" { self.chs.set(base + x0 - 1, " ") }
+            if x1 < self.cols && self.chs.get(base + x1) == "" { self.chs.set(base + x1, " ") }
+            var i = base + x0
+            let end = base + x1
+            while i < end {
+                self.chs.set(i, " ")
+                self.fgs.set(i, fg)
+                self.bts.set(i, bits)
+                i = i + 1
+            }
+            if bg >= 0 {
+                i = base + x0
+                while i < end {
+                    self.bgs.set(i, bg)
+                    i = i + 1
+                }
+            }
+            row = row + 1
+        }
+    }
+
+    /// Paints `glyphs` along `row` from `col`, only in columns `lo` up to `hi`.
+    pub fn write_run(var self, col: Int, row: Int, glyphs: List<String>, fg: Int, bg: Int, bits: Int, lo: Int, hi: Int) {
+        if row < 0 || row >= self.rows { return }
+        let base = row * self.cols
+        let n = glyphs.len()
+        var k = 0
+        while k < n {
+            let c = col + k
+            if c >= lo && c < hi && c >= 0 && c < self.cols {
+                var ch = glyphs.get(k)
+                if k + 1 < n && c + 1 >= hi && glyphs.get(k + 1) == "" { ch = " " }
+                if ch == "" && c == lo { ch = " " }
+                let i = base + c
+                let old = self.chs.get(i)
+                if old == "" && ch != "" && c > 0 { self.chs.set(i - 1, " ") }
+                if old != "" && c + 1 < self.cols && self.chs.get(i + 1) == "" { self.chs.set(i + 1, " ") }
+                self.chs.set(i, ch)
+                self.fgs.set(i, fg)
+                self.bts.set(i, bits)
+                if bg >= 0 { self.bgs.set(i, bg) }
+            }
+            k = k + 1
+        }
+    }
+
+    pub fn get(self, col: Int, row: Int) -> Cell {
+        if col < 0 || row < 0 || col >= self.cols || row >= self.rows { return blank() }
+        let i = row * self.cols + col
+        return Cell { ch: self.chs.get(i), fg: self.fgs.get(i), bg: self.bgs.get(i), bits: self.bts.get(i) }
+    }
+
+    /// The background colour of a cell; -1 outside the screen.
+    pub fn bg_at(self, col: Int, row: Int) -> Int {
+        if col < 0 || row < 0 || col >= self.cols || row >= self.rows { return -1 }
+        return self.bgs.get(row * self.cols + col)
+    }
+
+    /// The characters of one row, without the blanks at its end.
+    pub fn row_text(self, row: Int) -> String {
+        var parts: List<String> = []
+        var col = 0
+        while col < self.cols {
+            parts.push(self.chs.get(row * self.cols + col))
+            col = col + 1
+        }
+        while parts.len() > 0 && parts.get(parts.len() - 1) == " " {
+            parts.pop()
+        }
+        return string.join(parts, "")
+    }
+
+    /// Every row as text.
+    pub fn lines(self) -> List<String> {
+        var out: List<String> = []
+        var row = 0
+        while row < self.rows {
+            out.push(self.row_text(row))
+            row = row + 1
+        }
+        return out
+    }
+
+    fn differs(self, old: Screen, i: Int) -> Bool {
+        return self.chs.get(i) != old.chs.get(i) || self.fgs.get(i) != old.fgs.get(i) || self.bgs.get(i) != old.bgs.get(i) || self.bts.get(i) != old.bts.get(i)
+    }
+
+    /// The bytes that turn `before` into this screen.
+    pub fn diff(self, before: Screen?, color: Bool) -> String {
+        var parts: List<String> = []
+        var full = true
+        var old = self
+        match before {
+            Some(b) => {
+                if b.cols == self.cols && b.rows == self.rows {
+                    full = false
+                    old = b
+                }
+            }
+            None => { }
+        }
+        if full { parts.push(ansi.reset() + ansi.clear()) }
+        var on = false
+        var fg = -1
+        var bg = -1
+        var bits = 0
+        var row = 0
+        while row < self.rows {
+            var col = 0
+            var at = -1
+            var wrote = false
+            while col < self.cols {
+                let i = row * self.cols + col
+                let ch = self.chs.get(i)
+                var cc = col
+                var write = false
+                if ch != "" {
+                    write = full || ch != old.chs.get(i) || self.fgs.get(i) != old.fgs.get(i) || self.bgs.get(i) != old.bgs.get(i) || self.bts.get(i) != old.bts.get(i)
+                } else if !wrote && col > 0 && self.differs(old, i) {
+                    write = true
+                    cc = col - 1
+                }
+                wrote = write
+                if write {
+                    let ci = row * self.cols + cc
+                    if at != cc {
+                        parts.push(ansi.cursor_to(cc, row))
+                    }
+                    let cfg = self.fgs.get(ci)
+                    let cbg = self.bgs.get(ci)
+                    let cbits = self.bts.get(ci)
+                    if !on || fg != cfg || bg != cbg || bits != cbits {
+                        parts.push(ansi.style(cfg, cbg, cbits, color))
+                        on = true
+                        fg = cfg
+                        bg = cbg
+                        bits = cbits
+                    }
+                    parts.push(self.chs.get(ci))
+                    at = cc + 1
+                    if cc + 1 < self.cols && self.chs.get(ci + 1) == "" { at = cc + 2 }
+                }
+                col = col + 1
+            }
+            row = row + 1
+        }
+        if on { parts.push(ansi.reset()) }
+        return string.join(parts, "")
+    }
+}
+
+/// The columns of `text`, one string each.
+pub fn glyphs(text: String) -> List<String> {
+    return term.glyphs(text)
+}
+
+/// The cells of `text`, one per column, in the given look.
+pub fn cells(text: String, fg: Int, bg: Int, bits: Int) -> List<Cell> {
+    var out: List<Cell> = []
+    for c in term.glyphs(text) {
+        out.push(Cell { ch: c, fg: fg, bg: bg, bits: bits })
+    }
+    return out
+}

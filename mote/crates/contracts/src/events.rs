@@ -3,11 +3,15 @@
 use std::collections::VecDeque;
 use std::sync::{Arc, Condvar, Mutex};
 
-/// What a source produces; the runtime opens it through [`crate::Platform::open_source`], except a custom one it starts itself.
+/// What a source produces.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SourceRequest {
     /// `Int(n)` for the nth tick, every `period_nanos`.
     Timer { period_nanos: u64 },
+    /// `Int(code)` for each delivery of an OS signal.
+    Signals { codes: Vec<i64> },
+    /// `List([Int])` per terminal event.
+    Terminal,
     /// A source the native supplies, started with the queue's sink.
     Custom(CustomSource),
 }

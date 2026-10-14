@@ -10,9 +10,10 @@ pub mod ast;
 mod ast_walk;
 /// The parser.
 pub mod parser;
-pub mod derive;
+pub mod modifiers;
 pub mod stable;
 pub mod impls;
+pub mod field_defaults;
 pub mod builtin_natives;
 pub mod foreign;
 pub mod prelude;

@@ -39,14 +39,21 @@ println(xs)
 | `xs.first()`, `xs.last()` | the end elements as a `T?` |
 | `xs.contains(v)` | whether some element `==` `v` |
 | `xs.len()`, `xs.is_empty()`, `xs.clear()` | size, emptying |
+| `xs[a..b]`, `xs[a..]`, `xs[..b]`, `xs[..]` | a copy of those items (`a..=b` includes `b`) |
+| `xs[a..b..s]` | every `s`th item of those (`s` positive, the end required) |
+| `xs[a..b] = v` | writes into the list: one value for every position, or a list of exactly `b - a` values (with a step, one for each item it takes) |
 
-There is no insert, remove-by-index, slice or reverse; sorting and reversing are in [`std.iter`](std/iter.md).
+A slice read is a copy; assigning to a slice changes the list. Bounds are any expressions, there are no negative bounds, and a bound out of range or a list of the wrong length is a fault. `xs[a..b][i] = v` and `xs[a..b] += v` are errors.
+
+There is no insert, remove-by-index or reverse; sorting and reversing are in [`std.iter`](std/iter.md).
 
 ## Maps and sets
 
-A map keeps insertion order for `keys()`, `values()`, `entries()` and printing. Setting an existing key keeps its place.
+A map keeps insertion order for `keys()`, `values()`, `entries()` and printing. Setting an existing key keeps its place. `Set` is imported from `std.collections`.
 
 ```mote
+import { Set } from std.collections
+
 var m = {"a": 1, "b": 2}
 m["c"] = 3
 println(m)
@@ -99,7 +106,7 @@ println(b.decode())
 Hi
 ```
 
-`Bytes` also has `get`, `set`, `extend(other)`, `slice(start, end)`, `contains`, `clear`. `push` of a value outside 0 to 255 is a fault, and `decode()` gives a `String?`, `None` for invalid UTF-8.
+`Bytes` also has `get`, `set`, `extend(other)`, `slice(start, end)` (or `b[start..end]`), `contains`, `clear`. `push` of a value outside 0 to 255 is a fault, and `decode()` gives a `String?`, `None` for invalid UTF-8.
 
 ## Strings
 
@@ -109,7 +116,7 @@ A string cannot be indexed with `s[i]`; `len` and `slice` count bytes, and `slic
 |---|---|
 | `a + b`, `a.concat(b)` | the joined string |
 | `s.len()`, `s.is_empty()` | size in bytes |
-| `s.slice(start, end)` | the part between two byte offsets |
+| `s.slice(start, end)`, `s[start..end]` | the part between two byte offsets (`s[start..]` and `s[..end]` too) |
 | `s.find(sub)`, `s.rfind(sub)` | the byte offset as an `Int?` |
 | `s.contains(sub)`, `s.starts_with(sub)`, `s.ends_with(sub)` | `Bool` |
 | `s.replace(from, to)` | every match replaced |

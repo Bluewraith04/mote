@@ -13,7 +13,7 @@ pub struct HeapStats {
     pub live_bytes: usize,
     /// The most live bytes any collection found.
     pub peak_live_bytes: usize,
-    /// The most bytes in use (live at the last collection plus allocated since) when a collection began.
+    /// The most bytes in use when a collection began.
     pub peak_in_use_bytes: usize,
     /// Blocks serving a size class.
     pub chunks: usize,
@@ -42,12 +42,11 @@ macro_rules! mem_trace {
     };
 }
 
-/// The panic payload a [`Mutator`] unwinds with when one allocation passes the heap limit; the runtime turns it into a task fault.
+/// The panic payload a [`Mutator`] unwinds with when an allocation passes the heap limit.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OutOfMemory(pub String);
 
-/// What a released object owned: a file, a socket or a library handle (the key is its id), or a generator's regions
-/// (the key names the stack the runtime holds for it).
+/// What a released object owned: a file, a socket, a library handle or a generator's regions.
 pub const RELEASE_FILE: u8 = 1;
 pub const RELEASE_SOCKET: u8 = 2;
 pub const RELEASE_LIBRARY: u8 = 3;
@@ -70,7 +69,7 @@ pub trait Heap: Send + Sync {
     /// Called only with every mutator parked at a safepoint.
     fn collect(&self, roots: &mut dyn RootSource);
 
-    /// The fault message when the live heap is past its limit (checked after a collection), else `None`.
+    /// The fault message when the live heap is past its limit, else `None`.
     fn limit_exceeded(&self) -> Option<String> {
         None
     }
@@ -79,7 +78,7 @@ pub trait Heap: Send + Sync {
         HeapStats::default()
     }
 
-    /// Objects allocated so far by block size in 16-byte units (index 2 to 32), with the last index counting large objects.
+    /// Objects allocated so far, counted by block size.
     fn size_histogram(&self) -> Vec<u64> {
         Vec::new()
     }
@@ -94,11 +93,9 @@ pub trait Heap: Send + Sync {
 pub trait Mutator: Send {
     fn alloc(&mut self, type_ptr: NonNull<TypeDescriptor>, slot_count: usize) -> NonNull<ObjectHeader>;
 
-    /// Frees `obj` now instead of at the next collection. The caller guarantees nothing else points at it.
-    /// A heap may keep it until the collector runs.
+    /// Frees `obj` now instead of at the next collection.
     fn release(&mut self, _obj: NonNull<ObjectHeader>) {}
 
-    /// Reports `key` of kind `RELEASE_*` once `obj` (and, for a handle, every copy of it) is unreachable.
-    /// A handle object's `key` is its slot 0 and it carries [`isa::value::RELEASE_BIT`].
+    /// Reports `key` of kind `RELEASE_*` once `obj` is unreachable.
     fn release_on_collect(&mut self, _obj: NonNull<ObjectHeader>, _kind: u8, _key: i64) {}
 }

@@ -3,7 +3,6 @@ import subprocess
 import sys
 import os
 
-# Import Python benchmarks
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'python'))
 import arithmetic_comparison
 import control_flow

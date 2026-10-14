@@ -12,8 +12,7 @@ pub(crate) fn trait_ref_name(node: &TypeNode) -> Option<&str> {
     }
 }
 
-/// For every type that lists a trait, copies each default method the type lacks into the type. Run once over all modules
-/// after names are resolved, so a trait from another module is found by its final name.
+/// For every type that lists a trait, copies each default method the type lacks into the type.
 pub fn copy_trait_defaults(programs: &mut [&mut Program]) {
     let mut traits: HashMap<String, TraitDecl> = HashMap::new();
     for p in programs.iter() {

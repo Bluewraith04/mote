@@ -2,10 +2,12 @@
 
 import { Error } from std.error
 
+@generate(std.derive.traits.display_modifier)
 pub trait Display {
     fn to_string(self) -> String
 }
 
+@generate(std.derive.traits.debug_modifier)
 pub trait Debug {
     fn debug(self) -> String
 }
@@ -19,8 +21,6 @@ pub trait Ord {
 }
 
 /// A resource that `with` closes on every exit from its block.
-/// `File`, `TcpStream`, `TcpListener` and `UdpSocket` already satisfy this —
-/// their `close` methods match already, structurally, with no `impl` needed.
 @stable
 pub trait Closeable {
     fn close(self) -> Result<Null, Error>

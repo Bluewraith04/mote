@@ -4,7 +4,7 @@ use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 pub trait HomeLoop: Send + Sync {
-    /// Runs the window system's events on the home thread for up to `timeout` (`None`: until woken), returning early after a [`wake`](Self::wake).
+    /// Runs the window system's events on the home thread for up to `timeout`.
     fn wait(&self, timeout: Option<Duration>);
 
     /// Makes a `wait` in progress, or the next one, return; any thread may call it.

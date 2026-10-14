@@ -11,7 +11,7 @@ use contracts::{
 use crate::fake_net::FakeNet;
 use crate::net::is_socket_request;
 
-/// A deterministic platform: a virtual clock that moves only when told, seeded entropy, captured output.
+/// A deterministic platform with a virtual clock, seeded entropy and captured output.
 pub struct FakePlatform {
     state: Mutex<FakeState>,
 }
@@ -35,6 +35,9 @@ struct FakeState {
     local_offset: i64,
     next_handle: i64,
     net: FakeNet,
+    term_size: Option<(i64, i64)>,
+    term_open: bool,
+    term_events: Vec<Vec<i64>>,
 }
 
 fn not_found(path: &str) -> PlatformError {
@@ -63,8 +66,28 @@ impl FakePlatform {
                 local_offset: 0,
                 next_handle: 0,
                 net: FakeNet::new(),
+                term_size: None,
+                term_open: false,
+                term_events: Vec::new(),
             }),
         }
+    }
+
+    /// Gives the platform a terminal of this size.
+    pub fn with_terminal(self, cols: i64, rows: i64) -> Self {
+        self.state.lock().unwrap().term_size = Some((cols, rows));
+        self
+    }
+
+    /// Queues one terminal event (`[kind, ...]`) for the terminal source, which ends after the last.
+    pub fn with_term_event(self, fields: &[i64]) -> Self {
+        self.state.lock().unwrap().term_events.push(fields.to_vec());
+        self
+    }
+
+    /// Whether the terminal is currently open (raw mode).
+    pub fn term_is_open(&self) -> bool {
+        self.state.lock().unwrap().term_open
     }
 
     pub fn with_args(self, args: Vec<String>) -> Self {
@@ -228,11 +251,18 @@ impl FakePlatform {
             }
             PlatformRequest::LocalOffset { .. } => PlatformResponse::Int(st.local_offset),
             dir @ (PlatformRequest::ListDir { .. }
+            | PlatformRequest::ReadDir { .. }
             | PlatformRequest::CreateDir { .. }
             | PlatformRequest::RemoveFile { .. }
             | PlatformRequest::RemoveDir { .. }
             | PlatformRequest::Rename { .. }
-            | PlatformRequest::Stat { .. }) => return dir_request(&mut st, dir),
+            | PlatformRequest::Stat { .. }
+            | PlatformRequest::Canonicalize { .. }
+            | PlatformRequest::Lstat { .. }
+            | PlatformRequest::ReadLink { .. }
+            | PlatformRequest::Symlink { .. }
+            | PlatformRequest::SetModified { .. }
+            | PlatformRequest::SetMode { .. }) => return dir_request(&mut st, dir),
             run @ PlatformRequest::RunProcess { .. } => {
                 st.process_log.push(run.clone());
                 let PlatformRequest::RunProcess { program, .. } = run else { unreachable!() };
@@ -244,6 +274,21 @@ impl FakePlatform {
             | PlatformRequest::LibCall { .. }
             | PlatformRequest::LibClose { .. } => {
                 return Err(PlatformError { kind: PlatformErrorKind::Unsupported, message: "the fake platform has no native libraries".into() })
+            }
+            PlatformRequest::TermOpen { .. } => {
+                if st.term_size.is_none() {
+                    return Err(PlatformError { kind: PlatformErrorKind::Unsupported, message: "terminal: not a terminal".into() });
+                }
+                st.term_open = true;
+                PlatformResponse::Unit
+            }
+            PlatformRequest::TermClose => {
+                st.term_open = false;
+                PlatformResponse::Unit
+            }
+            PlatformRequest::TermSize => {
+                let (cols, rows) = st.term_size.ok_or_else(|| PlatformError { kind: PlatformErrorKind::Unsupported, message: "terminal: not a terminal".into() })?;
+                PlatformResponse::Int(cols * 65536 + rows)
             }
             socket if is_socket_request(&socket) => return st.net.request(socket),
             file => return file_request(&mut st, file),
@@ -266,14 +311,24 @@ impl Platform for FakePlatform {
     }
 
     fn open_source(&self, request: SourceRequest, sink: EventSink) -> Result<SourceHandle, PlatformError> {
-        let SourceRequest::Timer { period_nanos } = request else {
-            return Err(PlatformError { kind: PlatformErrorKind::Other, message: "not a platform source".to_string() });
-        };
         let stopped = Arc::new(AtomicBool::new(false));
         let mut st = self.state.lock().unwrap();
-        let period = period_nanos.max(1) as i64;
-        let next_due = st.mono_nanos + period;
-        st.sources.push(FakeSource { sink, timer: Some(Timer { period, next_due, ticks: 0 }), stopped: stopped.clone() });
+        let timer = match request {
+            SourceRequest::Timer { period_nanos } => {
+                let period = period_nanos.max(1) as i64;
+                Some(Timer { period, next_due: st.mono_nanos + period, ticks: 0 })
+            }
+            SourceRequest::Signals { .. } => None,
+            SourceRequest::Terminal => {
+                for fields in &st.term_events {
+                    sink.try_push(EventPayload::List(fields.iter().map(|n| EventPayload::Int(*n)).collect()));
+                }
+                sink.end();
+                None
+            }
+            SourceRequest::Custom(_) => return Err(other("not a platform source")),
+        };
+        st.sources.push(FakeSource { sink, timer, stopped: stopped.clone() });
         Ok(SourceHandle::new(move || stopped.store(true, Ordering::SeqCst)))
     }
 }
@@ -442,6 +497,20 @@ fn dir_request(st: &mut FakeState, request: PlatformRequest) -> Result<PlatformR
             }
             PlatformResponse::Strings(children(st, &path).into_iter().collect())
         }
+        PlatformRequest::ReadDir { path } => {
+            let PlatformResponse::Strings(names) = dir_request(st, PlatformRequest::ListDir { path: path.clone() })? else {
+                unreachable!()
+            };
+            let mut entries = Vec::with_capacity(names.len());
+            for name in names {
+                let child = format!("{}/{name}", path.trim_end_matches('/'));
+                let PlatformResponse::Stat(stat) = dir_request(st, PlatformRequest::Stat { path: child })? else {
+                    unreachable!()
+                };
+                entries.push((name, stat));
+            }
+            PlatformResponse::Entries(entries)
+        }
         PlatformRequest::CreateDir { path, recursive } => {
             let path = path.trim_end_matches('/').to_string();
             if st.files.contains_key(&path) || (is_dir(st, &path) && !recursive) {
@@ -520,15 +589,73 @@ fn dir_request(st: &mut FakeState, request: PlatformRequest) -> Result<PlatformR
             }
             PlatformResponse::Unit
         }
-        PlatformRequest::Stat { path } => {
+        PlatformRequest::ReadLink { path } => {
+            if st.files.contains_key(&path) || is_dir(st, &path) {
+                return Err(PlatformError { kind: PlatformErrorKind::InvalidData, message: format!("not a symlink: {path}") });
+            }
+            return Err(not_found(&path));
+        }
+        PlatformRequest::Symlink { link, .. } => {
+            return Err(PlatformError { kind: PlatformErrorKind::Unsupported, message: format!("{link}: no symlinks here") });
+        }
+        PlatformRequest::SetMode { path, .. } => {
+            return Err(PlatformError { kind: PlatformErrorKind::Unsupported, message: format!("{path}: no modes here") });
+        }
+        PlatformRequest::SetModified { path, millis } => {
+            if !st.files.contains_key(&path) {
+                return Err(if is_dir(st, &path) {
+                    PlatformError { kind: PlatformErrorKind::Unsupported, message: format!("{path}: no directory times here") }
+                } else {
+                    not_found(&path)
+                });
+            }
+            st.mtimes.insert(path, millis);
+            PlatformResponse::Unit
+        }
+        PlatformRequest::Stat { path } | PlatformRequest::Lstat { path } => {
+            let inode = path.bytes().fold(1469598103934665603u64, |h, b| (h ^ u64::from(b)).wrapping_mul(1099511628211)) >> 1;
             if let Some(bytes) = st.files.get(&path) {
                 let modified_millis = st.mtimes.get(&path).copied().unwrap_or(st.wall_millis);
-                PlatformResponse::Stat(FileStat { kind: FileKind::File, size: bytes.len() as i64, modified_millis })
+                PlatformResponse::Stat(FileStat {
+                    kind: FileKind::File,
+                    size: bytes.len() as i64,
+                    modified_millis,
+                    mode: 0o644,
+                    inode: inode as i64,
+                    device: 1,
+                    links: 1,
+                })
             } else if is_dir(st, &path) {
-                PlatformResponse::Stat(FileStat { kind: FileKind::Dir, size: 0, modified_millis: st.wall_millis })
+                PlatformResponse::Stat(FileStat {
+                    kind: FileKind::Dir,
+                    size: 0,
+                    modified_millis: st.wall_millis,
+                    mode: 0o755,
+                    inode: inode as i64,
+                    device: 1,
+                    links: 1,
+                })
             } else {
                 return Err(not_found(&path));
             }
+        }
+        PlatformRequest::Canonicalize { path } => {
+            let mut parts: Vec<&str> = Vec::new();
+            for part in path.split('/') {
+                match part {
+                    "" | "." => {}
+                    ".." => {
+                        parts.pop();
+                    }
+                    name => parts.push(name),
+                }
+            }
+            let lead = if path.starts_with('/') { "/" } else { "" };
+            let real = format!("{lead}{}", parts.join("/"));
+            if !st.files.contains_key(&real) && !is_dir(st, &real) {
+                return Err(not_found(&path));
+            }
+            PlatformResponse::Text(real)
         }
         _ => unreachable!("not a directory request"),
     })

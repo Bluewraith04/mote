@@ -14,7 +14,7 @@ impl<F: FnMut(ValueSlot)> ObjectVisitor for F {
     }
 }
 
-/// Scans all pointer-holding fields of a heap-allocated object, invoking `visitor` for each `ObjectPtr`.
+/// Scans every pointer-holding field of a heap object, calling `visitor` for each.
 #[inline]
 pub(crate) fn scan_object<V: ObjectVisitor>(header_ptr: NonNull<ObjectHeader>, visitor: &mut V) {
     // SAFETY: the caller passes a live object whose slots match its descriptor.

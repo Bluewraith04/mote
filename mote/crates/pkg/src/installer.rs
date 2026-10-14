@@ -25,6 +25,11 @@ impl PackageInstaller {
         source.strip_prefix("local+").map(|p| self.project_root.join(p))
     }
 
+    /// Where `name` is installed.
+    pub(crate) fn package_dir(&self, name: &str) -> PathBuf {
+        self.packages_dir.join(name)
+    }
+
     /// Installs resolved packages into the project's `.mote_packages/` directory.
     pub fn install(&self, packages: &[ResolvedPackage]) -> Result<(), String> {
         fs::create_dir_all(&self.packages_dir)
@@ -57,7 +62,7 @@ impl PackageInstaller {
         Ok(())
     }
 
-    /// The installed `mote.toml` of `name` when `.mote_packages/<name>` holds `source` with `checksum` and, for a package with native code, this machine's `native` checksum.
+    /// The installed `mote.toml` of `name` when it matches `source` and the checksums.
     pub(crate) fn installed_git(&self, name: &str, source: &str, checksum: Option<&str>, native: &BTreeMap<String, String>) -> Option<PackageManifest> {
         let dir = self.packages_dir.join(name);
         let marked = fs::read_to_string(dir.join(".source")).is_ok_and(|s| s.trim() == source);
@@ -73,7 +78,7 @@ impl PackageInstaller {
         PackageManifest::from_file(&dir.join("mote.toml")).ok()
     }
 
-    /// The package in a git archive's `entries`, checked to be `name`, with the checksum of its `src/` tree and of each `native/<triple>/` tree.
+    /// The package in a git archive's `entries`, checked to be `name`, with its checksums.
     pub(crate) fn check_git(&self, name: &str, entries: &[(String, Vec<u8>)]) -> Result<(PackageManifest, String, BTreeMap<String, String>), String> {
         let toml = entries.iter().find(|(p, _)| p == "mote.toml").ok_or_else(|| format!("{name}: the repository has no mote.toml"))?;
         let manifest = PackageManifest::from_toml_str(&String::from_utf8_lossy(&toml.1)).map_err(|e| format!("{name}: {e}"))?;
@@ -84,7 +89,7 @@ impl PackageInstaller {
         Ok((manifest, tree_checksum(files), archive_checksums(entries)))
     }
 
-    /// Writes `entries` into `.mote_packages/<name>/` and marks them as `source`; only this machine's `native/<triple>/` is written.
+    /// Writes `entries` into `.mote_packages/<name>/` and marks them as `source`.
     pub(crate) fn install_git(&self, name: &str, source: &str, entries: &[(String, Vec<u8>)]) -> Result<(), String> {
         let dst = self.packages_dir.join(name);
         if dst.exists() {
@@ -102,7 +107,7 @@ impl PackageInstaller {
     }
 }
 
-fn copy_tree(from: &Path, to: &Path) -> Result<(), String> {
+pub(crate) fn copy_tree(from: &Path, to: &Path) -> Result<(), String> {
     fs::create_dir_all(to).map_err(|e| format!("Failed to create '{}': {}", to.display(), e))?;
     for entry in fs::read_dir(from).map_err(|e| format!("Failed to read '{}': {}", from.display(), e))? {
         let entry = entry.map_err(|e| e.to_string())?;
@@ -117,12 +122,12 @@ fn copy_tree(from: &Path, to: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// `sha256:<hex>` over every file under `dir/src`, by sorted relative path, name and contents.
+/// `sha256:<hex>` over every file under `dir/src`.
 pub(crate) fn package_checksum(dir: &Path) -> Result<String, String> {
     dir_checksum(&dir.join("src"))
 }
 
-/// `sha256:<hex>` over every file under `root`, by sorted relative path, name and contents.
+/// `sha256:<hex>` over every file under `root`.
 pub(crate) fn dir_checksum(root: &Path) -> Result<String, String> {
     let mut names = Vec::new();
     collect_files(root, "", &mut names)?;
@@ -133,7 +138,7 @@ pub(crate) fn dir_checksum(root: &Path) -> Result<String, String> {
     Ok(tree_checksum(names.into_iter().zip(contents.iter().map(Vec::as_slice)).collect()))
 }
 
-/// `sha256:<hex>` over `files` (path under the tree, contents), sorted by path.
+/// `sha256:<hex>` over `files`, sorted by path.
 pub(crate) fn tree_checksum(mut files: Vec<(String, &[u8])>) -> String {
     files.sort();
     let mut hasher = Sha256::new();

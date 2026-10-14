@@ -1,4 +1,4 @@
-//! Reads timestamps in mixed offsets from a file, orders them by moment, shows them at one offset and measures the gaps.
+//! Reads timestamps in mixed offsets from a file, orders them and measures the gaps.
 
 use std::process::Command;
 
@@ -13,7 +13,7 @@ fn a_program_orders_and_converts_timestamps_from_a_file() {
     )
     .unwrap();
     let source = format!(
-        r#"import std.sys.io as io
+        r#"import std.io as io
 import std.iter as iter
 import std.date as date
 import std.string as string

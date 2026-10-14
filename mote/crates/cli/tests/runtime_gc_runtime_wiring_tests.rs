@@ -1,4 +1,4 @@
-//! The `Runtime` and `GCController` seam: `NEWOBJ` allocating through the collector, `safepoint_poll` driving collection and `SETFIELD` reaching the write barrier.
+//! The `Runtime` and `GCController` seam.
 
 use gc::gc::GCController;
 use gc::plan::GCConfig;

@@ -1,28 +1,29 @@
 /// A small tool whose command line is a type: global flag, subcommands, positionals and defaults.
-import std.sys.env
+import std.env
+import std.args
 
-@derive(Args)
-enum Command {
-    @arg(help = "add up the numbers")
+enum Command: (Args) {
+    /// add up the numbers
     Sum {
-        @arg(positional, help = "the numbers")
+        /// the numbers
         numbers: List<Int>
     }
-    @arg(help = "repeat a word")
+    /// repeat a word
+    @arg(n = times)
     Say {
-        @arg(positional, help = "the word")
+        /// the word
         word: String
-        @arg(short = "n", default = "1", help = "how many times")
-        times: Int
-        @arg(help = "end with this")
-        end: String?
+        /// how many times
+        times: Int = 1
+        /// end with this
+        end: String? = null
     }
 }
 
-@derive(Args)
-@arg(help = "Small tools")
-class Tool {
-    @arg(short = "q", help = "print only the result")
+/// Small tools
+@arg(q = quiet)
+class Tool: (Args) {
+    /// print only the result
     quiet: Bool
     command: Command
 }

@@ -86,9 +86,11 @@ impl SafepointCoordinator for StopTheWorld {
             p.generation += 1;
             p.roots.clear();
             self.pending.store(true, Ordering::SeqCst);
+            let requested = std::time::Instant::now();
             while p.reported < p.entered {
                 p = self.changed.wait(p).unwrap();
             }
+            contracts::mem_trace!("stop {:.3} ms for {} workers", requested.elapsed().as_secs_f64() * 1e3, p.entered);
         }
         collect();
         let mut p = self.state.lock().unwrap();

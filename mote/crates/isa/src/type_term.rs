@@ -5,7 +5,7 @@ use std::fmt;
 /// A type as the runtime records it: a name with arguments, or a structural form.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum TypeTerm {
-    /// A primitive, a std type or a user type, with its type arguments (`Int`, `List<Int>`, `Box<String>`).
+    /// A primitive, a std type or a user type, with its type arguments.
     Named(String, Vec<TypeTerm>),
     Nullable(Box<TypeTerm>),
     Tuple(Vec<TypeTerm>),
@@ -24,7 +24,7 @@ impl TypeTerm {
         TypeTerm::Named(name.to_string(), Vec::new())
     }
 
-    /// A type argument the checker left open (`Ok(1)`'s error type): it matches any type, and a record's `_` is fixed by its first typed use.
+    /// A type argument the checker left open; it matches any type.
     pub fn wildcard() -> Self {
         TypeTerm::named("_")
     }
@@ -33,7 +33,7 @@ impl TypeTerm {
         matches!(self, TypeTerm::Named(n, args) if n == name && args.is_empty())
     }
 
-    /// Whether a value whose type is `self` fits `target`: the checker's assignability, where an `Any` inside fits only `Any`.
+    /// Whether a value whose type is `self` fits `target`.
     pub fn fits(&self, target: &TypeTerm) -> bool {
         if target.is_named("Any") || target.is_named("_") || self.is_named("_") {
             return true;

@@ -1,5 +1,4 @@
-//! Event sources end to end on the fake platform: a native opens a timer source,
-//! a task receives its ticks, and the runtime closes it.
+//! Event sources end to end on the fake platform.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;

@@ -20,6 +20,7 @@ mod crypto;
 mod formats;
 mod http_wire;
 mod libtools;
+mod pattern;
 mod system;
 mod text_math;
 #[cfg(feature = "window")]
@@ -30,6 +31,7 @@ use self::crypto::*;
 use self::formats::*;
 use self::http_wire::*;
 use self::libtools::*;
+use self::pattern::*;
 use self::system::*;
 use self::text_math::*;
 use self::window::*;
@@ -314,6 +316,31 @@ fn build<const TIER: u8>(grouped: &mut Vec<(&'static str, u8)>) -> NativeFunctio
     gui!(register_fallible, "ui_chrome", ui_chrome);
     gui!(register_fallible, "ui_set_title", ui_set_title);
     gui!(register_fallible, "ui_set_runs", ui_set_runs);
+    r.register_platform("fs_canonicalize", fs_canonicalize);
+    r.register_source("signal_watch", signal_watch);
+    r.register_platform("term_open", term_open);
+    r.register_platform("term_close", term_close);
+    r.register_platform("term_size", term_size);
+    r.register_source("term_events", term_events);
+    r.register("json_scan_string", json_scan_string);
+    r.register("json_skip_ws", json_skip_ws);
+    r.register("json_digits_end", json_digits_end);
+    r.register("json_quote", json_quote);
+    r.register("string_join", string_join);
+    r.register("term_glyphs", term_glyphs);
+    r.register("term_width", term_width);
+    heavy!(register_fallible, "regex_compile", regex_compile);
+    heavy!(register, "regex_is_match", regex_is_match);
+    heavy!(register, "regex_captures_at", regex_captures_at);
+    heavy!(register, "regex_find_all", regex_find_all);
+    heavy!(register, "regex_find_at", regex_find_at);
+    r.register_platform("fs_lstat", fs_lstat);
+    r.register_platform("fs_read_link", fs_read_link);
+    r.register_platform("fs_read_dir", fs_read_dir);
+    r.register_platform("fs_symlink", fs_symlink);
+    r.register_platform("fs_set_modified", fs_set_modified);
+    r.register_platform("fs_set_mode", fs_set_mode);
+    r.register("coll_set_slice", coll_set_slice);
 
     r
 }
@@ -328,15 +355,14 @@ static LEAN_PLATFORM: std::sync::LazyLock<Arc<platform::SystemPlatform>> =
 #[derive(Default)]
 struct Settings {
     args: Option<Vec<String>>,
-    allow_native: Option<bool>,
     native_packages: Option<Vec<(String, std::path::PathBuf)>>,
     live: Option<Arc<platform::SystemPlatform>>,
 }
 
 static SETTINGS: std::sync::Mutex<Settings> =
-    std::sync::Mutex::new(Settings { args: None, allow_native: None, native_packages: None, live: None });
+    std::sync::Mutex::new(Settings { args: None, native_packages: None, live: None });
 
-/// Grants packages native access: each name with the directory its libraries are in.
+/// Names the packages whose libraries `open_package` loads, each with its library directory.
 pub fn set_native_packages(packages: Vec<(String, std::path::PathBuf)>) {
     let mut settings = SETTINGS.lock().unwrap();
     if let Some(live) = &settings.live {
@@ -345,16 +371,7 @@ pub fn set_native_packages(packages: Vec<(String, std::path::PathBuf)>) {
     settings.native_packages = Some(packages);
 }
 
-/// Lets `std.dev.libtools` load native libraries (`--allow-native`); off by default.
-pub fn set_allow_native(allowed: bool) {
-    let mut settings = SETTINGS.lock().unwrap();
-    settings.allow_native = Some(allowed);
-    if let Some(live) = &settings.live {
-        live.set_allow_native(allowed);
-    }
-}
-
-/// Sets the answer of `std.sys.env.args()`; call once, before running a program.
+/// Sets the answer of `std.env.args()`; call once, before running a program.
 pub fn set_script_args(args: Vec<String>) {
     let mut settings = SETTINGS.lock().unwrap();
     if let Some(live) = &settings.live {
@@ -367,9 +384,6 @@ fn adopt(platform: &Arc<platform::SystemPlatform>) {
     let mut settings = SETTINGS.lock().unwrap();
     if let Some(args) = &settings.args {
         platform.set_args(args.clone());
-    }
-    if let Some(allowed) = settings.allow_native {
-        platform.set_allow_native(allowed);
     }
     if let Some(packages) = &settings.native_packages {
         platform.set_native_packages(packages.clone());
@@ -469,13 +483,12 @@ fn clone(ctx: &mut NativeCallContext<'_>) -> Result<Value, String> {
     ctx.heap.clone_value(v)
 }
 
-/// Human-readable rendering of a value for `print` / `println`: primitives, strings and collections directly, and a `TypeName { field: value }` / `TypeName(value)` / `TypeName` form for heap objects.
-/// A user `to_string` override is applied at compile time, not here.
+/// Human-readable rendering of a value for `print` and `println`.
 pub fn render(v: &Value) -> String {
     render_depth(v, 0)
 }
 
-/// A short name for `v`'s runtime type, used in the `Any`-boundary mismatch message; a generic value names its recorded instantiation (`List<Int>`).
+/// A short name for `v`'s runtime type.
 pub(crate) fn describe_type_name(v: &Value) -> String {
     if v.as_any_string().is_some() {
         return "String".to_string();
@@ -610,9 +623,7 @@ fn render_depth(v: &Value, depth: usize) -> String {
         if depth >= 8 {
             return "…".to_string();
         }
-        // SAFETY: a live `ObjectPtr` points at an `ObjectHeader` whose `type_ptr`
-        // outlives it (descriptors live for the whole run). Everything the block
-        // returns is owned, so no borrow escapes.
+        // SAFETY: a live `ObjectPtr` points at a header whose `type_ptr` outlives it, and the block returns owned data.
         return unsafe {
             let header = ptr.as_ref();
             let td = header.type_ptr.as_ref();
@@ -640,8 +651,7 @@ fn render_depth(v: &Value, depth: usize) -> String {
     format!("{v:?}")
 }
 
-/// # Safety
-/// `header` is a live object whose slots match `td`, with the struct starting at slot `base`.
+/// Renders a struct whose slots match `td`, starting at slot `base`.
 unsafe fn render_struct(td: &TypeDescriptor, header: &ObjectHeader, base: usize, depth: usize) -> String {
     let name = td.name.clone().unwrap_or_default();
     if td.fields.is_empty() {
@@ -670,8 +680,7 @@ unsafe fn render_struct(td: &TypeDescriptor, header: &ObjectHeader, base: usize,
     format!("{name}({})", rendered.join(", "))
 }
 
-/// # Safety
-/// `ptr` is a live `List` header with a live backing.
+/// Renders a live `List`.
 unsafe fn render_list(ptr: NonNull<ObjectHeader>, depth: usize) -> String {
     unsafe {
         let header = ptr.as_ref();
@@ -687,8 +696,7 @@ unsafe fn render_list(ptr: NonNull<ObjectHeader>, depth: usize) -> String {
     }
 }
 
-/// # Safety
-/// `ptr` is a live `Map` or `Set` header with live entries, and `stride` is its entry width.
+/// The key and value of each entry of a live `Map` or `Set` with entry width `stride`.
 unsafe fn table_entries(ptr: NonNull<ObjectHeader>, stride: usize) -> Vec<(Value, Value)> {
     unsafe {
         let header = ptr.as_ref();
@@ -703,8 +711,7 @@ unsafe fn table_entries(ptr: NonNull<ObjectHeader>, stride: usize) -> Vec<(Value
     }
 }
 
-/// # Safety
-/// `ptr` is a live `Map` header.
+/// Renders a live `Map`.
 unsafe fn render_map(ptr: NonNull<ObjectHeader>, depth: usize) -> String {
     // SAFETY: the caller passes a live `Map` header.
     let items: Vec<String> = unsafe { table_entries(ptr, MAP_ENTRY_STRIDE) }
@@ -714,16 +721,14 @@ unsafe fn render_map(ptr: NonNull<ObjectHeader>, depth: usize) -> String {
     format!("{{{}}}", items.join(", "))
 }
 
-/// # Safety
-/// `ptr` is a live `Set` header.
+/// Renders a live `Set`.
 unsafe fn render_set(ptr: NonNull<ObjectHeader>, depth: usize) -> String {
     // SAFETY: the caller passes a live `Set` header.
     let items: Vec<String> = unsafe { table_entries(ptr, 1) }.into_iter().map(|(k, _)| render_depth(&k, depth + 1)).collect();
     format!("{{{}}}", items.join(", "))
 }
 
-/// # Safety
-/// `ptr` is a live `Bytes` header with a live backing.
+/// Renders a live `Bytes`.
 unsafe fn render_bytes(ptr: NonNull<ObjectHeader>) -> String {
     unsafe {
         let header = ptr.as_ref();

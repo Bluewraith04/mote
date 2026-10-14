@@ -1,9 +1,9 @@
-# std.sys.http_server
+# std.http_server
 
-An HTTP/1.1 server over plain sockets. `import std.sys.http_server as server`. The program writes its own accept loop and starts a task per connection; a connection waiting for a request holds no thread.
+An HTTP/1.1 server over plain sockets. `import std.http_server as server`. The program writes its own accept loop and starts a task per connection; a connection waiting for a request holds no thread.
 
 ```mote,skip
-import std.sys.http_server as server
+import std.http_server as server
 
 fn handle(conn: server.Connection) {
     var requests = conn.requests()
@@ -53,8 +53,8 @@ A `Response` is built with `Response.new(status, body)`, `empty(status)`, `text(
 Limits are set on the server, so it must be a `var`: `set_max_header(bytes)` (64 KiB), `set_max_body(bytes)` (64 MiB), `set_idle_timeout(seconds)` (10). A request that cannot be served is answered with 400, 408, 413, 431 or 501, the connection closes, and `next()` answers an `Err`.
 
 ```mote
-import std.sys.http_server as server
-import std.sys.net as net
+import std.http_server as server
+import std.socket as net
 
 fn main() {
     let s = server.listen("127.0.0.1", 0)!

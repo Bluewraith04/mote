@@ -1,0 +1,224 @@
+/// Draws the window's title bar in place of the system frame.
+
+import std.gui as gui
+import { round } from std.math
+import .element
+import .theme
+
+/// The shape of the minimize, maximize and close buttons.
+pub enum Buttons {
+    Block
+    Small
+    Dots
+}
+
+/// The frame of a window.
+pub class Chrome {
+    var on: Bool
+    var bar: theme.Tone
+    var key: theme.Tone
+    var ink: theme.Tone
+    var shut: theme.Tone
+    var dot: theme.Tone
+    var tall: Float
+    var shape: Buttons
+    var left: Bool
+    var align: gui.TextAlign
+    var line: Bool
+
+    fn copy(self) -> Chrome {
+        return Chrome { on: self.on, bar: self.bar, key: self.key, ink: self.ink, shut: self.shut, dot: self.dot, tall: self.tall, shape: self.shape, left: self.left, align: self.align, line: self.line }
+    }
+
+    /// Whether pane draws the frame, which is when the system frame is turned off.
+    pub fn drawn(self) -> Bool { return self.on }
+
+    /// The height of the bar in pixels.
+    pub fn height(self, px: Float) -> Chrome {
+        var c = self.copy()
+        c.tall = px
+        return c
+    }
+
+    /// The shape of the three buttons.
+    pub fn buttons(self, shape: Buttons) -> Chrome {
+        var c = self.copy()
+        c.shape = shape
+        return c
+    }
+
+    /// Whether the buttons are at the left of the bar, close first, instead of at the right.
+    pub fn buttons_left(self, on: Bool) -> Chrome {
+        var c = self.copy()
+        c.left = on
+        return c
+    }
+
+    /// Where the title sits: `Left`, `Center` or `Right`.
+    pub fn title_align(self, a: gui.TextAlign) -> Chrome {
+        var c = self.copy()
+        c.align = a
+        return c
+    }
+
+    /// The bar's color; the buttons take it too, unless `key_color` is called after.
+    pub fn bar_color(self, t: theme.Tone) -> Chrome {
+        var c = self.copy()
+        c.bar = t
+        c.key = t
+        return c
+    }
+
+    /// The color of the minimize and maximize buttons; they are shaded under the pointer.
+    pub fn key_color(self, t: theme.Tone) -> Chrome {
+        var c = self.copy()
+        c.key = t
+        return c
+    }
+
+    /// The color of the title and of the buttons' symbols.
+    pub fn title_color(self, t: theme.Tone) -> Chrome {
+        var c = self.copy()
+        c.ink = t
+        return c
+    }
+
+    /// The color the close button takes under the pointer.
+    pub fn close_color(self, t: theme.Tone) -> Chrome {
+        var c = self.copy()
+        c.shut = t
+        return c
+    }
+
+    /// The color of the minimize and maximize dots.
+    pub fn dot_color(self, t: theme.Tone) -> Chrome {
+        var c = self.copy()
+        c.dot = t
+        return c
+    }
+
+    /// Whether a thin line in the theme's border color separates the bar from the window.
+    pub fn rule(self, on: Bool) -> Chrome {
+        var c = self.copy()
+        c.line = on
+        return c
+    }
+}
+
+fn base(on: Bool) -> Chrome {
+    return Chrome { on: on, bar: theme.Tone.Quiet, key: theme.Tone.Quiet, ink: theme.Tone.Ink, shut: theme.Tone.Rgba(0xe5484dff), dot: theme.Tone.Border, tall: 36.0, shape: Buttons.Block, left: false, align: gui.TextAlign.Left, line: false }
+}
+
+/// The frame the system draws; the default.
+pub fn system() -> Chrome { return base(false) }
+
+/// A low bar with a centered title and small rounded keys.
+pub fn slate() -> Chrome {
+    return base(true).bar_color(theme.Tone.Page).key_color(theme.Tone.Quiet).height(34.0).buttons(Buttons.Small).title_align(gui.TextAlign.Center).rule(true)
+}
+
+/// A tall accent-colored bar with a bold title and square keys.
+pub fn banner() -> Chrome {
+    return base(true).bar_color(theme.Tone.Accent).title_color(theme.Tone.AccentInk).height(40.0).buttons(Buttons.Block).close_color(theme.Tone.Rgba(0x111827ff))
+}
+
+fn glyph<S>(th: theme.Theme, ch: Chrome, role: theme.Role, label: String, act: element.Action) -> element.Element<S> {
+    return element.element(gui.Kind.Button, role, label, []).action(act).bg(th.color(ch.key)).color(th.color(ch.ink))
+}
+
+fn key<S>(th: theme.Theme, ch: Chrome, label: String, act: element.Action, role: theme.Role) -> element.Element<S> {
+    let e: element.Element<S> = glyph(th, ch, role, label, act)
+    let tall = ch.tall
+    var small = tall - 10.0
+    if small < 18.0 { small = 18.0 }
+    match ch.shape {
+        Buttons.Block => { return e.style(|s| s.width(gui.Size.Px(round(tall * 1.3))).height(gui.Size.Px(tall))) }
+        _ => { return e.style(|s| s.width(gui.Size.Px(34.0)).height(gui.Size.Px(small)).radius(6.0).margin_sides(0.0, 4.0, 0.0, 0.0)) }
+    }
+}
+
+fn dot<S>(th: theme.Theme, ch: Chrome, act: element.Action, shut: Bool) -> element.Element<S> {
+    var c = th.color(ch.dot)
+    if shut { c = th.color(ch.shut) }
+    return element.element(gui.Kind.Button, theme.Role.Dot(c), "", []).action(act).style(|s| s.margin_sides(0.0, 8.0, 0.0, 0.0))
+}
+
+/// The width the three buttons take with their margins.
+fn span(ch: Chrome) -> Float {
+    match ch.shape {
+        Buttons.Dots => { return 63.0 }
+        Buttons.Small => { return 114.0 }
+        Buttons.Block => { return 3.0 * round(ch.tall * 1.3) }
+    }
+}
+
+/// The three buttons in the order they sit in.
+fn buttons<S>(th: theme.Theme, ch: Chrome) -> List<element.Element<S>> {
+    var minimize: element.Element<S> = dot(th, ch, element.Action.Minimize, false)
+    var maximize: element.Element<S> = dot(th, ch, element.Action.Maximize, false)
+    var close: element.Element<S> = dot(th, ch, element.Action.Close, true)
+    if ch.shape != Buttons.Dots {
+        minimize = key(th, ch, "\u{2013}", element.Action.Minimize, theme.Role.Caption)
+        maximize = key(th, ch, "\u{25a1}", element.Action.Maximize, theme.Role.Caption)
+        close = key(th, ch, "\u{00d7}", element.Action.Close, theme.Role.CaptionClose(th.color(ch.shut)))
+    }
+    if ch.left { return [close, minimize, maximize] }
+    return [minimize, maximize, close]
+}
+
+fn edge(shape: Buttons) -> Float {
+    match shape {
+        Buttons.Block => { return 0.0 }
+        Buttons.Small => { return 6.0 }
+        Buttons.Dots => { return 12.0 }
+    }
+}
+
+fn bar<S>(th: theme.Theme, ch: Chrome, title: String) -> element.Element<S> {
+    let side = edge(ch.shape)
+    let near = span(ch) + side
+    let group: element.Element<S> = element.element(gui.Kind.Box, theme.Role.Plain, "", buttons(th, ch)).style(|s| s.direction(gui.Direction.Row).align_items(gui.Align.Center).padding_sides(0.0, side, 0.0, side))
+    var words: element.Element<S> = element.element(gui.Kind.Text, theme.Role.Text, title, []).size(14.0).color(th.color(ch.ink)).grow().style(|s| s.text_align(ch.align))
+    if ch.align == gui.TextAlign.Center {
+        if ch.left { words = words.style(|s| s.margin_sides(0.0, near, 0.0, 0.0)) } else { words = words.style(|s| s.margin_sides(0.0, 0.0, 0.0, near)) }
+    } else {
+        if ch.left { words = words.style(|s| s.margin_sides(0.0, 14.0, 0.0, 0.0)) } else { words = words.style(|s| s.margin_sides(0.0, 0.0, 0.0, 14.0)) }
+    }
+    if ch.align != gui.TextAlign.Center { words = words.bold() }
+    var kids: List<element.Element<S>> = [words]
+    if ch.left { kids = [group, words] } else { kids = [words, group] }
+    return element.element(gui.Kind.Box, theme.Role.Bar, "", kids).action(element.Action.Move).bg(th.color(ch.bar)).height(ch.tall)
+}
+
+/// An invisible strip on an edge or corner of the window that resizes it.
+fn grip<S>(edge: Int, top: gui.Size, right: gui.Size, bottom: gui.Size, left: gui.Size, w: gui.Size, h: gui.Size) -> element.Element<S> {
+    return element.element(gui.Kind.Box, theme.Role.Plain, "", []).action(element.Action.Resize(edge)).style(|s| s.position(gui.Position.Absolute).inset(top, right, bottom, left).width(w).height(h))
+}
+
+fn grips<S>() -> List<element.Element<S>> {
+    let zero = gui.Size.Px(0.0)
+    let auto = gui.Size.Auto
+    let inner = gui.Size.Px(10.0)
+    let thin = gui.Size.Px(5.0)
+    return [
+        grip(0, zero, inner, auto, inner, auto, thin),
+        grip(1, auto, inner, zero, inner, auto, thin),
+        grip(2, inner, zero, inner, auto, thin, auto),
+        grip(3, inner, auto, inner, zero, thin, auto),
+        grip(4, zero, zero, auto, auto, inner, inner),
+        grip(5, zero, auto, auto, zero, inner, inner),
+        grip(6, auto, zero, zero, auto, inner, inner),
+        grip(7, auto, auto, zero, zero, inner, inner),
+    ]
+}
+
+/// What the window's root holds for `content`.
+pub fn frame<S>(ch: Chrome, th: theme.Theme, title: String, content: element.Element<S>) -> List<element.Element<S>> {
+    if !ch.drawn() { return [content] }
+    let body: element.Element<S> = element.element(gui.Kind.Box, theme.Role.Plain, "", [content]).style(|s| s.direction(gui.Direction.Column).padding(16.0).grow(1.0))
+    var out: List<element.Element<S>> = [bar(th, ch, title)]
+    if ch.line { out.push(element.element(gui.Kind.Box, theme.Role.Rule, "", [])) }
+    out.push(body)
+    for g in grips() { out.push(g) }
+    return out
+}

@@ -1,4 +1,4 @@
-//! `NEWSTR`: allocates a heap string from the current code object's `string_table`, through the worker's `Mutator`.
+//! `NEWSTR`: allocates a heap string from the current code object's `string_table`.
 
 use std::ptr::NonNull;
 

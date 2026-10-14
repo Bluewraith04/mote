@@ -11,7 +11,7 @@ use crate::tree::{Kind, Tree};
 /// A width added to the selection at a line break, so a selected break shows.
 const BREAK_WIDTH: f32 = 4.0;
 
-/// One line of a text area as it is wrapped: the characters `first` to `last`, whose boundaries sit at `xs`.
+/// One wrapped line of a text area.
 pub struct AreaLine {
     pub top: f32,
     pub first: usize,
@@ -39,7 +39,7 @@ impl AreaLayout {
         (self.height() - self.content.h).max(0.0)
     }
 
-    /// The line the caret at character `index` is on; at a wrap it is the later line.
+    /// The line the caret at character `index` is on.
     pub fn line_of(&self, index: usize) -> usize {
         self.lines.iter().rposition(|l| l.first <= index).unwrap_or(0)
     }
@@ -52,7 +52,7 @@ impl AreaLayout {
         (at, x)
     }
 
-    /// The boundary of `line` nearest to text x `x`, kept off the end of a wrapped line, where the caret would show on the next.
+    /// The boundary of `line` nearest to text x `x`.
     pub fn index_on(&self, line: usize, x: f32) -> usize {
         let l = &self.lines[line];
         let nearest = l.xs.iter().enumerate().min_by(|a, b| (a.1 - x).abs().total_cmp(&(b.1 - x).abs())).map_or(0, |(i, _)| i);
@@ -90,7 +90,7 @@ impl Painter {
         Some(layout)
     }
 
-    /// The layout of a text area with the buffer and key it was laid out from; the caller keeps the buffer.
+    /// The layout of a text area with the buffer and key it was laid out from.
     fn shaped_area(&mut self, tree: &Tree, node: u32) -> Option<(AreaLayout, Buffer, u64)> {
         if tree.kind(node) != Some(Kind::TextArea) {
             return None;
@@ -139,7 +139,7 @@ impl Painter {
         AreaLayout { content, line_height, lines, len }
     }
 
-    /// Paints a text area: its selection, wrapped text scrolled by its offset, and the caret when it has focus.
+    /// Paints a text area with its selection, wrapped text and caret.
     pub(super) fn paint_area(&mut self, tree: &Tree, pixmap: &mut Pixmap, node: u32, style: &StyleDef, visible: &Rect) {
         let Some((layout, mut buffer, key)) = self.shaped_area(tree, node) else { return };
         if layout.content.is_empty() {

@@ -664,9 +664,73 @@ pub(super) fn bytes_extend(ctx: &mut NativeCallContext<'_>) -> Result<Value, Str
     Ok(Value::null())
 }
 
+/// The `start..end` bounds of a slice of `len` items; a missing end is `len`.
+fn slice_bounds(who: &str, start: i64, end: Option<i64>, len: usize) -> Result<(usize, usize), String> {
+    let end = end.unwrap_or(len as i64);
+    if start < 0 || end < start || end as usize > len {
+        return Err(format!("{who}({start}, {end}) out of range (len {len})"));
+    }
+    Ok((start as usize, end as usize))
+}
+
+pub(super) fn coll_set_slice(ctx: &mut NativeCallContext<'_>) -> Result<Value, String> {
+    let recv = ctx.arg(0).unwrap_or(Value::null());
+    if !is_list(recv) {
+        return Err("`.set_slice()` is only defined on List".to_string());
+    }
+    let start = ctx.arg(1).and_then(|v| v.as_int()).ok_or("a slice start must be an Int")?;
+    let end = ctx.arg(2).and_then(|v| v.as_int());
+    let step = slice_step("list.set_slice", ctx.arg(3))?;
+    let val = ctx.arg(4).unwrap_or(Value::null());
+    let len = slot_count(ctx.heap, recv, HEADER_LEN_SLOT)?;
+    let (a, b) = slice_bounds("list.set_slice", start, end, len)?;
+    let at: Vec<usize> = (a..b).step_by(step).collect();
+    let backing = ctx.heap.get_slot(recv, HEADER_BACKING_SLOT)?;
+    if is_list(val) {
+        let vlen = slot_count(ctx.heap, val, HEADER_LEN_SLOT)?;
+        if vlen != at.len() {
+            return Err(format!("slice assignment to {a}..{b} needs {} values, found {vlen}", at.len()));
+        }
+        let vbacking = ctx.heap.get_slot(val, HEADER_BACKING_SLOT)?;
+        let mut vals = Vec::with_capacity(vlen);
+        for i in 0..vlen {
+            vals.push(ctx.heap.get_slot(vbacking, BACKING_DATA_BASE + i)?);
+        }
+        for (i, v) in at.into_iter().zip(vals) {
+            ctx.heap.set_slot(backing, BACKING_DATA_BASE + i, v)?;
+        }
+    } else {
+        for i in at {
+            ctx.heap.set_slot(backing, BACKING_DATA_BASE + i, val)?;
+        }
+    }
+    Ok(Value::null())
+}
+
+/// The step of a slice: 1 when absent, a fault when not positive.
+fn slice_step(who: &str, step: Option<Value>) -> Result<usize, String> {
+    match step.and_then(|v| v.as_int()) {
+        None => Ok(1),
+        Some(s) if s >= 1 => Ok(s as usize),
+        Some(s) => Err(format!("{who}: a slice step must be positive, got {s}")),
+    }
+}
+
 pub(super) fn coll_slice(ctx: &mut NativeCallContext<'_>) -> Result<Value, String> {
     let recv = ctx.arg(0).unwrap_or(Value::null());
     let start = ctx.arg(1).and_then(|v| v.as_int()).unwrap_or(0);
+
+    if is_list(recv) {
+        let len = slot_count(ctx.heap, recv, HEADER_LEN_SLOT)?;
+        let (a, b) = slice_bounds("list.slice", start, ctx.arg(2).and_then(|v| v.as_int()), len)?;
+        let backing = ctx.heap.get_slot(recv, HEADER_BACKING_SLOT)?;
+        let step = slice_step("list.slice", ctx.arg(3))?;
+        let mut elems = Vec::with_capacity((b - a).div_ceil(step));
+        for i in (a..b).step_by(step) {
+            elems.push(ctx.heap.get_slot(backing, BACKING_DATA_BASE + i)?);
+        }
+        return alloc_list(ctx, &elems);
+    }
 
     if let Some(s) = recv.heap_bytes() {
         let end = ctx.arg(2).and_then(|v| v.as_int()).unwrap_or(s.len() as i64);

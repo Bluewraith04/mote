@@ -6,7 +6,7 @@ use isa::encoding::Instruction;
 use isa::opcode::Opcode;
 use isa::value::*;
 
-/// Default per-task reduction budget: safepoint hits (back-edges and calls) before a task yields to the next ready one.
+/// Default per-task reduction budget: safepoint hits before a task yields.
 pub(crate) const DEFAULT_REDUCTION_BUDGET: u32 = 2000;
 
 /// The most raw instructions between two [`Runtime::safepoint_poll`] calls, whatever the code does.
@@ -49,23 +49,23 @@ pub use contracts::{NativeOutcome, PlatformContinuation, PlatformResult, SourceD
 /// What a step of the interpreter ended with.
 pub enum VmStatus {
     Running,
-    /// The task spent its reduction budget; another ready task should run. A single-task run treats this as `Running`.
+    /// The task spent its reduction budget.
     Yielded,
-    /// The task hit a `SCOPEEXIT` with children still running; `pc` stays on the instruction and the scheduler re-queues it when the last child finishes.
+    /// The task hit a `SCOPEEXIT` with children still running.
     Parked,
     Halted,
-    /// A native asked to end the program with this exit code; the whole run stops.
+    /// A native asked to end the program with this exit code.
     Exited(i32),
 }
 
-/// One structured-concurrency scope on a task's scope stack: its children still running, and the first fault one of them reported.
+/// One structured-concurrency scope on a task's scope stack.
 #[derive(Debug, Default)]
 pub struct ScopeFrame {
-    /// `task.call_stack.len()` when the scope opened; `SPAWN` attaches a child only at exactly this depth.
+    /// The call depth at which the scope opened.
     pub owner_call_depth: usize,
     pub pending: usize,
     pub first_error: Option<String>,
-    /// The faulted child's `Task<T>` handle, if it has one; `None` for a `spawn { }` statement, whose fault is always unobserved.
+    /// The faulted child's `Task<T>` handle, if it has one.
     pub first_error_handle: Option<NonNull<ObjectHeader>>,
 }
 
@@ -78,9 +78,9 @@ pub struct Frame {
     pub base: usize,
     pub caller_code: usize,
     pub dest_reg: usize,
-    /// The function object this frame was entered through for a `CALLV`, else `None`; `GETCAPTURE` reads its capture slots. A GC root.
+    /// The function object this frame was entered through for a `CALLV`.
     pub closure: Option<NonNull<ObjectHeader>>,
-    /// Set when this frame is a resumed generator body: where `YIELD` and the final `RET` write back.
+    /// Set when this frame is a resumed generator body.
     pub generator: Option<GenLink>,
 }
 
@@ -91,7 +91,7 @@ pub struct GenLink {
     pub status_dest: usize,
 }
 
-/// The installed native-call dispatcher: called with the function index, a [`NativeCtx`] and the argument register window.
+/// The installed native-call dispatcher.
 pub type NativeDispatchHook = std::sync::Arc<
     dyn Fn(u16, &mut dyn NativeCtx, &[Value]) -> NativeOutcome + Send + Sync,
 >;
@@ -102,10 +102,10 @@ pub type NativeResolver = std::sync::Arc<dyn Fn(&str) -> Option<u16> + Send + Sy
 /// The name the VM has always used for [`contracts::HeapStats`].
 pub type GcStats = contracts::HeapStats;
 
-/// The installed collector. `runtime` cannot depend on `gc`; the composition root injects one, and until then [`alloc::LeakingHeap`] is used.
+/// The installed collector.
 pub type GcHook = Box<dyn contracts::Heap>;
 
-/// State shared by every task: the code, the heap, the collector, module globals and native dispatch. One instance per program.
+/// State shared by every task: the code, the heap, module globals and native dispatch.
 pub struct Runtime {
     pub code_objects: Vec<CodeObject>,
     pub type_descriptors: Vec<TypeDescriptor>,
@@ -121,7 +121,7 @@ pub struct Runtime {
     pub(crate) heap_installed: bool,
     pub(crate) schedule_seed: Option<u64>,
     pub(crate) budget_stream: std::sync::atomic::AtomicU64,
-    /// Module-level globals addressed by `GETGLOBAL` / `SETGLOBAL`; sized from `CompiledProgram::global_count`, grown by `SETGLOBAL` if needed.
+    /// Module-level globals addressed by `GETGLOBAL` and `SETGLOBAL`.
     pub globals: Mutex<Vec<Value>>,
     /// The shared descriptor every heap string points its `type_ptr` at.
     pub string_type: Box<TypeDescriptor>,
@@ -145,13 +145,16 @@ pub struct Runtime {
     pub(crate) sources: sources::Sources,
     pub(crate) cell_locks: locks::LockStripes,
     pub(crate) max_stack_slots: usize,
+    /// Safepoint hits the whole run may spend; `0` is no limit.
+    reduction_limit: u64,
+    reductions: std::sync::atomic::AtomicU64,
 }
 
-// SAFETY: every mutable field is behind a lock or atomic; the raw object pointers it holds are touched only by the worker running that task, or with every worker stopped at a safepoint.
+// SAFETY: every mutable field is behind a lock or atomic; raw object pointers are touched only by the running worker or at a safepoint.
 unsafe impl Send for Runtime {}
 unsafe impl Sync for Runtime {}
 
-/// One task's execution state: call stack, register file, regions and program counter, plus scheduler bookkeeping.
+/// One task's execution state: call stack, register file, regions and program counter.
 pub struct TaskContext {
     pub call_stack: Vec<Frame>,
     pub registers: Vec<Value>,
@@ -159,28 +162,30 @@ pub struct TaskContext {
     pub current_code: usize,
     /// Task-local regions; allocates nothing until the first region allocation.
     pub arenas: ArenaStack,
-    /// While a generator body runs on `arenas`, the stacks it displaced, each with the call depth of that generator frame.
+    /// The stacks a running generator body displaced, with the call depth of its frame.
     pub arena_saves: Vec<(usize, Box<ArenaStack>)>,
-    /// Segment bytes held by `arena_saves`; they still count toward the stack limit.
+    /// Segment bytes held by `arena_saves`.
     pub saved_arena_bytes: usize,
     pub(crate) shared: Arc<sched::TaskShared>,
-    /// Scheduler identity: `0` is the main task, [`Runtime::acquire_task`] assigns the rest.
+    /// Scheduler identity: `0` is the main task.
     pub task_id: u64,
-    /// Reduction budget: [`Runtime::safepoint_poll`] spends one unit per safepoint while other tasks wait, and at zero the next `step` yields.
+    /// Reduction budget; the next `step` yields at zero.
     pub budget: u32,
-    /// Instructions dispatched since the last [`Runtime::safepoint_poll`]; reset by every poll.
+    /// Instructions dispatched since the last safepoint poll.
     pub instrs_since_safepoint: u32,
-    /// Parked on a platform request; the re-executed `CALLNATIVE` collects its response.
+    /// Parked on a platform request.
     pub awaiting_platform: bool,
-    /// Parked at a `SCOPEEXIT` for children: the scheduler re-checks the scope's `pending` as it parks the task, and a finishing child wakes only a task with this set.
+    /// Parked at a `SCOPEEXIT` for children.
     pub scope_parked: bool,
-    /// This task's own `Task<T>` handle, if it was spawned; the scheduler writes completion into it and wakes whoever joined it.
+    /// This task's own `Task<T>` handle, if it was spawned.
     pub handle: Option<NonNull<ObjectHeader>>,
-    /// `Shared` cells whose writer turn this task holds; released without a commit when it ends. A mark-only GC root.
+    /// `Shared` cells whose writer turn this task holds.
     pub held_turns: Vec<NonNull<ObjectHeader>>,
-    /// `Sender` handles this task owns; each is closed when the task ends. A mark-only GC root.
+    /// Counting cells this task took a permit from, one entry per permit.
+    pub held_permits: Vec<NonNull<ObjectHeader>>,
+    /// `Sender` handles this task owns.
     pub owned_senders: Vec<NonNull<ObjectHeader>>,
-    /// A `send` on a rendezvous channel waiting to be taken: `(channel id, the take count that completes it)`.
+    /// A `send` on a rendezvous channel waiting to be taken.
     pub handoff: Option<(u64, u64)>,
     /// Runs only on the home thread (`std.task.pin`).
     pub pinned: bool,
@@ -207,6 +212,7 @@ impl Default for TaskContext {
             scope_parked: false,
             handle: None,
             held_turns: Vec::new(),
+            held_permits: Vec::new(),
             owned_senders: Vec::new(),
             handoff: None,
             pinned: false,
@@ -215,7 +221,7 @@ impl Default for TaskContext {
 }
 
 impl TaskContext {
-    /// The entry task: one frame and a register file sized to the first code object, with a floor of 256 slots.
+    /// The entry task: one frame and a register file sized to the first code object.
     pub fn entry(rt: &Runtime) -> Self {
         let initial_reg_count = rt
             .code_objects
@@ -245,6 +251,7 @@ impl TaskContext {
             scope_parked: false,
             handle: None,
             held_turns: Vec::new(),
+            held_permits: Vec::new(),
             owned_senders: Vec::new(),
             handoff: None,
             pinned: false,
@@ -291,7 +298,14 @@ impl Runtime {
             schedule_seed: None,
             budget_stream: std::sync::atomic::AtomicU64::new(0),
             max_stack_slots: DEFAULT_MAX_STACK_BYTES / std::mem::size_of::<Value>(),
+            reduction_limit: 0,
+            reductions: std::sync::atomic::AtomicU64::new(0),
         }
+    }
+
+    /// Ends the run with an error once it has spent `limit` safepoint hits; `0` is no limit.
+    pub fn set_reduction_limit(&mut self, limit: u64) {
+        self.reduction_limit = limit;
     }
 
     /// Caps the register file of every task at `bytes`.
@@ -333,7 +347,7 @@ impl Runtime {
         *self.globals.lock().unwrap() = vec![Value::null(); count];
     }
 
-    /// Installs a heap; must happen before any allocation, and the previous heap's objects are not migrated.
+    /// Installs a heap before any allocation.
     pub fn set_heap(&mut self, heap: GcHook) {
         self.heap = heap;
         self.heap_id = mutator::next_heap_id();
@@ -370,6 +384,9 @@ impl Runtime {
 
     pub fn safepoint_poll(&self, task: &mut TaskContext) -> Result<(), String> {
         task.instrs_since_safepoint = 0;
+        if self.reduction_limit != 0 && self.reductions.fetch_add(1, std::sync::atomic::Ordering::Relaxed) >= self.reduction_limit {
+            return Err(format!("reduction limit of {} reached", self.reduction_limit));
+        }
         self.gc_safepoint(task)?;
         if self.ready_len.load(std::sync::atomic::Ordering::Relaxed) != 0 {
             task.budget = task.budget.saturating_sub(1);
@@ -389,7 +406,7 @@ impl Runtime {
         self.heap_installed.then(|| self.heap.stats())
     }
 
-    /// Objects allocated by block size (see [`contracts::Heap::size_histogram`]); empty without a collector.
+    /// Objects allocated by block size; empty without a collector.
     pub fn size_histogram(&self) -> Vec<u64> {
         self.heap.size_histogram()
     }
@@ -431,19 +448,19 @@ impl Runtime {
 pub(crate) const TEST_WORKERS_ENV: &str = "MOTE_TEST_WORKERS";
 
 impl Runtime {
-    /// Runs a fresh entry task and every task it spawns on [`TEST_WORKERS_ENV`] workers (default 1); returns the finished main task.
+    /// Runs a fresh entry task and every task it spawns, and returns the finished main task.
     pub fn run_entry(&mut self) -> Result<TaskContext, String> {
         let main = TaskContext::entry(self);
         self.run_task(main)
     }
 
-    /// [`run_entry`](Self::run_entry) on exactly `workers` workers.
+    /// Runs the entry task on exactly `workers` workers.
     pub fn run_entry_on(&mut self, workers: usize) -> Result<TaskContext, String> {
         let main = TaskContext::entry(self);
         self.run_main_parallel(main, workers.max(1))
     }
 
-    /// [`run_entry`](Self::run_entry) for a prepared main task.
+    /// Runs a prepared main task and every task it spawns.
     pub(crate) fn run_task(&mut self, main: TaskContext) -> Result<TaskContext, String> {
         let workers = std::env::var(TEST_WORKERS_ENV)
             .ok()
@@ -474,7 +491,7 @@ impl Runtime {
         self.native_resolver = Some(resolver);
     }
 
-    /// Resolve the program's native table by name; fails once, naming every missing native.
+    /// Resolves the program's native table by name.
     pub fn set_native_table(&mut self, names: &[String]) -> Result<(), String> {
         if names.is_empty() {
             return Ok(());
@@ -524,7 +541,7 @@ impl TaskContext {
         (top.base + count).min(self.registers.len())
     }
 
-    /// Nulls every register above [`live_register_extent`](Self::live_register_extent), which may hold dangling pointers from returned callees.
+    /// Nulls every register above the live extent.
     pub(crate) fn clear_dead_registers(&mut self, code_objects: &[CodeObject]) {
         if self.call_stack.is_empty() {
             return;

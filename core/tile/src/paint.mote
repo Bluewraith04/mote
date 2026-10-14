@@ -1,0 +1,663 @@
+/// Lays an element tree out in cells and paints it on a `Screen`.
+
+import .element
+import .screen
+
+fn imax(a: Int, b: Int) -> Int {
+    if a > b { return a }
+    return b
+}
+
+fn imin(a: Int, b: Int) -> Int {
+    if a < b { return a }
+    return b
+}
+
+pub class Size {
+    pub w: Int
+    pub h: Int
+}
+
+/// A rectangle of cells that runs `f` on the state when it is clicked.
+pub class Hit<S> {
+    pub x: Int
+    pub y: Int
+    pub w: Int
+    pub h: Int
+    pub f: (var S) -> Null
+}
+
+/// A frame being painted: the screen, the click regions, the focused input and the clip.
+pub class Canvas<S> {
+    pub var scr: screen.Screen
+    pub var hits: List<Hit<S>>
+    pub var caret_col: Int
+    pub var caret_row: Int
+    pub var input: List<element.Element<S>>
+    pub var scrolls: List<Int>
+    memo: List<Int>
+    var x0: Int
+    var y0: Int
+    var x1: Int
+    var y1: Int
+
+    fn put(var self, col: Int, row: Int, ch: String, fg: Int, bg: Int, bits: Int) {
+        if col < self.x0 || col >= self.x1 || row < self.y0 || row >= self.y1 { return }
+        var b = bg
+        if b < 0 { b = self.scr.bg_at(col, row) }
+        var shown = ch
+        if ch == "" && col == self.x0 { shown = " " }
+        self.scr.set(col, row, shown, fg, b, bits)
+    }
+
+    fn fill(var self, x: Int, y: Int, w: Int, h: Int, fg: Int, bg: Int, bits: Int) {
+        let lx = imax(x, self.x0)
+        let ly = imax(y, self.y0)
+        let rx = imin(x + w, self.x1)
+        let ry = imin(y + h, self.y1)
+        self.scr.fill_rect(imax(lx, 0), imax(ly, 0), imin(rx, self.scr.cols), imin(ry, self.scr.rows), fg, bg, bits)
+    }
+
+    fn write(var self, x: Int, y: Int, cells: List<screen.Cell>) {
+        var k = 0
+        for cell in cells {
+            var ch = cell.ch
+            if k + 1 < cells.len() && cells.get(k + 1).ch == "" && x + k + 1 >= self.x1 { ch = " " }
+            self.put(x + k, y, ch, cell.fg, cell.bg, cell.bits)
+            k = k + 1
+        }
+    }
+
+    fn write_glyphs(var self, x: Int, y: Int, glyphs: List<String>, fg: Int, bg: Int, bits: Int) {
+        if y < self.y0 || y >= self.y1 { return }
+        self.scr.write_run(x, y, glyphs, fg, bg, bits, self.x0, self.x1)
+    }
+
+    fn write_text(var self, x: Int, y: Int, text: String, fg: Int, bg: Int, bits: Int) {
+        self.write_glyphs(x, y, screen.glyphs(text), fg, bg, bits)
+    }
+
+    fn hit(var self, x: Int, y: Int, w: Int, h: Int, f: (var S) -> Null) {
+        let lx = imax(x, self.x0)
+        let ly = imax(y, self.y0)
+        let rx = imin(x + w, self.x1)
+        let ry = imin(y + h, self.y1)
+        if rx <= lx || ry <= ly { return }
+        self.hits.push(Hit { x: lx, y: ly, w: rx - lx, h: ry - ly, f: f })
+    }
+}
+
+/// Paints `root` on a screen of `cols` by `rows` cells.
+pub fn draw<S>(root: element.Element<S>, cols: Int, rows: Int) -> Canvas<S> {
+    return draw_after(root, cols, rows, [])
+}
+
+/// Paints `root` as `draw` does, with lists continuing from the `scrolls` of the frame before.
+pub fn draw_after<S>(root: element.Element<S>, cols: Int, rows: Int, scrolls: List<Int>) -> Canvas<S> {
+    var c: Canvas<S> = Canvas { scr: screen.Screen.new(cols, rows), hits: [], caret_col: -1, caret_row: -1, input: [], scrolls: [], memo: scrolls, x0: 0, y0: 0, x1: cols, y1: rows }
+    place(root, 0, 0, cols, rows, c)
+    return c
+}
+
+fn sub(cells: List<screen.Cell>, start: Int, end: Int) -> List<screen.Cell> {
+    var out: List<screen.Cell> = []
+    var i = start
+    while i < end && i < cells.len() {
+        out.push(cells.get(i))
+        i = i + 1
+    }
+    return out
+}
+
+fn sub_glyphs(glyphs: List<String>, start: Int, end: Int) -> List<String> {
+    var out: List<String> = []
+    var i = start
+    while i < end && i < glyphs.len() {
+        out.push(glyphs.get(i))
+        i = i + 1
+    }
+    return out
+}
+
+/// Where a line of `chs` breaks to fit `width`.
+fn wrap_spans(chs: List<String>, width: Int) -> List<Int> {
+    var out: List<Int> = []
+    var start = 0
+    var i = 0
+    while i < chs.len() {
+        if i - start + 1 > width {
+            var sp = -1
+            var j = i
+            while j > start && sp < 0 {
+                if chs.get(j) == " " { sp = j }
+                j = j - 1
+            }
+            if sp > start {
+                out.push(start)
+                out.push(sp)
+                start = sp + 1
+            } else {
+                var cut = i
+                if chs.get(i) == "" {
+                    cut = i - 1
+                    if cut <= start { cut = i + 1 }
+                }
+                out.push(start)
+                out.push(cut)
+                start = cut
+            }
+        }
+        i = i + 1
+    }
+    if start < chs.len() || out.len() == 0 {
+        out.push(start)
+        out.push(chs.len())
+    }
+    return out
+}
+
+fn wrap_line(line: List<screen.Cell>, width: Int) -> List<List<screen.Cell>> {
+    var chs: List<String> = []
+    for cell in line { chs.push(cell.ch) }
+    let spans = wrap_spans(chs, width)
+    var out: List<List<screen.Cell>> = []
+    var i = 0
+    while i < spans.len() {
+        out.push(sub(line, spans.get(i), spans.get(i + 1)))
+        i = i + 2
+    }
+    return out
+}
+
+/// The lines of a plain text element's glyphs.
+fn glyph_lines<S>(e: element.Element<S>, width: Int) -> List<List<String>> {
+    if !e.wrapped || width < 1 { return e.lines }
+    var out: List<List<String>> = []
+    for line in e.lines {
+        if line.len() <= width {
+            out.push(line)
+        } else {
+            let spans = wrap_spans(line, width)
+            var i = 0
+            while i < spans.len() {
+                out.push(sub_glyphs(line, spans.get(i), spans.get(i + 1)))
+                i = i + 2
+            }
+        }
+    }
+    return out
+}
+
+/// The lines of a rich text element.
+fn text_lines<S>(e: element.Element<S>, width: Int) -> List<List<screen.Cell>> {
+    var hard: List<List<screen.Cell>> = [[]]
+    var last = 0
+    for cell in element.styled(e) {
+        if cell.ch == "\n" {
+            hard.push([])
+            last = last + 1
+        } else {
+            var line = hard.get(last)
+            line.push(cell)
+            hard.set(last, line)
+        }
+    }
+    if !e.wrapped || width < 1 { return hard }
+    var out: List<List<screen.Cell>> = []
+    for line in hard {
+        for part in wrap_line(line, width) { out.push(part) }
+    }
+    return out
+}
+
+fn longest(lines: List<List<screen.Cell>>) -> Int {
+    var n = 0
+    for line in lines { n = imax(n, line.len()) }
+    return n
+}
+
+/// The rows of an input's glyphs plus one cell for the cursor.
+fn input_lines(glyphs: List<String>, width: Int) -> List<List<String>> {
+    var chs: List<String> = []
+    for g in glyphs { chs.push(g) }
+    chs.push("_")
+    var out: List<List<String>> = []
+    let spans = wrap_spans(chs, imax(1, width))
+    var i = 0
+    while i < spans.len() {
+        out.push(sub_glyphs(chs, spans.get(i), spans.get(i + 1)))
+        i = i + 2
+    }
+    return out
+}
+
+/// How many columns the numbers of a list take.
+fn number_width<S>(e: element.Element<S>) -> Int {
+    if !e.nums { return 0 }
+    return "${e.items.len()}".len() + 2
+}
+
+/// The rows of item `index` of a list at `width`.
+fn item_lines<S>(e: element.Element<S>, index: Int, width: Int) -> List<List<String>> {
+    var lead = number_width(e)
+    var prefix: List<String> = []
+    if e.nums {
+        var digits = "${index + 1}"
+        while digits.len() + 2 < lead { digits = " " + digits }
+        for g in screen.glyphs(digits + ". ") { prefix.push(g) }
+    }
+    let glyphs = screen.glyphs(e.items.get(index))
+    if !e.wrapped || width < 1 {
+        var one: List<String> = []
+        for g in prefix { one.push(g) }
+        for g in glyphs { one.push(g) }
+        return [one]
+    }
+    if lead == 0 { lead = 2 }
+    let room = imax(1, width - lead)
+    var out: List<List<String>> = []
+    let spans = wrap_spans(glyphs, room)
+    var i = 0
+    while i < spans.len() {
+        var line: List<String> = []
+        if i == 0 {
+            for g in prefix { line.push(g) }
+        } else {
+            var pad = 0
+            while pad < lead {
+                line.push(" ")
+                pad = pad + 1
+            }
+        }
+        for g in sub_glyphs(glyphs, spans.get(i), spans.get(i + 1)) { line.push(g) }
+        out.push(line)
+        i = i + 2
+    }
+    return out
+}
+
+/// The size an element wants given `avail` columns (-1 when unbounded).
+fn measure<S>(e: element.Element<S>, avail: Int) -> Size {
+    if e.w >= 0 && e.h >= 0 { return Size { w: e.w, h: e.h } }
+    var w = 0
+    var h = 0
+    var inner = -1
+    if avail >= 0 { inner = imax(0, avail - 2 * e.padn) }
+    match e.kind {
+        element.Kind.Text => {
+            if e.runs.len() > 0 {
+                let lines = text_lines(e, inner)
+                w = longest(lines)
+                h = lines.len()
+            } else {
+                let lines = glyph_lines(e, inner)
+                for line in lines { w = imax(w, line.len()) }
+                h = lines.len()
+            }
+            if e.wrapped && inner >= 0 { w = imin(w, inner) }
+        }
+        element.Kind.VStack => {
+            var n = 0
+            for k in e.kids {
+                let s = measure(k, inner)
+                w = imax(w, s.w)
+                if k.w >= 0 { w = imax(w, k.w) }
+                if k.h >= 0 { h = h + k.h } else { h = h + s.h }
+                n = n + 1
+            }
+            if n > 1 { h = h + e.gapn * (n - 1) }
+        }
+        element.Kind.HStack => {
+            var n = 0
+            var wants: List<Int> = []
+            var sizes: List<Size> = []
+            for k in e.kids {
+                let s = measure(k, inner)
+                sizes.push(s)
+                if k.w >= 0 { wants.push(k.w) } else { wants.push(s.w) }
+                w = w + wants.get(n)
+                n = n + 1
+            }
+            if n > 1 { w = w + e.gapn * (n - 1) }
+            var fit = wants
+            if inner >= 0 { fit = spread(e.kids, wants, inner, e.gapn) }
+            var i = 0
+            for k in e.kids {
+                var kh = sizes.get(i).h
+                if fit.get(i) < wants.get(i) && k.w < 0 { kh = measure(k, fit.get(i)).h }
+                h = imax(h, kh)
+                if k.h >= 0 { h = imax(h, k.h) }
+                i = i + 1
+            }
+        }
+        element.Kind.Frame => {
+            var kid_w = 0
+            var kid_h = 0
+            if e.kids.len() > 0 {
+                var room = -1
+                if inner >= 0 { room = imax(0, inner - 2) }
+                let s = measure(e.kids.get(0), room)
+                kid_w = s.w
+                kid_h = s.h
+            }
+            w = imax(kid_w + 2, screen.glyphs(e.text).len() + 4)
+            h = kid_h + 2
+        }
+        element.Kind.List => {
+            if e.wrapped || e.nums {
+                var index = 0
+                while index < e.items.len() {
+                    let rows = item_lines(e, index, inner)
+                    for line in rows { w = imax(w, line.len()) }
+                    h = h + rows.len()
+                    index = index + 1
+                }
+                if e.wrapped && inner >= 0 { w = imin(w, inner) }
+            } else {
+                for item in e.items { w = imax(w, screen.glyphs(item).len()) }
+                h = e.items.len()
+            }
+        }
+        element.Kind.Input => {
+            w = screen.glyphs(e.text).len() + 1
+            h = 1
+            if inner >= 1 && w > inner {
+                h = input_lines(screen.glyphs(e.text), inner).len()
+                w = inner
+            }
+        }
+        element.Kind.Scroll => {
+            var n = 0
+            for k in e.kids {
+                if k.h >= 0 {
+                    h = h + k.h
+                    if k.w >= 0 { w = imax(w, k.w) }
+                } else {
+                    let s = measure(k, inner)
+                    w = imax(w, s.w)
+                    h = h + s.h
+                }
+                n = n + 1
+            }
+            if n > 1 { h = h + e.gapn * (n - 1) }
+        }
+        element.Kind.Spacer => { }
+    }
+    var out_w = w + 2 * e.padn
+    var out_h = h + 2 * e.padn
+    if e.w >= 0 { out_w = e.w }
+    if e.h >= 0 { out_h = e.h }
+    return Size { w: out_w, h: out_h }
+}
+
+/// Splits `total` cells among the children.
+fn spread<S>(kids: List<element.Element<S>>, wants: List<Int>, total: Int, gap: Int) -> List<Int> {
+    var sizes: List<Int> = []
+    var used = 0
+    var shares = 0
+    var last = -1
+    var i = 0
+    for k in kids {
+        sizes.push(wants.get(i))
+        used = used + wants.get(i)
+        if k.shr > 0 {
+            shares = shares + k.shr
+            last = i
+        }
+        i = i + 1
+    }
+    if kids.len() > 1 { used = used + gap * (kids.len() - 1) }
+    let free = total - used
+    if free < 0 {
+        var deficit = 0 - free
+        var j = kids.len() - 1
+        while j >= 0 && deficit > 0 {
+            if kids.get(j).shr > 0 {
+                let cut = imin(sizes.get(j), deficit)
+                sizes.set(j, sizes.get(j) - cut)
+                deficit = deficit - cut
+            }
+            j = j - 1
+        }
+    }
+    if free > 0 && shares > 0 {
+        var given = 0
+        var j = 0
+        for k in kids {
+            if k.shr > 0 {
+                var extra = free * k.shr / shares
+                if j == last { extra = free - given }
+                sizes.set(j, sizes.get(j) + extra)
+                given = given + extra
+            }
+            j = j + 1
+        }
+    }
+    return sizes
+}
+
+fn place_stack<S>(e: element.Element<S>, vertical: Bool, x: Int, y: Int, w: Int, h: Int, var c: Canvas<S>) {
+    let ix = x + e.padn
+    let iy = y + e.padn
+    let iw = imax(0, w - 2 * e.padn)
+    let ih = imax(0, h - 2 * e.padn)
+    var wants: List<Int> = []
+    for k in e.kids {
+        let s = measure(k, iw)
+        if vertical { wants.push(s.h) } else { wants.push(s.w) }
+    }
+    var total = iw
+    if vertical { total = ih }
+    let sizes = spread(e.kids, wants, total, e.gapn)
+    var at = 0
+    var i = 0
+    for k in e.kids {
+        if vertical {
+            var kw = iw
+            if k.w >= 0 { kw = k.w }
+            place(k, ix, iy + at, kw, sizes.get(i), c)
+        } else {
+            var kh = ih
+            if k.h >= 0 { kh = k.h }
+            place(k, ix + at, iy, sizes.get(i), kh, c)
+        }
+        at = at + sizes.get(i) + e.gapn
+        i = i + 1
+    }
+}
+
+fn place_frame<S>(e: element.Element<S>, x: Int, y: Int, w: Int, h: Int, var c: Canvas<S>) {
+    if w < 2 || h < 2 { return }
+    c.fill(x, y, w, h, e.fgc, e.bgc, 0)
+    let last = x + w - 1
+    let bottom = y + h - 1
+    var col = x + 1
+    while col < last {
+        c.put(col, y, "─", e.fgc, e.bgc, e.bits)
+        c.put(col, bottom, "─", e.fgc, e.bgc, e.bits)
+        col = col + 1
+    }
+    var row = y + 1
+    while row < bottom {
+        c.put(x, row, "│", e.fgc, e.bgc, e.bits)
+        c.put(last, row, "│", e.fgc, e.bgc, e.bits)
+        row = row + 1
+    }
+    c.put(x, y, "┌", e.fgc, e.bgc, e.bits)
+    c.put(last, y, "┐", e.fgc, e.bgc, e.bits)
+    c.put(x, bottom, "└", e.fgc, e.bgc, e.bits)
+    c.put(last, bottom, "┘", e.fgc, e.bgc, e.bits)
+    if e.text.len() > 0 {
+        c.write_text(x + 2, y, " " + e.text + " ", e.fgc, e.bgc, e.bits | 1)
+    }
+    if e.kids.len() > 0 {
+        let p = 1 + e.padn
+        place(e.kids.get(0), x + p, y + p, imax(0, w - 2 * p), imax(0, h - 2 * p), c)
+    }
+}
+
+/// The first item a list shows.
+fn list_top<S>(e: element.Element<S>, w: Int, h: Int, var c: Canvas<S>) -> Int {
+    let slot = c.scrolls.len()
+    var start = e.top
+    var follow = true
+    if c.memo.len() > slot + 2 {
+        if c.memo.get(slot) == e.top { start = c.memo.get(slot + 1) }
+        follow = c.memo.get(slot + 2) != e.selected
+    }
+    start = imax(0, imin(start, e.items.len() - 1))
+    if follow && e.selected >= 0 && e.selected < e.items.len() {
+        if e.selected < start {
+            start = e.selected
+        } else {
+            var used = 0
+            var low = e.selected
+            var i = e.selected
+            while i >= start {
+                let rows = item_lines(e, i, w).len()
+                if used + rows > h && i < e.selected { break }
+                used = used + rows
+                low = i
+                i = i - 1
+            }
+            start = low
+        }
+    }
+    var shown = 0
+    var j = start
+    while j < e.items.len() && shown < h {
+        shown = shown + item_lines(e, j, w).len()
+        j = j + 1
+    }
+    while start > 0 && shown < h {
+        let rows = item_lines(e, start - 1, w).len()
+        if shown + rows > h { break }
+        shown = shown + rows
+        start = start - 1
+    }
+    c.scrolls.push(e.top)
+    c.scrolls.push(start)
+    c.scrolls.push(e.selected)
+    return start
+}
+
+fn place_list<S>(e: element.Element<S>, x: Int, y: Int, w: Int, h: Int, var c: Canvas<S>) {
+    var row = 0
+    var index = list_top(e, w, h, c)
+    while row < h && index < e.items.len() {
+        let lines = item_lines(e, index, w)
+        let shown = imin(lines.len(), h - row)
+        var bits = e.bits
+        if index == e.selected { bits = bits | 8 }
+        var r = 0
+        while r < shown {
+            if index == e.selected { c.fill(x, y + row + r, w, 1, e.fgc, e.bgc, bits) }
+            c.write_glyphs(x, y + row + r, lines.get(r), e.fgc, e.bgc, bits)
+            r = r + 1
+        }
+        if e.pick.len() > 0 {
+            let pick = e.pick.get(0)
+            let picked = index
+            c.hit(x, y + row, w, shown, |var s| { pick(s, picked) })
+        }
+        row = row + shown
+        index = index + 1
+    }
+}
+
+fn place_scroll<S>(e: element.Element<S>, x: Int, y: Int, w: Int, h: Int, var c: Canvas<S>) {
+    var at = 0 - e.top
+    for k in e.kids {
+        if at >= h { break }
+        var kh = k.h
+        if kh < 0 { kh = measure(k, w).h }
+        if at + kh > 0 { place(k, x, y + at, w, kh, c) }
+        at = at + kh + e.gapn
+    }
+}
+
+/// The rows an element takes at `width` columns (-1 for no limit).
+pub fn height<S>(e: element.Element<S>, width: Int) -> Int {
+    return measure(e, width).h
+}
+
+fn place_text<S>(e: element.Element<S>, x: Int, y: Int, w: Int, h: Int, var c: Canvas<S>) {
+    let iw = imax(0, w - 2 * e.padn)
+    if e.runs.len() == 0 {
+        var r = 0
+        for line in glyph_lines(e, iw) {
+            var shift = 0
+            if e.align == 1 { shift = imax(0, (iw - line.len()) / 2) }
+            if e.align == 2 { shift = imax(0, iw - line.len()) }
+            if r < h - 2 * e.padn {
+                c.write_glyphs(x + e.padn + shift, y + e.padn + r, line, e.fgc, e.bgc, e.bits)
+            }
+            r = r + 1
+        }
+        return
+    }
+    let lines = text_lines(e, iw)
+    var row = 0
+    for line in lines {
+        var shift = 0
+        if e.align == 1 { shift = imax(0, (iw - line.len()) / 2) }
+        if e.align == 2 { shift = imax(0, iw - line.len()) }
+        if row < h - 2 * e.padn {
+            c.write(x + e.padn + shift, y + e.padn + row, line)
+        }
+        row = row + 1
+    }
+}
+
+/// Paints the text of an input onto the rows below when it is too long for one row.
+fn place_input<S>(e: element.Element<S>, x: Int, y: Int, w: Int, h: Int, var c: Canvas<S>) {
+    let lines = input_lines(screen.glyphs(e.text), w)
+    let needed = lines.len()
+    let rows = imax(1, imin(h, needed))
+    let first = needed - rows
+    c.fill(x, y, w, rows, e.fgc, e.bgc, e.bits | 4)
+    var row = 0
+    while row < rows {
+        let line = lines.get(first + row)
+        var shown = line.len()
+        if first + row == needed - 1 { shown = shown - 1 }
+        c.write_glyphs(x, y + row, sub_glyphs(line, 0, shown), e.fgc, e.bgc, e.bits | 4)
+        row = row + 1
+    }
+    if e.focused {
+        c.caret_col = x + lines.get(needed - 1).len() - 1
+        c.caret_row = y + rows - 1
+        c.input = [e]
+    }
+}
+
+/// Paints `e` in the rectangle.
+fn place<S>(e: element.Element<S>, x: Int, y: Int, w: Int, h: Int, var c: Canvas<S>) {
+    if w <= 0 || h <= 0 { return }
+    let sx0 = c.x0
+    let sy0 = c.y0
+    let sx1 = c.x1
+    let sy1 = c.y1
+    c.x0 = imax(c.x0, x)
+    c.y0 = imax(c.y0, y)
+    c.x1 = imin(c.x1, x + w)
+    c.y1 = imin(c.y1, y + h)
+    if e.bgc >= 0 && e.kind != element.Kind.Frame && e.kind != element.Kind.List && e.kind != element.Kind.Input {
+        c.fill(x, y, w, h, e.fgc, e.bgc, 0)
+    }
+    if e.click.len() > 0 { c.hit(x, y, w, h, e.click.get(0)) }
+    match e.kind {
+        element.Kind.Text => { place_text(e, x, y, w, h, c) }
+        element.Kind.VStack => { place_stack(e, true, x, y, w, h, c) }
+        element.Kind.HStack => { place_stack(e, false, x, y, w, h, c) }
+        element.Kind.Frame => { place_frame(e, x, y, w, h, c) }
+        element.Kind.List => { place_list(e, x, y, w, h, c) }
+        element.Kind.Input => { place_input(e, x, y, w, h, c) }
+        element.Kind.Scroll => { place_scroll(e, x, y, w, h, c) }
+        element.Kind.Spacer => { }
+    }
+    c.x0 = sx0
+    c.y0 = sy0
+    c.x1 = sx1
+    c.y1 = sy1
+}

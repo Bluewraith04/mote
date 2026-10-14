@@ -1,0 +1,28 @@
+/// same — `Same` writes `same`, a field-by-field comparison, for a struct or class that lists it.
+
+import { * } from std.prelude
+import std.meta as meta
+import std.string as str
+
+/// `a.same(b)` is true when every field of `a` equals the field of `b`.
+@generate(same_modifier)
+pub trait Same {
+    fn same(self, other: Self) -> Bool
+}
+
+@modifier
+pub fn same_modifier(d: meta.Decl) -> Result<meta.Additions, meta.Diagnostic> {
+    match d.kind {
+        meta.DeclKind.Enum => { return Err(meta.Diagnostic.new("`" + d.name + "` is an enum, and `Same` compares the fields of a struct or class")) }
+        _ => {}
+    }
+    var tests: List<String> = []
+    for f in d.fields {
+        tests.push("self." + f.name + " == other." + f.name)
+    }
+    var body = "true"
+    if tests.len() > 0 {
+        body = str.join(tests, " && ")
+    }
+    return Ok(meta.Additions.new("fn same(self, other: Self) -> Bool { return " + body + " }"))
+}

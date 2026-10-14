@@ -84,6 +84,45 @@ fn test_mutability_rejection() {
     assert!(err_str.contains("Mutability Violation"));
 }
 
+#[test]
+fn test_a_literal_may_leave_out_a_defaulted_field() {
+    let src = "class Box {\n    a: Int = 40\n    b: Int = 1 + 1\n    c: Int\n}\nfn main() -> Int {\n    let x = Box { c: 5 }\n    let y = Box { a: 1, b: 2, c: 3 }\n    return x.a + x.b + x.c + y.a + y.b + y.c\n}\n";
+    assert_eq!(run_top(src), 40 + 2 + 5 + 1 + 2 + 3);
+}
+
+#[test]
+fn test_a_default_is_evaluated_for_each_literal() {
+    let src = "class Bag {\n    var items: List<Int> = []\n}\nfn main() -> Int {\n    var a = Bag { }\n    let b = Bag { }\n    a.items.push(1)\n    return a.items.len() * 10 + b.items.len()\n}\n";
+    assert_eq!(run_top(src), 10);
+}
+
+#[test]
+fn test_an_enum_variant_literal_may_leave_out_a_defaulted_field() {
+    let src = "enum Shape {\n    Rect { w: Int = 2, h: Int }\n}\nfn main() -> Int {\n    let s = Shape.Rect { h: 5 }\n    match s {\n        Rect { w, h } => { return w * 10 + h }\n    }\n}\n";
+    assert_eq!(run_top(src), 25);
+}
+
+#[test]
+fn test_a_literal_still_needs_a_field_with_no_default() {
+    let src = "struct P {\n    a: Int = 1\n    b: Int\n}\nfn main() -> Int {\n    let p = P { a: 2 }\n    return p.a\n}\n";
+    let err = Compiler::compile(src, "<input>").err().expect("a literal without `b` is an error");
+    assert!(err.contains("missing field(s) `b`"), "{err}");
+}
+
+#[test]
+fn test_a_default_of_the_wrong_type_is_an_error() {
+    let err = Compiler::compile("struct P {\n    a: Int = \"x\"\n}\nfn main() {}\n", "<input>").err().expect("mistyped default");
+    assert!(err.contains("the field is 'Int' but its default is 'String'"), "{err}");
+}
+
+#[test]
+fn test_a_default_cannot_name_another_field_or_self() {
+    let err = Compiler::compile("struct P {\n    a: Int = 1\n    b: Int = a\n}\nfn main() {}\n", "<input>").err().expect("a default naming a field");
+    assert!(err.contains("Undefined identifier 'a'"), "{err}");
+    let err = Compiler::compile("struct P {\n    a: Int = self.b\n    b: Int = 1\n}\nfn main() {}\n", "<input>").err().expect("a default naming self");
+    assert!(err.contains("self"), "{err}");
+}
+
 fn eval_main(body: &str) -> i64 {
     let source = format!("fn main() -> Int {{\n{body}\n}}\n");
     Compiler::run(&source)
@@ -461,6 +500,67 @@ fn test_e2e_list_push_pop_set_clear() {
 fn test_e2e_list_is_empty() {
     assert_eq!(eval_main("let xs: List<Int> = []\nif xs.is_empty() {\n    return 1\n}\nreturn 0"), 1);
     assert_eq!(eval_main("let xs = [1]\nif xs.is_empty() {\n    return 1\n}\nreturn 0"), 0);
+}
+
+#[test]
+fn test_e2e_list_slice_reads_are_copies() {
+    assert_eq!(eval_main("let xs = [0, 1, 2, 3, 4, 5]\nreturn xs[1..4].len() * 10 + xs[1..4].get(0)"), 31);
+    assert_eq!(eval_main("let xs = [0, 1, 2, 3, 4, 5]\nreturn xs[..2].len() * 100 + xs[4..].len() * 10 + xs[..].len()"), 226);
+    assert_eq!(eval_main("let xs = [0, 1, 2, 3, 4, 5]\nreturn xs[2..=3].len()"), 2);
+    assert_eq!(eval_main("let xs = [0, 1, 2, 3, 4, 5]\nlet i = 1\nreturn xs[i..i + 3].get(2)"), 3);
+    assert_eq!(eval_main("var xs = [1, 2, 3]\nlet c = xs[0..2]\nxs[0..2] = 9\nreturn c.get(0) * 10 + xs.get(0)"), 19);
+    assert_eq!(eval_main("let s = \"hello world\"\nreturn s[6..].len() * 10 + s[..5].len()"), 55);
+}
+
+#[test]
+fn test_e2e_list_slice_assignment_broadcasts_or_copies_a_list_of_the_same_length() {
+    assert_eq!(eval_main("var xs = [1, 2, 3, 4]\nxs[1..3] = 0\nreturn xs.get(0) + xs.get(1) + xs.get(2) + xs.get(3)"), 5);
+    assert_eq!(eval_main("var xs = [1, 2, 3, 4]\nxs[1..] = [7, 8, 9]\nreturn xs.get(1) * 100 + xs.get(2) * 10 + xs.get(3)"), 789);
+    assert_eq!(eval_main("var xs = [1, 2, 3, 4]\nxs[0..2] = xs[2..4]\nreturn xs.get(0) * 10 + xs.get(1)"), 34);
+    assert_eq!(eval_main("var xs = [1, 2, 3]\nxs[1..1] = []\nreturn xs.len()"), 3);
+    assert_eq!(eval_main("var g = [[1], [2], [3]]\ng[0..2] = [[9], [8]]\nreturn g.get(1).get(0)"), 8);
+}
+
+#[test]
+fn test_e2e_list_slice_step_reads_and_writes_every_sth_item() {
+    let digits = "var xs = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]\n";
+    let sum = |tail: &str| eval_main(&format!("{digits}{tail}"));
+    assert_eq!(sum("let s = xs[0..10..2]\nreturn s.len() * 100 + s.get(4)"), 508);
+    assert_eq!(sum("let s = xs[1..=9..3]\nreturn s.len() * 100 + s.get(2)"), 307);
+    assert_eq!(sum("let s = xs[..7..4]\nreturn s.len() * 100 + s.get(1)"), 204);
+    assert_eq!(sum("return xs[2..2..5].len()"), 0);
+    assert_eq!(sum("xs[1..10..3] = [91, 94, 97]\nreturn xs.get(1) + xs.get(4) + xs.get(7)"), 282);
+    assert_eq!(sum("xs[0..10..2] = 0\nreturn xs.get(0) + xs.get(1) + xs.get(2) + xs.get(3)"), 4);
+}
+
+#[test]
+fn test_e2e_list_slice_step_errors() {
+    let run = |body: &str| Compiler::run(&format!("fn main() -> Int {{\n{body}\n}}\nreturn main()\n")).unwrap_err();
+    assert!(run("let xs = [1, 2, 3]\nreturn xs[0..3..0].len()").contains("step must be positive, got 0"));
+    assert!(run("let xs = [1, 2, 3]\nlet s = -2\nreturn xs[0..3..s].len()").contains("step must be positive, got -2"));
+    assert!(run("var xs = [1, 2, 3, 4]\nxs[0..4..2] = [1]\nreturn 0").contains("needs 2 values, found 1"));
+    let check = |body: &str| Compiler::compile(&format!("fn main() {{\n{body}\n}}\n"), "x").unwrap_err();
+    assert!(check("let s = \"abcd\"\nlet t = s[0..4..2]").contains("takes 1 or 2 argument(s), but 3 were given"));
+    assert!(check("let xs = [1, 2]\nlet t = xs[0..2..\"a\"]").contains("bound expects 'Int'"));
+}
+
+#[test]
+fn test_e2e_list_slice_errors() {
+    let run = |body: &str| Compiler::run(&format!("fn main() -> Int {{\n{body}\n}}\nreturn main()\n")).unwrap_err();
+    assert!(run("var xs = [1, 2, 3]\nxs[0..2] = [1]\nreturn 0").contains("needs 2 values, found 1"));
+    assert!(run("let xs = [1, 2, 3]\nreturn xs[2..5].len()").contains("out of range"));
+    assert!(run("let xs = [1, 2, 3]\nreturn xs[-1..].len()").contains("out of range"));
+    assert!(run("let xs = [1, 2, 3]\nreturn xs[2..1].len()").contains("out of range"));
+}
+
+#[test]
+fn test_e2e_list_slice_checks() {
+    let check = |body: &str| Compiler::compile(&format!("fn main() {{\n{body}\n}}\n"), "x").unwrap_err();
+    assert!(check("var xs = [1, 2]\nxs[0..1] = \"a\"").contains("set_slice"));
+    assert!(check("var xs = [1, 2]\nxs[0..1][0] = 5").contains("a slice is a copy"));
+    assert!(check("var s = \"ab\"\ns[0..1] = \"x\"").contains("cannot be assigned into"));
+    assert!(check("var xs = [1, 2]\nxs[0..1] += 1").contains("a slice takes `=` only"));
+    assert!(check("let xs = [1, 2]\nlet y = xs[..=]").contains("`..=` needs an end"));
 }
 
 #[test]

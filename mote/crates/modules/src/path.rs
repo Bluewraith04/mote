@@ -13,7 +13,7 @@ impl CanonicalModuleId {
         &self.0
     }
 
-    /// The module name used in diagnostics: the file stem, with `mod.mote` and `lib.mote` named after their directory. Not unique and not identifier-safe.
+    /// The module name used in diagnostics.
     pub fn display_name(&self) -> &str {
         if let Some(std_name) = self.0.strip_prefix("<std>/") {
             return std_name;
@@ -30,7 +30,7 @@ impl CanonicalModuleId {
         }
     }
 
-    /// The module file path for diagnostics: relative to the current directory when under it, else the full path.
+    /// The module file path for diagnostics.
     pub(crate) fn display_path(&self) -> String {
         let full = Path::new(&self.0);
         let rel = std::env::current_dir()

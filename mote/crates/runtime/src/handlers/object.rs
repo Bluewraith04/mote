@@ -1,6 +1,4 @@
-//! Heap objects: `NEWOBJ GETFIELD SETFIELD TYPEOF`, and recorded types: `STAMP LOADTYPE STAMPT`. Field access and `TYPEOF`
-//! delegate to the leaf helpers in [`super::three_reg`] / [`super::two_reg`];
-//! `NEWOBJ` allocates through the worker's mutator.
+//! Heap object opcodes: allocation, field access, type queries and recorded types.
 
 use std::ptr::NonNull;
 
@@ -13,7 +11,7 @@ use crate::util::{decode_r2, decode_r3, decode_ri};
 use crate::machine::{ObjectStore, TypeTable};
 use crate::{Runtime, TaskContext, VmStatus};
 
-/// Allocate an object of `type_descriptors[bx]` through the worker's mutator.
+/// Allocates an object of `type_descriptors[bx]`.
 pub(crate) fn newobj<M: TypeTable + ObjectStore>(
     rt: &M,
     task: &mut TaskContext,
@@ -40,7 +38,7 @@ fn object_in(task: &TaskContext, reg: u8) -> Option<NonNull<ObjectHeader>> {
 }
 
 fn record(obj: NonNull<ObjectHeader>, desc: &TypeDescriptor) {
-    // SAFETY: a live object's header is writable and its descriptor outlives it; `desc` lives for the program.
+    // SAFETY: a live object's header is writable and its descriptor outlives it.
     unsafe {
         let header = &mut *obj.as_ptr();
         let current = header.type_ptr.as_ref();
@@ -50,7 +48,7 @@ fn record(obj: NonNull<ObjectHeader>, desc: &TypeDescriptor) {
     }
 }
 
-/// `STAMP rA, bx`: the object in `rA` records `type_descriptors[bx]`'s type, unless it already records one.
+/// `STAMP rA, bx` records `type_descriptors[bx]`'s type on the object in `rA`.
 pub fn stamp<M: TypeTable>(rt: &M, task: &mut TaskContext, operands: u32) -> Result<VmStatus, String> {
     let (reg, type_idx) = decode_ri(operands);
     let desc = rt.type_descriptors().get(type_idx as usize).ok_or_else(|| format!("Invalid type descriptor index: {type_idx}"))?;
@@ -61,7 +59,7 @@ pub fn stamp<M: TypeTable>(rt: &M, task: &mut TaskContext, operands: u32) -> Res
     Ok(VmStatus::Running)
 }
 
-/// `LOADTYPE rA, bx`: `rA` = the id of the type on `type_descriptors[bx]`, its register forms resolved in this frame, or `null`.
+/// `LOADTYPE rA, bx` loads the id of the type on `type_descriptors[bx]`, or `null`.
 pub(crate) fn loadtype(rt: &Runtime, task: &mut TaskContext, operands: u32) -> Result<VmStatus, String> {
     let (reg, idx) = decode_ri(operands);
     let term = rt
@@ -96,7 +94,7 @@ pub(crate) fn loadtype(rt: &Runtime, task: &mut TaskContext, operands: u32) -> R
     Ok(VmStatus::Running)
 }
 
-/// `STAMPT rA, rB`: the object in `rA` records the type whose id `rB` holds, unless it already records one.
+/// `STAMPT rA, rB` records the type whose id `rB` holds on the object in `rA`.
 pub(crate) fn stampt(rt: &Runtime, task: &mut TaskContext, operands: u32) -> Result<VmStatus, String> {
     let (a, b) = decode_r2(operands);
     let base = task.call_stack.last().unwrap().base;
@@ -155,7 +153,7 @@ pub(crate) fn istype(rt: &Runtime, task: &mut TaskContext, operands: u32) -> Res
     Ok(VmStatus::Running)
 }
 
-/// `ASTYPE rA, rB`: faults unless the value in `rA` fits the type whose id `rB` holds; a `null` `rB` passes.
+/// `ASTYPE rA, rB` faults unless the value in `rA` fits the type whose id `rB` holds.
 pub(crate) fn astype(rt: &Runtime, task: &mut TaskContext, operands: u32) -> Result<VmStatus, String> {
     let (a, b) = decode_r2(operands);
     let base = task.call_stack.last().unwrap().base;
@@ -186,7 +184,7 @@ fn is_some_cell(v: Value) -> bool {
     v.as_object_ptr().is_some_and(|p| unsafe { p.as_ref().type_ptr.as_ref().id } == SOME_TYPE_ID)
 }
 
-/// `SOME rA, rB`: `rA` = `rB`, or a new `Some` cell around it when `rB` is `None` or a cell.
+/// `SOME rA, rB` wraps `rB` in a `Some` cell when needed.
 pub fn some(rt: &Runtime, task: &mut TaskContext, operands: u32) -> Result<VmStatus, String> {
     let (a, b) = decode_r2(operands);
     let base = task.call_stack.last().unwrap().base;

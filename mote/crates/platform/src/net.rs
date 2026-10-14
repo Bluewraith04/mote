@@ -149,7 +149,7 @@ impl SystemNet {
         }
     }
 
-    /// Closes a socket; a listener or UDP socket answers its pollable, so the reactor can wake what waits on it.
+    /// Closes a socket and wakes whatever waits on it.
     pub(crate) fn close(&self, id: i64) -> Result<Option<Pollable>, PlatformError> {
         let socket = self.sockets.lock().unwrap().remove(&id).ok_or_else(|| other("socket is closed"))?;
         Ok(match socket {

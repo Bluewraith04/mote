@@ -1,4 +1,4 @@
-//! `std.sys.fs` file handles through `mote run` on a real file.
+//! `std.fs` file handles through `mote run` on a real file.
 
 use std::process::Command;
 
@@ -6,7 +6,7 @@ fn run(name: &str, body: &str) -> String {
     let dir = std::env::temp_dir().join(format!("mote_fs_{name}_{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let data = dir.join("data.txt");
-    let source = format!("import std.sys.fs\nimport {{ File }} from std.sys.fs\n\nlet path = \"{}\"\n{body}", data.display());
+    let source = format!("import std.fs\nimport {{ File }} from std.fs\n\nlet path = \"{}\"\n{body}", data.display());
     std::fs::write(dir.join("main.mote"), source).unwrap();
     let out = Command::new(env!("CARGO_BIN_EXE_mote")).arg("run").arg(dir.join("main.mote")).output().unwrap();
     std::fs::remove_dir_all(&dir).ok();

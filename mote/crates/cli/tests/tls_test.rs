@@ -1,4 +1,4 @@
-//! TLS sockets and `std.sys.tls` identities, against rustls peers written in Rust.
+//! TLS sockets and `std.tls` identities, against rustls peers written in Rust.
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -61,11 +61,11 @@ fn client(port: u16, cert_pem: &str, name: &str) -> StreamOwned<ClientConnection
     StreamOwned::new(conn, tcp)
 }
 
-const ECHO: &str = r#"import std.sys.net as net
-import std.sys.tls as tls
-import std.sys.io as io
-import std.sys.env as env
-import std.sys.fs as fs
+const ECHO: &str = r#"import std.socket as net
+import std.tls as tls
+import std.io as io
+import std.env as env
+import std.fs as fs
 
 fn echo(conn: net.TcpStream) {
     while true {
@@ -142,11 +142,11 @@ fn several_tls_connections_are_served_at_once() {
     assert_eq!(&buf, b"a");
 }
 
-const HTTPS: &str = r#"import std.sys.http_server as server
-import std.sys.tls as tls
-import std.sys.io as io
-import std.sys.env as env
-import std.sys.fs as fs
+const HTTPS: &str = r#"import std.http_server as server
+import std.tls as tls
+import std.io as io
+import std.env as env
+import std.fs as fs
 
 fn handle(conn: server.Connection) {
     var requests = conn.requests()
@@ -236,7 +236,7 @@ fn kind(r: Result<tls.Identity, Error>) -> ErrorKind {
     }
 }
 ";
-    let source = format!("import std.sys.net as net\nimport std.sys.tls as tls\nimport std.sys.fs as fs\n\n{helpers}\nfn main() {{\n{body}}}\n");
+    let source = format!("import std.socket as net\nimport std.tls as tls\nimport std.fs as fs\n\n{helpers}\nfn main() {{\n{body}}}\n");
     let dir = std::env::temp_dir().join(format!("mote_tlsc_{}_{}", tag, std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("main.mote"), source).unwrap();

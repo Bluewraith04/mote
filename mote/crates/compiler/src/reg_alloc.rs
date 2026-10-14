@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-/// Register file for one call frame. Operands are `u8`, so a frame has at most 256 registers; registers are reused as soon as they are freed.
+/// Register file for one call frame, at most 256 registers.
 pub struct RegisterAllocator {
     var_map: HashMap<String, Vec<(u8, bool)>>,
     scopes: Vec<Vec<(String, bool)>>,
@@ -63,7 +63,7 @@ impl RegisterAllocator {
         self.windows.get(name).copied()
     }
 
-    /// Closes the innermost scope: drops its bindings and frees the registers it owned. The root scope is never closed.
+    /// Closes the innermost scope: drops its bindings and frees the registers it owned.
     pub(crate) fn exit_scope(&mut self) {
         if self.scopes.len() <= 1 {
             return;

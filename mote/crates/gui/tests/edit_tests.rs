@@ -1,4 +1,4 @@
-//! Text input: typing, the editing keys, selection, the mouse, and the caret and selection paint.
+//! Text input: typing, the editing keys, selection and the mouse.
 
 use gui::keys::{BACKSPACE, CTRL, DELETE, END, ENTER, HOME, LEFT, RIGHT, SHIFT};
 use gui::{Dim, Input, Kind, Len, Painter, StyleDef, Surface, UiEvent};

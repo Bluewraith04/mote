@@ -2,6 +2,14 @@
 
 use super::*;
 
+/// The parts of `[start..end..step]`; `inclusive` is `None` when the brackets hold a plain index.
+struct BracketParts {
+    start: Option<Box<Expr>>,
+    inclusive: Option<bool>,
+    end: Option<Box<Expr>>,
+    step: Option<Box<Expr>>,
+}
+
 impl Parser {
     pub(crate) fn parse_expr(&mut self, rbp: u8) -> Result<Expr, (String, Span)> {
         let tok = self.advance();
@@ -17,9 +25,71 @@ impl Parser {
 
     fn parse_nested_expr(&mut self) -> Result<Expr, (String, Span)> {
         let prev = std::mem::replace(&mut self.match_subject, false);
+        let prev_range = std::mem::replace(&mut self.no_range, false);
         let e = self.parse_expr(0);
         self.match_subject = prev;
+        self.no_range = prev_range;
         e
+    }
+
+    /// The inside of `[` `]` after `object`: an index or a slice.
+    fn parse_index_or_slice(&mut self, object: Expr) -> Result<Expr, (String, Span)> {
+        let prev_subject = std::mem::replace(&mut self.match_subject, false);
+        let prev = std::mem::replace(&mut self.no_range, true);
+        let parsed = self.parse_bracket_parts();
+        self.no_range = prev;
+        self.match_subject = prev_subject;
+        let parts = parsed?;
+        let close = self.expect(TokenKind::CloseBracket)?;
+        let span = object.span().merge(&close.span);
+        let Some(inclusive) = parts.inclusive else {
+            let index = parts.start.expect("an index has an expression");
+            return Ok(Expr::Index { object: Box::new(object), index, span });
+        };
+        if inclusive && parts.end.is_none() {
+            return Err(("`..=` needs an end".to_string(), span));
+        }
+        Ok(self.slice_call(object, parts, inclusive, span))
+    }
+
+    /// What sits between `[` and `]`: a start, then `..` or `..=` with an end and a step.
+    fn parse_bracket_parts(&mut self) -> Result<BracketParts, (String, Span)> {
+        let start = if self.check(&TokenKind::DotDot) || self.check(&TokenKind::DotDotEq) {
+            None
+        } else {
+            Some(Box::new(self.parse_expr(0)?))
+        };
+        let inclusive = if self.match_token(&TokenKind::DotDot) {
+            false
+        } else if self.match_token(&TokenKind::DotDotEq) {
+            true
+        } else {
+            return Ok(BracketParts { start, inclusive: None, end: None, step: None });
+        };
+        let end = if self.check(&TokenKind::CloseBracket) { None } else { Some(Box::new(self.parse_expr(0)?)) };
+        let step = if end.is_some() && self.match_token(&TokenKind::DotDot) { Some(Box::new(self.parse_expr(0)?)) } else { None };
+        Ok(BracketParts { start, inclusive: Some(inclusive), end, step })
+    }
+
+    /// `object[a..b..s]` as `object.slice(a, b, s)`.
+    fn slice_call(&mut self, object: Expr, parts: BracketParts, inclusive: bool, span: Span) -> Expr {
+        let mut args = vec![parts.start.map_or(Expr::Int(0, span), |s| *s)];
+        if let Some(end) = parts.end {
+            let end = if inclusive {
+                let one = Expr::Int(1, end.span());
+                let end_span = end.span();
+                Expr::Binary { left: end, op: BinaryOp::Add, right: Box::new(one), span: end_span }
+            } else {
+                *end
+            };
+            args.push(end);
+        }
+        if let Some(step) = parts.step {
+            args.push(*step);
+        }
+        self.slice_sites.insert(span);
+        let callee = Expr::MemberAccess { object: Box::new(object), member: "slice".to_string(), span };
+        Expr::Call { callee: Box::new(callee), args, names: Vec::new(), span }
     }
 
     /// Consumes a leading `name =` of a call argument.
@@ -109,6 +179,7 @@ impl Parser {
             TokenKind::Shl | TokenKind::Shr => 75,
             TokenKind::Plus | TokenKind::Minus => 80,
             TokenKind::Star | TokenKind::Slash | TokenKind::Percent => 85,
+            TokenKind::DotDot | TokenKind::DotDotEq if self.no_range => 0,
             TokenKind::DotDot | TokenKind::DotDotEq => 95,
             TokenKind::Dot
             | TokenKind::QuestionDot
@@ -529,16 +600,7 @@ impl Parser {
                     span,
                 })
             }
-            TokenKind::OpenBracket => {
-                let index = self.parse_nested_expr()?;
-                let close = self.expect(TokenKind::CloseBracket)?;
-                let span = left.span().merge(&close.span);
-                Ok(Expr::Index {
-                    object: Box::new(left),
-                    index: Box::new(index),
-                    span,
-                })
-            }
+            TokenKind::OpenBracket => self.parse_index_or_slice(left),
             TokenKind::DotDot => {
                 let right = self.parse_expr(96)?;
                 let span = left.span().merge(&right.span());

@@ -18,7 +18,7 @@ impl TypeChecker {
                 continue;
             };
             let Some(t) = self.traits.get(trait_name).cloned() else {
-                self.errors.push((format!("`{trait_name}` is not a trait"), span));
+                self.errors.push((shared::missing_import(trait_name).unwrap_or_else(|| format!("`{trait_name}` is not a trait")), span));
                 continue;
             };
             if let Some(problem) = self.trait_mismatch(&t, type_name) {
@@ -71,6 +71,53 @@ impl TypeChecker {
 }
 
 impl TypeChecker {
+    /// `T.method(args)` on a bounded type parameter: a member the bound trait declares without `self`.
+    pub(super) fn check_bound_static_call(&mut self, callee: &Expr, args: &[Type], span: Span) -> Option<Type> {
+        let Expr::MemberAccess { object, member, .. } = callee else { return None };
+        let Expr::Ident(p, _) = object.as_ref() else { return None };
+        if self.lookup_symbol(p).is_some() {
+            return None;
+        }
+        if let Some(ty) = self.param_subst.get(p).cloned() {
+            self.errors.push((format!("`{p}.{member}()` needs `{p}` to be a struct, class or enum, and it is `{}`", Self::describe(&ty)), span));
+            return Some(Type::Any);
+        }
+        if !self.type_params.contains(p) {
+            return None;
+        }
+        let Some(ret) = self.bound_static_member(p, member, args, span) else {
+            let why = if self.param_bounds.contains_key(p) { format!("no bound of `{p}` has a function `{member}` without `self`") } else { format!("`{p}` is a type parameter with no bound") };
+            self.errors.push((format!("{why}, so `{p}.{member}()` has no target"), span));
+            return Some(Type::Any);
+        };
+        Some(ret)
+    }
+
+    fn bound_static_member(&mut self, p: &str, method: &str, args: &[Type], span: Span) -> Option<Type> {
+        let traits = self.param_bounds.get(p)?.clone();
+        let (t, m) = traits.iter().filter_map(|n| self.traits.get(n)).find_map(|t| {
+            let m = t.members.iter().find(|m| m.name == method && !matches!(m.params.first().and_then(|q| q.kind.as_ref()), Some(ParameterKind::SelfValue { .. })))?;
+            Some((t.clone(), m.clone()))
+        })?;
+        let prev = self.current_self_type.replace(Type::Param(p.to_string()));
+        let mark = self.push_type_params(&m.generic_params);
+        let params: Vec<Type> = m.params.iter().map(|q| q.ty.as_ref().map(|n| self.resolve_type_node(n)).unwrap_or(Type::Any)).collect();
+        let ret = m.return_type.as_ref().map(|n| self.resolve_type_node(n)).unwrap_or(Type::Null);
+        self.pop_type_params(mark);
+        self.current_self_type = prev;
+        if params.len() != args.len() {
+            self.errors.push((format!("`{p}.{method}()` from `{}` takes {} argument(s), but {} were given", t.name, params.len(), args.len()), span));
+        } else {
+            for (i, (got, want)) in args.iter().zip(&params).enumerate() {
+                if !got.is_assignable_to(want) {
+                    self.errors.push((format!("`{p}.{method}()` argument {} expects '{want:?}', found '{got:?}'", i + 1), span));
+                }
+                self.note_arg_check(i, got, want);
+            }
+        }
+        Some(ret)
+    }
+
     pub(super) fn bound_method_call(&mut self, p: &str, method: &str, args: &[Type], span: Span) -> Option<Type> {
         let traits = self.param_bounds.get(p)?.clone();
         let (t, m) = traits.iter().filter_map(|n| self.traits.get(n)).find_map(|t| {

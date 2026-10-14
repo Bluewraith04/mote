@@ -1,5 +1,4 @@
-//! The allocation seam handed to natives as a [`NativeCtx`]: allocate an intrinsic header or backing, read a slot, write a slot with the barrier. It exposes no registers, call stack or scheduler.
-//! A collection runs only at a safepoint, never inside a native, so a native may hold raw pointers across its allocations without rooting them.
+//! The allocation seam handed to natives as a [`NativeCtx`].
 
 use std::ptr::NonNull;
 
@@ -15,7 +14,7 @@ use contracts::{Heap, Mutator, NativeCtx};
 
 const SEALED_WRITE: &str = "cannot change a collection: it is shared and read-only";
 
-/// The shared `TypeDescriptor`s for the reserved intrinsic-collection ids, boxed so their addresses are stable.
+/// The shared `TypeDescriptor`s for the reserved intrinsic-collection ids.
 #[derive(Debug)]
 pub struct IntrinsicTypeTable {
     list: Box<TypeDescriptor>,
@@ -108,8 +107,7 @@ pub(crate) fn alloc_string_object(
 ) -> Value {
     let slots = string_slot_count(bytes.len());
     let mut obj = alloc_intrinsic_object(mutator, string_type, slots);
-    // SAFETY: freshly allocated with `slots` covering the length slot + the
-    // packed byte payload (the `NEWSTR` layout). No collection mid-allocation.
+    // SAFETY: freshly allocated with `slots` covering the length slot and the packed payload.
     unsafe {
         let header = obj.as_mut();
         header.set_field(0, Value::uint(bytes.len() as u64));
@@ -135,8 +133,7 @@ impl VmIntrinsicCtx<'_> {
 
     fn alloc_capacity_backing(&mut self, type_id: u64, slots: usize, capacity: usize) -> Result<Value, String> {
         let mut obj = self.alloc_raw(type_id, slots)?;
-        // SAFETY: freshly allocated with `slots >= 1`; slot 0 is the capacity
-        // slot. No collection can run before this native returns (module docs).
+        // SAFETY: freshly allocated with `slots >= 1`; slot 0 is the capacity slot.
         unsafe { obj.as_mut().set_field(0, Value::uint(capacity as u64)) };
         if self.types.descriptor(type_id).is_some_and(|d| d.layout == SlotLayout::RawBytes) {
             unsafe {
@@ -205,8 +202,7 @@ impl NativeCtx for VmIntrinsicCtx<'_> {
         let ptr = obj
             .as_object_ptr()
             .ok_or_else(|| "bytes_ptr: receiver is not a heap object".to_string())?;
-        // SAFETY: as `read_bytes`/`write_bytes` — slot 0 is the byte capacity,
-        // the payload starts at `field_ptr(1)`.
+        // SAFETY: slot 0 is the byte capacity and the payload starts at `field_ptr(1)`.
         unsafe { Ok(ptr.as_ref().field_ptr(1) as *mut u8) }
     }
 
@@ -235,8 +231,7 @@ impl NativeCtx for VmIntrinsicCtx<'_> {
         let ptr = backing
             .as_object_ptr()
             .ok_or_else(|| "read_bytes: receiver is not a heap object".to_string())?;
-        // SAFETY: `ptr` is a live byte backing; slot 0 is its byte capacity and
-        // the payload starts at `field_ptr(1)` (the heap-string layout).
+        // SAFETY: `ptr` is a live byte backing; slot 0 is its byte capacity.
         unsafe {
             let header = ptr.as_ref();
             let cap = header.get_field(0).as_uint().unwrap_or(0) as usize;

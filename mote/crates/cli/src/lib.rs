@@ -1,4 +1,4 @@
-//! The `mote` command-line tool, plus a textual bytecode assembler (`.masm`) and the runtime limit and memory-report helpers.
+//! The `mote` command-line tool, plus a textual bytecode assembler (`.masm`).
 /// Tokens of the `.masm` assembler.
 pub mod token;
 /// Syntax tree of the `.masm` assembler.
@@ -208,7 +208,7 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Environment variable overriding the worker count.
 pub const WORKERS_ENV: &str = "MOTE_WORKERS";
 
-/// How many scheduler workers `mote run` and a bundled executable use: `--workers N` (`flag`), else `MOTE_WORKERS` (`env`), else the number of cores.
+/// How many scheduler workers `mote run` and a bundled executable use.
 pub fn resolve_workers(flag: Option<&str>, env: Option<&str>) -> Result<usize, String> {
     for (source, raw) in [("--workers", flag), (WORKERS_ENV, env)] {
         if let Some(raw) = raw {

@@ -1,7 +1,4 @@
-/// Interface file for the builtin natives: one bodyless `native fn` per registry entry the
-/// language or the standard library calls. The registry name is the declared name without a leading `__`.
-/// A parameter typed `T` makes the function generic in `T`; `__Any` is the untyped escape hatch, spelled
-/// `Any` by users (`std.experimental.types`).
+/// Interface file for the builtin natives, one bodyless `native fn` per registry entry.
 
 native fn print(value: T)
 native fn println(value: T)
@@ -16,6 +13,8 @@ native fn __debug_raw(value: T) -> String
 
 native fn __task_any(tasks: __Any) -> __Any
 native fn __task_pin(mode: Int) -> Bool
+native fn __sem_acquire(permits: __Any)
+native fn __sem_release(permits: __Any)
 
 native fn __math_f1(op: String, x: Float) -> Float
 native fn __math_f2(op: String, x: Float, y: Float) -> Float
@@ -153,3 +152,27 @@ native fn __ui_move_before(win: Int, node: Int, before: Int) -> __Fallible<Null>
 native fn __ui_chrome(win: Int, op: Int, arg: Int) -> __Fallible<Int>
 native fn __ui_set_title(win: Int, title: String) -> __Fallible<Null>
 native fn __ui_set_runs(win: Int, node: Int, texts: List<String>, spec: List<Float>) -> __Fallible<Null>
+native fn __fs_canonicalize(path: String) -> __Fallible<String>
+native fn __signal_watch(mask: Int) -> Receiver<Int>
+native fn __term_open(mouse: Int) -> __Fallible<Null>
+native fn __term_close() -> __Fallible<Null>
+native fn __term_size() -> __Fallible<Int>
+native fn __term_events() -> Receiver<List<Int>>
+native fn __json_scan_string(text: Bytes, at: Int) -> Int
+native fn __json_skip_ws(text: Bytes, at: Int) -> Int
+native fn __json_digits_end(text: Bytes, at: Int) -> Int
+native fn __json_quote(s: String) -> String
+native fn __string_join(parts: List<String>, sep: String) -> String
+native fn __term_glyphs(text: String) -> List<String>
+native fn __term_width(text: String) -> Int
+native fn __regex_compile(pattern: String) -> __Fallible<List<String>>
+native fn __regex_is_match(pattern: String, text: String) -> Bool
+native fn __regex_captures_at(pattern: String, text: String, start: Int) -> List<Int>
+native fn __regex_find_all(pattern: String, text: String) -> List<Int>
+native fn __regex_find_at(pattern: String, text: String, start: Int) -> List<Int>
+native fn __fs_lstat(path: String) -> __Fallible<List<Int>>
+native fn __fs_read_link(path: String) -> __Fallible<String>
+native fn __fs_read_dir(path: String) -> __Fallible<List<__Any>>
+native fn __fs_symlink(target: String, link: String) -> __Fallible<Null>
+native fn __fs_set_modified(path: String, millis: Int) -> __Fallible<Null>
+native fn __fs_set_mode(path: String, mode: Int) -> __Fallible<Null>

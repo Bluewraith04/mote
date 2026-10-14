@@ -1,0 +1,40 @@
+/// std.signal: OS signals as a stream.
+
+import { * } from std.prelude
+import { Stream } from std.stream
+
+/// An OS signal.
+pub enum Signal { Interrupt Terminate Hangup User1 User2 }
+
+/// Delivers each watched signal in order for the rest of the program.
+pub fn watch(signals: List<Signal>) -> Stream<Signal> {
+    var mask = 0
+    for s in signals {
+        mask = mask | bit(s)
+    }
+    return decode(__signal_watch(mask))
+}
+
+fn bit(s: Signal) -> Int {
+    match s {
+        Interrupt => { return 1 }
+        Terminate => { return 2 }
+        Hangup => { return 4 }
+        User1 => { return 8 }
+        User2 => { return 16 }
+    }
+}
+
+fn decode(inbox: Receiver<Int>) -> Stream<Signal> {
+    for code in inbox {
+        yield from_code(code)
+    }
+}
+
+fn from_code(code: Int) -> Signal {
+    if code == 0 { return Signal.Interrupt }
+    if code == 1 { return Signal.Terminate }
+    if code == 2 { return Signal.Hangup }
+    if code == 3 { return Signal.User1 }
+    return Signal.User2
+}

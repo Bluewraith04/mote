@@ -1,5 +1,4 @@
 //! A model of the scheduler's park/wake protocol, explored over every interleaving of its critical sections.
-//! A step is one lock-held section or atomic of `sched.rs`, `handlers/channel.rs`, `handlers/control.rs` and `offload.rs`; the model has no timing, so a state with nothing left to run is a hang.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 
@@ -11,7 +10,7 @@ enum Role {
     Home,
 }
 
-/// What a task does, one operation per `CALLINTRINSIC` / `SCOPEEXIT` / `SPAWN`.
+/// What a task does, one operation at a time.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 enum Op {
     Work,
@@ -19,8 +18,11 @@ enum Op {
     ScopeExit,
     Recv(usize),
     Send(usize),
+    /// The receiver closes the channel.
+    CloseRecv(usize),
     Join(usize),
     Platform,
+    Wait,
     Cancel(usize),
     Pin,
 }
@@ -37,6 +39,8 @@ enum Micro {
     CancelWake(usize),
     UnblockScope(usize),
     CancelChildren(usize),
+    /// The check after `schedule` that cancels a child of a faulted scope.
+    LateCancel(usize, usize),
     SetCancel(usize),
     ParkHandler(usize),
     YieldHandler(usize),
@@ -46,6 +50,9 @@ enum Micro {
     FinishMain,
     SignalDone,
     OffloadComplete(usize),
+    /// A worker waiting briefly for its pooled request.
+    SpinCollect(usize),
+    EndWait(usize),
     SourcePush(usize),
     SourceWake(usize),
     Exit,
@@ -73,6 +80,8 @@ struct Task {
     finished: bool,
     waiter: Option<(usize, u32)>,
     awaiting_platform: bool,
+    /// A child of this task faulted.
+    scope_faulted: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -106,13 +115,15 @@ struct Scenario {
     exts: Vec<Vec<Micro>>,
     preempt: bool,
     spurious: bool,
-    /// Channels fed by an event source: a receiver parked on one keeps the run from counting as a deadlock.
+    /// Channels fed by an event source.
     sources: Vec<usize>,
-    /// The scope wake as it was before the fix: `unblock_or_note_early` from `complete_child`, with no re-check as the parent parks.
+    /// The scope wake without the re-check as the parent parks.
     legacy_scope_wake: bool,
-    /// A cancelled task leaving `recv` or `send` does not hand its wake on, as before the fix.
+    /// A cancelled task leaving `recv` or `send` does not hand its wake on.
     legacy_no_forward: bool,
-    /// The program itself may leave a receiver without an item, so a deadlock with nothing buffered is allowed; a buffered item with a receiver parked is still a lost wake.
+    /// A child spawned into a faulted scope is left running.
+    legacy_late_spawn: bool,
+    /// A deadlock with nothing buffered is allowed.
     may_starve: bool,
 }
 
@@ -128,17 +139,19 @@ struct World {
     recv_waiters: Vec<Vec<(usize, u32)>>,
     send_waiters: Vec<Vec<(usize, u32)>>,
     buffered: Vec<usize>,
+    closed: Vec<bool>,
     pool_cv: BTreeSet<usize>,
     home_cv: BTreeSet<usize>,
     idle_count: usize,
     offload_inflight: usize,
     offload_pending: BTreeSet<usize>,
     offload_done: BTreeSet<usize>,
+    offload_cancel: BTreeSet<usize>,
     done: bool,
     deadlock_declared: bool,
-    /// A hard violation; ends the run.
+    /// A hard violation that ends the run.
     violation: Option<String>,
-    /// A wake that reached a task not waiting where the wake was sent from; not a hang by itself.
+    /// A wake that reached a task not waiting where the wake was sent from.
     stale: Option<String>,
 }
 
@@ -146,7 +159,7 @@ type Step = (World, String);
 
 impl World {
     fn new(sc: &Scenario) -> World {
-        let task = |state| Task { pc: 0, state, seq: 0, cancelled: false, pinned: false, pending: 0, scope_parked: false, finished: false, waiter: None, awaiting_platform: false };
+        let task = |state| Task { pc: 0, state, seq: 0, cancelled: false, pinned: false, pending: 0, scope_parked: false, finished: false, waiter: None, awaiting_platform: false, scope_faulted: false };
         let mut tasks = vec![task(TState::NotStarted); sc.progs.len()];
         tasks[0].state = TState::Ready;
         World {
@@ -160,12 +173,14 @@ impl World {
             recv_waiters: vec![Vec::new(); sc.channels.len()],
             send_waiters: vec![Vec::new(); sc.channels.len()],
             buffered: vec![0; sc.channels.len()],
+            closed: vec![false; sc.channels.len()],
             pool_cv: BTreeSet::new(),
             home_cv: BTreeSet::new(),
             idle_count: 0,
             offload_inflight: 0,
             offload_pending: BTreeSet::new(),
             offload_done: BTreeSet::new(),
+            offload_cancel: BTreeSet::new(),
             done: false,
             deadlock_declared: false,
             violation: None,
@@ -244,9 +259,8 @@ impl World {
         format!("tasks [{}], workers [{}], run {:?}, home {:?}, blocked {:?}, early {:?}, recv {:?}", tasks.join(" "), workers.join(" "), self.run_queue, self.home_queue, self.blocked, self.woken_early, self.recv_waiters)
     }
 
-    /// `SchedState::wake_or_note_early`: moves a parked task to its ready queue and answers whether it was pinned, or notes the wake for a park in flight.
+    /// Moves a parked task to its ready queue and answers whether it was pinned.
     fn wake_quiet(&mut self, id: usize, token: Option<u32>) -> Option<bool> {
-        // A wake popped before a cancel landed reaches a task that will fault; it forwards the wake and recycle drops the note.
         if !self.wake_is_current(id, token) && !self.tasks[id].cancelled {
             self.note_stale(format!("a wake for task {id} (token {token:?}) reached it while {:?} (seq {})", self.tasks[id].state, self.tasks[id].seq));
         }
@@ -260,7 +274,7 @@ impl World {
         }
     }
 
-    /// `Runtime::unblock_or_note_early`: the wake, then a notification outside the lock if it moved a task.
+    /// The wake, then a notification outside the lock if it moved a task.
     fn wake_or_note_early(&mut self, id: usize, token: Option<u32>, who: Who) {
         if let Some(pinned) = self.wake_quiet(id, token) {
             self.push_front(who, vec![Micro::NotifyTask(pinned)]);
@@ -376,6 +390,16 @@ impl World {
             out.push((w, label("halts")));
             return;
         };
+        if matches!(op, Op::Send(c) if w.closed[c]) {
+            let micros = if t == 0 {
+                vec![Micro::FinishMain]
+            } else {
+                vec![Micro::CompleteHandle(t), Micro::ParentUpdate(t, true), Micro::Recycle(t)]
+            };
+            w.workers[wi].micros = micros;
+            out.push((w, label("sends on a closed channel and faults")));
+            return;
+        }
         let faulting = task.cancelled && matches!(op, Op::Recv(_) | Op::Send(_) | Op::Join(_));
         if faulting {
             let mut micros = Vec::new();
@@ -390,10 +414,10 @@ impl World {
             if t == 0 {
                 micros.push(Micro::FinishMain);
             } else {
-                micros.extend([Micro::CompleteHandle(t), Micro::ParentUpdate(t, true), Micro::Recycle(t)]);
+                micros.extend([Micro::CompleteHandle(t), Micro::ParentUpdate(t, false), Micro::Recycle(t)]);
             }
             w.workers[wi].micros = micros;
-            out.push((w, label("sees it was cancelled and faults")));
+            out.push((w, label("sees it was cancelled and ends")));
             return;
         }
         let park = |w: &mut World| {
@@ -407,7 +431,7 @@ impl World {
             }
             Op::Spawn(c) => {
                 w.tasks[t].pc += 1;
-                w.workers[wi].micros = vec![Micro::IncPending(t), Micro::Schedule(c), Micro::NotifyTask(false)];
+                w.workers[wi].micros = vec![Micro::IncPending(t), Micro::Schedule(c), Micro::LateCancel(t, c), Micro::NotifyTask(false)];
                 out.push((w, label(&format!("spawns t{c}"))));
             }
             Op::ScopeExit => {
@@ -430,6 +454,9 @@ impl World {
                         w.workers[wi].micros = vec![Micro::WakeEarly(id, Some(s))];
                     }
                     out.push((w, label(&format!("receives from c{c}"))));
+                } else if w.closed[c] {
+                    w.tasks[t].pc += 1;
+                    out.push((w, label(&format!("finds c{c} closed and empty"))));
                 } else {
                     w.tasks[t].seq += 1;
                     let s = w.tasks[t].seq;
@@ -455,6 +482,14 @@ impl World {
                     out.push((w, label(&format!("sends on c{c}"))));
                 }
             }
+            Op::CloseRecv(c) => {
+                w.closed[c] = true;
+                w.buffered[c] = 0;
+                w.tasks[t].pc += 1;
+                let parked: Vec<_> = w.send_waiters[c].drain(..).chain(w.recv_waiters[c].drain(..)).collect();
+                w.workers[wi].micros = parked.into_iter().map(|(id, s)| Micro::WakeEarly(id, Some(s))).collect();
+                out.push((w, label(&format!("closes c{c} as its receiver"))));
+            }
             Op::Join(h) => {
                 if w.tasks[h].finished {
                     w.tasks[t].pc += 1;
@@ -467,7 +502,7 @@ impl World {
                     out.push((w, label(&format!("parks joining t{h}"))));
                 }
             }
-            Op::Platform => {
+            Op::Platform | Op::Wait => {
                 if w.tasks[t].awaiting_platform {
                     if w.offload_done.remove(&t) {
                         w.tasks[t].awaiting_platform = false;
@@ -483,12 +518,21 @@ impl World {
                     w.offload_pending.insert(t);
                     w.offload_inflight += 1;
                     park(&mut w);
+                    if op == Op::Platform {
+                        w.workers[wi].micros = vec![Micro::SpinCollect(t), Micro::ParkHandler(t)];
+                    }
+                    if op == Op::Wait {
+                        w.offload_cancel.insert(t);
+                        if w.tasks[t].cancelled {
+                            w.workers[wi].micros = vec![Micro::EndWait(t), Micro::ParkHandler(t)];
+                        }
+                    }
                     out.push((w, label("submits a blocking request and parks")));
                 }
             }
             Op::Cancel(x) => {
                 w.tasks[t].pc += 1;
-                w.workers[wi].micros = vec![Micro::SetCancel(x), Micro::CancelWake(x)];
+                w.workers[wi].micros = vec![Micro::SetCancel(x), Micro::EndWait(x), Micro::CancelWake(x)];
                 out.push((w, label(&format!("cancels t{x}"))));
             }
             Op::Pin => {
@@ -551,6 +595,13 @@ impl World {
                     self.push_front(who, vec![Micro::NotifyTask(pinned)]);
                 }
             }
+            Micro::LateCancel(p, c) => {
+                if !sc.legacy_late_spawn && self.tasks[p].scope_faulted && !self.tasks[c].cancelled && self.tasks[c].state != TState::Done {
+                    self.tasks[c].cancelled = true;
+                    self.forget_waiter(c);
+                    self.push_front(who, vec![Micro::EndWait(c), Micro::CancelWake(c)]);
+                }
+            }
             Micro::SetCancel(x) => {
                 self.tasks[x].cancelled = true;
                 self.forget_waiter(x);
@@ -561,6 +612,7 @@ impl World {
                 for c in kids {
                     self.tasks[c].cancelled = true;
                     self.forget_waiter(c);
+                    next.push(Micro::EndWait(c));
                     next.push(Micro::CancelWake(c));
                 }
                 self.push_front(who, next);
@@ -592,9 +644,7 @@ impl World {
                 let Who::Worker(wi) = who else { unreachable!() };
                 let role = self.workers[wi].role;
                 let runs = (role == Role::Home) == self.tasks[t].pinned;
-                if runs && !self.has_work_for(role) {
-                    // keeps running
-                } else {
+                if !runs || self.has_work_for(role) {
                     let pinned = self.tasks[t].pinned;
                     self.enqueue(t);
                     self.push_front(who, vec![Micro::NotifyTask(pinned)]);
@@ -613,6 +663,7 @@ impl World {
                     let wake = self.tasks[p].pending == 0;
                     let mut next = Vec::new();
                     if faulted {
+                        self.tasks[p].scope_faulted = true;
                         next.push(Micro::CancelChildren(p));
                     }
                     if wake {
@@ -638,13 +689,36 @@ impl World {
                 self.workers[wi].micros = vec![Micro::SignalDone, Micro::NotifyAllOf(Role::Home), Micro::NotifyAllOf(Role::Pool), Micro::Exit];
             }
             Micro::SignalDone => self.done = true,
+            Micro::EndWait(t) => {
+                if self.offload_cancel.remove(&t) && self.offload_pending.remove(&t) {
+                    self.offload_done.insert(t);
+                    self.offload_inflight -= 1;
+                    let token = Some(self.tasks[t].seq);
+                    self.wake_or_note_early(t, token, who);
+                }
+            }
             Micro::OffloadComplete(t) => {
+                self.offload_cancel.remove(&t);
                 self.offload_pending.remove(&t);
                 self.offload_done.insert(t);
                 self.offload_inflight -= 1;
                 let token = Some(self.tasks[t].seq);
-                self.wake_quiet(t, token);
-                self.push_front(who, vec![Micro::NotifyAllOf(Role::Home), Micro::NotifyAllOf(Role::Pool)]);
+                self.wake_or_note_early(t, token, who);
+            }
+            Micro::SpinCollect(t) => {
+                let Who::Worker(wi) = who else { unreachable!() };
+                if !self.tasks[t].cancelled && self.offload_done.contains(&t) {
+                    let mut w = self.clone();
+                    w.offload_done.remove(&t);
+                    w.woken_early.remove(&t);
+                    w.tasks[t].awaiting_platform = false;
+                    w.tasks[t].pc += 1;
+                    w.tasks[t].state = TState::Running;
+                    w.workers[wi].micros.clear();
+                    out.push((w, format!("{label} (collects inline)")));
+                }
+                out.push((self, format!("{label} (gives up)")));
+                return;
             }
             Micro::SourcePush(c) => {
                 self.buffered[c] += 1;
@@ -695,7 +769,7 @@ fn trace_to(index: usize, parent: &[(usize, String)]) -> Vec<String> {
     steps
 }
 
-/// Breadth-first over every state; a violation or a stuck state is a failure with the shortest trace to it.
+/// Explores every state breadth-first and fails on a violation or a stuck state.
 fn explore(sc: &Scenario) -> Result<Report, Failure> {
     let start = World::new(sc);
     let mut seen: HashMap<World, usize> = HashMap::new();
@@ -743,7 +817,7 @@ fn explore(sc: &Scenario) -> Result<Report, Failure> {
 }
 
 fn scenario(name: &'static str, progs: Vec<Vec<Op>>, parents: Vec<Option<usize>>) -> Scenario {
-    Scenario { name, progs, parents, channels: Vec::new(), workers: vec![Role::Pool, Role::Pool], exts: Vec::new(), sources: Vec::new(), preempt: false, spurious: false, legacy_scope_wake: false,legacy_no_forward: false, may_starve: false }
+    Scenario { name, progs, parents, channels: Vec::new(), workers: vec![Role::Pool, Role::Pool], exts: Vec::new(), sources: Vec::new(), preempt: false, spurious: false, legacy_scope_wake: false, legacy_no_forward: false, legacy_late_spawn: false, may_starve: false }
 }
 
 fn must_hold(sc: &Scenario) -> Report {
@@ -809,9 +883,26 @@ fn a_full_channel_parks_the_sender_until_a_receive() {
 }
 
 #[test]
+fn closing_the_receiver_wakes_a_parked_sender_and_its_next_send_faults() {
+    let mut sc = scenario("close the receiver", vec![vec![Op::Spawn(1), Op::Recv(0), Op::CloseRecv(0), Op::ScopeExit], vec![Op::Send(0), Op::Send(0), Op::Send(0)]], vec![None, Some(0)]);
+    sc.channels = vec![1];
+    sc.preempt = true;
+    must_hold(&sc);
+}
+
+#[test]
 fn a_blocking_native_completing_on_another_thread_wakes_its_task() {
     let mut sc = scenario("offload", vec![vec![Op::Platform]], vec![None]);
     sc.exts = vec![vec![Micro::OffloadComplete(0)]];
+    must_be_clean(&sc);
+}
+
+#[test]
+fn a_native_answer_collected_while_waiting_leaves_no_early_wake_for_the_next_park() {
+    let mut sc = scenario("native then recv", vec![vec![Op::Spawn(1), Op::Platform, Op::Recv(0), Op::ScopeExit], vec![Op::Send(0)]], vec![None, Some(0)]);
+    sc.channels = vec![1];
+    sc.exts = vec![vec![Micro::OffloadComplete(0)]];
+    sc.preempt = true;
     must_be_clean(&sc);
 }
 
@@ -896,4 +987,51 @@ fn a_parent_waiting_on_a_channel_is_not_starved_by_a_cancelled_child_that_was_se
     sc.preempt = true;
     sc.may_starve = true;
     must_hold(&sc);
+}
+
+#[test]
+fn cancelling_a_task_in_a_reactor_wait_ends_the_wait() {
+    let mut sc = scenario("cancel a reactor wait", vec![vec![Op::Spawn(1), Op::Cancel(1), Op::ScopeExit], vec![Op::Wait]], vec![None, Some(0)]);
+    sc.preempt = true;
+    must_be_clean(&sc);
+}
+
+#[test]
+fn a_sibling_cancelling_a_task_in_a_reactor_wait_ends_the_wait() {
+    let mut sc = scenario("sibling cancels a reactor wait", vec![vec![Op::Spawn(1), Op::Spawn(2), Op::ScopeExit], vec![Op::Wait], vec![Op::Cancel(1)]], vec![None, Some(0), Some(0)]);
+    sc.preempt = true;
+    must_be_clean(&sc);
+}
+
+#[test]
+fn a_cancel_racing_the_end_of_a_reactor_wait_completes_it_once() {
+    let mut sc = scenario("cancel races the timer", vec![vec![Op::Spawn(1), Op::Cancel(1), Op::ScopeExit], vec![Op::Wait]], vec![None, Some(0)]);
+    sc.exts = vec![vec![Micro::OffloadComplete(1)]];
+    sc.preempt = true;
+    must_be_clean(&sc);
+}
+
+/// Task 1 always faults while task 2 waits on a channel nobody feeds, so only a cancel ends it.
+fn late_spawn_scenario(name: &'static str) -> Scenario {
+    let mut sc = scenario(
+        name,
+        vec![vec![Op::Spawn(1), Op::CloseRecv(0), Op::Spawn(2), Op::ScopeExit], vec![Op::Send(0), Op::Send(0), Op::Send(0)], vec![Op::Recv(1)]],
+        vec![None, Some(0), Some(0)],
+    );
+    sc.channels = vec![1, 1];
+    sc.preempt = true;
+    sc
+}
+
+#[test]
+fn a_task_spawned_after_a_sibling_faulted_is_cancelled() {
+    let sc = late_spawn_scenario("late spawn");
+    must_hold(&sc);
+}
+
+#[test]
+fn a_task_spawned_after_a_sibling_faulted_hangs_without_the_check() {
+    let mut sc = late_spawn_scenario("legacy late spawn");
+    sc.legacy_late_spawn = true;
+    assert!(explore(&sc).is_err(), "the model should find the late task that nothing cancels");
 }

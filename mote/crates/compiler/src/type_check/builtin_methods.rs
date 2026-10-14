@@ -38,6 +38,20 @@ impl TypeChecker {
         }
     }
 
+    /// Checks that `method` got `counts.0` to `counts.1` arguments and that the first `bounds` are `Int`.
+    fn bound_args(&mut self, method: &str, args: &[Type], counts: (usize, usize), bounds: usize, span: Span) {
+        if args.len() < counts.0 || args.len() > counts.1 {
+            let want = if counts.0 == counts.1 { counts.0.to_string() } else { format!("{} or {}", counts.0, counts.1) };
+            self.errors.push((format!("`.{method}()` takes {want} argument(s), but {} were given", args.len()), span));
+        }
+        for (i, got) in args.iter().take(bounds).enumerate() {
+            if !got.is_assignable_to(&Type::Int) {
+                self.errors.push((format!("`.{method}()` bound expects 'Int', found '{got:?}'"), span));
+            }
+            self.note_arg_check(i, got, &Type::Int);
+        }
+    }
+
     pub(crate) fn check_builtin_method(&mut self, recv: &Type, method: &str, args: &[Type], span: Span) -> Type {
         let arity = |this: &mut Self, n: usize| {
             if args.len() != n {
@@ -253,7 +267,7 @@ impl TypeChecker {
                         Type::String
                     }
                     "slice" => {
-                        arity(self, 2);
+                        self.bound_args(method, args, (1, 2), args.len(), span);
                         Type::String
                     }
                     "to_upper" | "to_lower" | "trim" => {
@@ -282,6 +296,10 @@ impl TypeChecker {
                         arity(self, 1);
                         want_str(self, 0);
                         self.option_of(Type::Int)
+                    }
+                    "set_slice" => {
+                        self.errors.push(("a `String` cannot be assigned into; build a new one from `s[..a]`, the new text and `s[b..]`".into(), span));
+                        Type::Null
                     }
                     _ => {
                         self.errors.push((format!("no method `.{method}()` on `String`"), span));
@@ -351,6 +369,20 @@ impl TypeChecker {
                     "stream" => {
                         arity(self, 0);
                         Type::Stream(Box::new(elem))
+                    }
+                    "slice" => {
+                        self.bound_args(method, args, (1, 3), args.len(), span);
+                        Type::List(Box::new(elem))
+                    }
+                    "set_slice" => {
+                        self.bound_args(method, args, (2, 4), args.len().saturating_sub(1), span);
+                        if let Some(last) = args.len().checked_sub(1) {
+                            match &args[last] {
+                                Type::List(_) => want(self, last, &Type::List(Box::new(elem)), "values"),
+                                _ => want(self, last, &elem, "value"),
+                            }
+                        }
+                        Type::Null
                     }
                     _ => {
                         self.errors
@@ -447,7 +479,10 @@ impl TypeChecker {
                     }
                     Type::Null
                 }
-                "slice" => { arity(self, 2); Type::Bytes }
+                "slice" => {
+                    self.bound_args(method, args, (1, 2), args.len(), span);
+                    Type::Bytes
+                }
                 "decode" => { arity(self, 0); self.option_of(Type::String) }
                 _ => {
                     self.errors
@@ -491,10 +526,7 @@ impl TypeChecker {
                     "recv" => { arity(self, 0); self.option_of(elem) }
                     "iter" => { arity(self, 0); Type::Any }
                     "stream" => { arity(self, 0); Type::Stream(Box::new(elem)) }
-                    "close" => {
-                        self.errors.push(("a `Receiver` can't close a channel; close its `Sender`s".into(), span));
-                        Type::Null
-                    }
+                    "close" => { arity(self, 0); Type::Null }
                     _ => {
                         self.errors.push((format!("no method `.{method}()` on `Receiver`"), span));
                         Type::Any

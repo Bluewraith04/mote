@@ -8,7 +8,7 @@ use std::ptr::NonNull;
 
 const MAX_DEPTH: usize = 256;
 
-/// Scalars by value; strings, lists, tuples, value types, enum variants, maps and sets by content; other heap objects by identity.
+/// Scalars by value; strings, collections and value types by content; other heap objects by identity.
 pub fn values_equal(lhs: Value, rhs: Value) -> bool {
     equal_at(lhs, rhs, 0)
 }
@@ -36,8 +36,7 @@ fn heap_equal(lhs: Value, rhs: Value, depth: usize) -> bool {
     }
 }
 
-/// # Safety
-/// `a` and `b` are live objects whose slots match their descriptors.
+/// `a` and `b` must be live objects whose slots match their descriptors.
 unsafe fn objects_equal(a: NonNull<ObjectHeader>, b: NonNull<ObjectHeader>, depth: usize) -> bool {
     unsafe {
         let (ha, hb) = (a.as_ref(), b.as_ref());
@@ -62,8 +61,7 @@ fn count(v: Value) -> usize {
     v.as_uint().map(|u| u as usize).or_else(|| v.as_int().filter(|n| *n >= 0).map(|n| n as usize)).unwrap_or(0)
 }
 
-/// # Safety
-/// `a` and `b` are live `List` headers with live backings.
+/// `a` and `b` must be live `List` headers with live backings.
 unsafe fn lists_equal(a: &ObjectHeader, b: &ObjectHeader, depth: usize) -> bool {
     unsafe {
         let len = count(a.get_field(HEADER_LEN_SLOT));
@@ -79,8 +77,7 @@ unsafe fn lists_equal(a: &ObjectHeader, b: &ObjectHeader, depth: usize) -> bool 
     }
 }
 
-/// # Safety
-/// `a` and `b` are live `Map` or `Set` headers with live entries and index.
+/// `a` and `b` must be live `Map` or `Set` headers with live entries and index.
 unsafe fn tables_equal(a: &ObjectHeader, b: &ObjectHeader, stride: usize, depth: usize) -> bool {
     unsafe {
         let len = count(a.get_field(HEADER_LEN_SLOT));
@@ -111,27 +108,18 @@ pub fn table_index_len(cap: usize) -> usize {
     (cap * 2).next_power_of_two().max(16)
 }
 
-/// Reads index slot `i` of a table index object.
-///
-/// # Safety
-/// `index` is a live table index and `i` is below its slot count.
+/// Reads index slot `i` of a table index object; `i` must be below its slot count.
 #[inline(always)]
 pub unsafe fn index_get(index: &ObjectHeader, i: usize) -> u32 {
     unsafe { std::ptr::read_unaligned((index.field_ptr(1) as *const u32).add(i)) }
 }
 
-/// Where `key` lives in a `Map` (`stride` 2) or `Set` (`stride` 1): its index slot and entry number.
-///
-/// # Safety
-/// `h` is a live `Map` or `Set` header whose entries and index are live.
+/// Where `key` lives in a `Map` or `Set`: its index slot and entry number.
 pub unsafe fn table_find(h: &ObjectHeader, stride: usize, key: Value) -> Result<Option<(usize, usize)>, String> {
     unsafe { Ok(table_find_hashed(h, stride, key_hash(key)?, key)) }
 }
 
-/// [`table_find`] for a key whose [`key_hash`] the caller already has.
-///
-/// # Safety
-/// As [`table_find`].
+/// Finds a key whose hash the caller already has.
 pub unsafe fn table_find_hashed(h: &ObjectHeader, stride: usize, hash: u64, key: Value) -> Option<(usize, usize)> {
     unsafe {
         let (Some(entries), Some(index)) = (h.get_field(HEADER_BACKING_SLOT).as_object_ptr(), h.get_field(TABLE_INDEX_SLOT).as_object_ptr())
@@ -167,7 +155,7 @@ pub fn fnv1a(seed: u8, bytes: &[u8]) -> u64 {
     h
 }
 
-/// Hash of a `Map` / `Set` key. Tag-seeded so `1` (Int) and `1` (UInt) land in different buckets.
+/// Hash of a `Map` / `Set` key, seeded by tag so `1` (Int) and `1` (UInt) differ.
 pub fn key_hash(v: Value) -> Result<u64, String> {
     match v {
         Value::Int(n) => Ok(fnv1a(1, &n.to_le_bytes())),

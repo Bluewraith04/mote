@@ -35,6 +35,8 @@ fn cancellation_reaches_a_task_with_no_loop_and_no_call() {
     const FILLER: u32 = SAFEPOINT_INSTRUCTION_INTERVAL * 50;
 
     let mut child_instrs = straight_line_filler(FILLER);
+    child_instrs.push(encode_ri(LOADI, 1, 1));
+    child_instrs.push(encode_ri(SETGLOBAL, 1, 0));
     child_instrs.push(encode_none(HALT));
     let child_code = CodeObject::new(child_instrs, vec![], 8, 0);
 
@@ -45,24 +47,22 @@ fn cancellation_reaches_a_task_with_no_loop_and_no_call() {
     instrs.push(encode_none(HALT));
     let main_code = CodeObject::new(instrs, vec![], 8, 0);
 
-    let rt = Runtime::with_types(
+    let mut rt = Runtime::with_types(
         vec![main_code, child_code],
         vec![TypeDescriptor::function_type(0)],
     );
+    rt.set_global_count(1);
+    zero_globals(&rt);
 
     let main = rt.acquire_task(0, 8, None, 0);
-    let finished = rt
-        .run_main_parallel(main, 2)
-        .expect("the cancelled child's fault is unobserved, but that's reported via r4, not Err");
+    let finished = rt.run_main_parallel(main, 2).expect("a cancelled child is not a fault");
 
-    let fault = finished.registers[4]
-        .as_heap_string()
-        .expect(
-            "r4 holds the unobserved fault's message, not null — if this is null, the child \
-             ran to completion uninterrupted, meaning the instruction-counted safepoint never \
-             fired inside a loop-free, call-free code object",
-        );
-    assert!(fault.contains("cancelled"), "expected a cancellation fault, got: {fault}");
+    assert!(finished.registers[4].is_null(), "a cancelled child does not fault its scope");
+    assert_eq!(
+        rt.globals.lock().unwrap()[0].as_int(),
+        Some(0),
+        "the child ran to completion uninterrupted: the instruction-counted safepoint never fired inside a loop-free, call-free code object"
+    );
 }
 
 fn gc_churn_and_retain_straight_line(count: u32, gidx: u16) -> CodeObject {

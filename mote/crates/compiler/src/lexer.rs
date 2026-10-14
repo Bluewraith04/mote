@@ -15,6 +15,22 @@ fn invalid_token(slice: &str) -> String {
     }
 }
 
+/// Gives the pending `///` lines to the first token after them that is not a newline.
+fn attach_doc(tokens: &mut [Token], pending: &mut Vec<String>, at: &mut usize) {
+    if pending.is_empty() {
+        return;
+    }
+    while let Some(t) = tokens.get_mut(*at) {
+        if t.kind == TokenKind::Newline {
+            *at += 1;
+            continue;
+        }
+        t.doc = Some(pending.join("\n").into_boxed_str());
+        pending.clear();
+        return;
+    }
+}
+
 /// Turns source text into tokens.
 pub struct Lexer<'a> {
     source: &'a str,
@@ -66,8 +82,11 @@ impl<'a> Lexer<'a> {
         let mut raw_lexer = TokenKind::lexer(self.source);
         let mut delimiter_depth = 0usize;
         let mut last_token: Option<TokenKind> = None;
+        let mut pending_doc: Vec<String> = Vec::new();
+        let mut pending_at = 0usize;
 
         while let Some(res) = raw_lexer.next() {
+            attach_doc(&mut tokens, &mut pending_doc, &mut pending_at);
             let range = raw_lexer.span();
             let span = self.span_from_range(range);
 
@@ -80,6 +99,18 @@ impl<'a> Lexer<'a> {
 
             match raw_kind {
                 TokenKind::BlockComment => {
+                    continue;
+                }
+                TokenKind::DocComment(text) => {
+                    let start = raw_lexer.span().start;
+                    let (_, col) = self.offset_to_line_col(start);
+                    if self.source[start + 1 - col..start].trim().is_empty() {
+                        if pending_doc.is_empty() {
+                            pending_at = tokens.len();
+                        }
+                        let line = text.trim_end_matches('\r');
+                        pending_doc.push(line.strip_prefix(' ').unwrap_or(line).to_string());
+                    }
                     continue;
                 }
                 TokenKind::Newline => {
@@ -125,6 +156,7 @@ impl<'a> Lexer<'a> {
             }
         }
 
+        attach_doc(&mut tokens, &mut pending_doc, &mut pending_at);
         let eof_offset = self.source.len();
         let (eof_line, eof_col) = self.offset_to_line_col(eof_offset);
         let eof_span = Span::new(eof_offset, eof_offset, eof_line, eof_col).with_source(self.source_id);

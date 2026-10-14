@@ -12,11 +12,9 @@ class Node:
         self.next = next
 
 def run():
-    # 1. Vector3
     v = Vector3(10, 20, 30)
     v_sum = v.x + v.y + v.z
 
-    # 2. Linked list: 3 nodes
     node3 = Node(300, None)
     node2 = Node(200, node3)
     node1 = Node(100, node2)

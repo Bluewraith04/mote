@@ -80,8 +80,7 @@ impl BlockPool {
         self.slabs.iter().flatten().flat_map(|s| s.blocks.iter())
     }
 
-    /// Ends a collection: ages fully free slabs and releases those idle for two collections,
-    /// then more, oldest first, while the free pool holds more than `max(4 MiB, live / 4)`. Returns slabs released.
+    /// Ends a collection by releasing idle free slabs and returns how many were released.
     pub(crate) fn decay(&mut self, live_bytes: usize) -> usize {
         for slab in self.slabs.iter_mut().flatten() {
             if slab.free == BLOCKS_PER_SLAB {

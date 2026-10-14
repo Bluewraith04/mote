@@ -17,6 +17,7 @@ fn fails_with(source: &str, tag: &str, want: &str) {
 }
 
 const PROGRAM: &str = r#"
+import { Set } from std.collections
 class P {
     x: Int
     y: Int

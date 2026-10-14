@@ -12,7 +12,7 @@ fn int(platform: &dyn Platform, request: PlatformRequest) -> i64 {
     }
 }
 
-/// `expected_args` is what the platform under test was built with; `scratch` is a file path it may create and replace.
+/// Runs the request script against the platform under test.
 pub fn check(platform: &dyn Platform, expected_args: &[String], scratch: &str) {
     files(platform, scratch);
     file_handles(platform, scratch);
@@ -85,7 +85,6 @@ fn sleep(platform: &dyn Platform) {
 }
 
 /// A 1 ms timer delivers `Int(1)`, `Int(2)`,... in order and stops when its handle is closed.
-/// `tick` lets time pass: the fake advances its clock, the system sleeps.
 pub fn check_timer(platform: &dyn Platform, tick: &dyn Fn()) {
     use contracts::{event_queue, EventPayload, Overflow, SourceRequest};
 
@@ -204,6 +203,15 @@ fn stat(platform: &dyn Platform, path: &str) -> Result<FileStat, PlatformError> 
     }
 }
 
+/// `None` when the request answered `Unit`, else the error's kind.
+fn kind_or_unit(platform: &dyn Platform, request: PlatformRequest) -> Option<PlatformErrorKind> {
+    match platform.execute(request) {
+        Ok(PlatformResponse::Unit) => None,
+        Ok(other) => panic!("expected Unit, got {other:?}"),
+        Err(e) => Some(e.kind),
+    }
+}
+
 fn kind_of(platform: &dyn Platform, request: PlatformRequest) -> PlatformErrorKind {
     platform.execute(request).expect_err("request should fail").kind
 }
@@ -227,15 +235,51 @@ fn directories(platform: &dyn Platform, scratch: &str) {
     assert_eq!(kind_of(platform, PlatformRequest::ListDir { path: at("absent") }), PlatformErrorKind::NotFound);
     assert!(platform.execute(PlatformRequest::ListDir { path: at("b.txt") }).is_err(), "listing a file must fail");
 
+    let entries = match platform.execute(PlatformRequest::ReadDir { path: d.clone() }).expect("read_dir failed") {
+        PlatformResponse::Entries(entries) => entries,
+        other => panic!("expected Entries, got {other:?}"),
+    };
+    let summary: Vec<(&str, FileKind, i64)> = entries.iter().map(|(n, s)| (n.as_str(), s.kind, s.size)).collect();
+    assert_eq!(summary, [("a", FileKind::Dir, summary[0].2), ("a.txt", FileKind::File, 0), ("b.txt", FileKind::File, 5)]);
+    assert!(entries[2].1.modified_millis > 1_600_000_000_000, "modified time before 2020");
+    assert_eq!(kind_of(platform, PlatformRequest::ReadDir { path: at("absent") }), PlatformErrorKind::NotFound);
+    assert!(platform.execute(PlatformRequest::ReadDir { path: at("b.txt") }).is_err(), "reading a file must fail");
+
     let file = stat(platform, &at("b.txt")).unwrap();
     assert_eq!((file.kind, file.size), (FileKind::File, 5));
     assert!(file.modified_millis > 1_600_000_000_000, "modified time before 2020");
     assert_eq!(stat(platform, &d).unwrap().kind, FileKind::Dir);
     assert_eq!(stat(platform, &at("absent")).unwrap_err().kind, PlatformErrorKind::NotFound);
+    assert_eq!((file.links, file.device != 0, file.inode != 0, file.mode & 0o400), (1, true, true, 0o400));
+    assert_ne!(file.inode, stat(platform, &at("a.txt")).unwrap().inode, "two files share an inode");
+
+    let set_modified = |path: String, millis| kind_or_unit(platform, PlatformRequest::SetModified { path, millis });
+    assert_eq!(set_modified(at("b.txt"), 1_700_000_000_123), None);
+    assert_eq!(stat(platform, &at("b.txt")).unwrap().modified_millis, 1_700_000_000_123);
+    assert_eq!(set_modified(at("absent"), 1_700_000_000_000), Some(PlatformErrorKind::NotFound));
+
+    let lstat = |path: String| match platform.execute(PlatformRequest::Lstat { path }) {
+        Ok(PlatformResponse::Stat(s)) => Ok(s),
+        Ok(other) => panic!("expected Stat, got {other:?}"),
+        Err(e) => Err(e.kind),
+    };
+    assert_eq!(lstat(at("b.txt")).unwrap(), stat(platform, &at("b.txt")).unwrap(), "lstat of a file is its stat");
+    assert_eq!(lstat(d.clone()).unwrap().kind, FileKind::Dir);
+    assert_eq!(lstat(at("absent")).unwrap_err(), PlatformErrorKind::NotFound);
+    assert!(platform.execute(PlatformRequest::ReadLink { path: at("b.txt") }).is_err(), "a file is not a link");
+    assert_eq!(kind_of(platform, PlatformRequest::ReadLink { path: at("absent") }), PlatformErrorKind::NotFound);
 
     unit(platform, PlatformRequest::Rename { from: at("b.txt"), to: at("c.txt") });
     assert_eq!(kind_of(platform, PlatformRequest::ReadFile { path: at("b.txt") }), PlatformErrorKind::NotFound);
     assert_eq!(stat(platform, &at("c.txt")).unwrap().size, 5);
+    let real = |path: String| match platform.execute(PlatformRequest::Canonicalize { path }) {
+        Ok(PlatformResponse::Text(text)) => Ok(text),
+        Ok(other) => panic!("expected Text, got {other:?}"),
+        Err(e) => Err(e.kind),
+    };
+    assert_eq!(real(at("a/../c.txt")).unwrap(), real(at("c.txt")).unwrap());
+    assert!(real(at("c.txt")).unwrap().ends_with("/c.txt"));
+    assert_eq!(real(at("absent")).unwrap_err(), PlatformErrorKind::NotFound);
     unit(platform, PlatformRequest::Rename { from: at("a"), to: at("z") });
     assert_eq!(names(platform, &d), ["a.txt", "c.txt", "z"]);
     assert_eq!(names(platform, &at("z")), ["b"]);

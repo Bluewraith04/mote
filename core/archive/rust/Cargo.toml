@@ -1,0 +1,21 @@
+[package]
+name = "mote_archive"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+flate2 = "1.1.10"
+tar = "0.4.46"
+zip = { version = "8", default-features = false, features = ["deflate-flate2"] }
+
+[workspace]
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+opt-level = "s"

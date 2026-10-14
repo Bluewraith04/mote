@@ -1,5 +1,4 @@
 //! `Shared<T>` cells: readers take the sealed version and never wait; writers take turns.
-//! A cell's id picks its `cell_locks` stripe, keys `writer_waiters` (first in first out) and `watchers` (tasks in `wait_until`).
 
 use std::collections::VecDeque;
 use std::ptr::NonNull;
@@ -107,7 +106,7 @@ pub(super) fn shared_wait(rt: &Runtime, task: &mut TaskContext, dest: usize, arg
     Ok(VmStatus::Running)
 }
 
-/// A cancelled task leaving `shared_begin` hands on the wake it may have been given, so the next writer takes the free turn.
+/// A cancelled task leaving `shared_begin` hands its wake on to the next writer.
 fn pass_turn_on(rt: &Runtime, cell_value: Value) {
     let Ok(h) = cell(cell_value) else { return };
     let id = cell_id(h);
@@ -204,6 +203,80 @@ pub(crate) fn release(rt: &Runtime, mut h: NonNull<ObjectHeader>, owner: u64, ve
 pub(crate) fn release_held_turns(rt: &Runtime, task: &mut TaskContext) {
     for h in std::mem::take(&mut task.held_turns) {
         release(rt, h, task.task_id, None);
+    }
+}
+
+/// Counting cells keep their free permits as the version and park acquirers in order.
+fn give_back(rt: &Runtime, mut h: NonNull<ObjectHeader>) {
+    let id = cell_id(h);
+    let next = {
+        let _guard = cell_lock(rt, id).lock().unwrap();
+        // SAFETY: as `shared_get`, and the cell's stripe lock is held.
+        unsafe {
+            let free = h.as_ref().get_field(SHARED_SLOT_VERSION).as_int().unwrap_or(0);
+            h.as_mut().set_field(SHARED_SLOT_VERSION, Value::small_int(free + 1));
+        }
+        rt.sched.lock().unwrap().writer_waiters.get_mut(&id).and_then(VecDeque::pop_front)
+    };
+    if let Some(waiter) = next {
+        rt.unblock_or_note_early(waiter);
+    }
+}
+
+/// A cancelled task leaving `sem_acquire` hands its wake on to the next acquirer.
+fn pass_permit_on(rt: &Runtime, cell_value: Value) {
+    let Ok(h) = cell(cell_value) else { return };
+    let id = cell_id(h);
+    let next = {
+        let _guard = cell_lock(rt, id).lock().unwrap();
+        // SAFETY: as `shared_get`, and the cell's stripe lock is held.
+        let free = unsafe { h.as_ref().get_field(SHARED_SLOT_VERSION) }.as_int().unwrap_or(0) > 0;
+        free.then(|| rt.sched.lock().unwrap().writer_waiters.get_mut(&id).and_then(VecDeque::pop_front)).flatten()
+    };
+    if let Some(waiter) = next {
+        rt.unblock_or_note_early(waiter);
+    }
+}
+
+pub(super) fn sem_acquire(rt: &Runtime, task: &mut TaskContext, dest: usize, args_start: usize) -> Result<VmStatus, String> {
+    if task.shared.cancelled.load(std::sync::atomic::Ordering::SeqCst) {
+        pass_permit_on(rt, task.registers[args_start]);
+        return Err("task was cancelled".to_string());
+    }
+    let mut h = cell(task.registers[args_start])?;
+    let id = cell_id(h);
+    {
+        let _guard = cell_lock(rt, id).lock().unwrap();
+        // SAFETY: as `shared_get`, and the cell's stripe lock is held.
+        let free = unsafe { h.as_ref().get_field(SHARED_SLOT_VERSION) }.as_int().unwrap_or(0);
+        if free <= 0 {
+            rt.sched.lock().unwrap().writer_waiters.entry(id).or_default().push_back(task.task_id);
+            return Ok(VmStatus::Parked);
+        }
+        // SAFETY: as above.
+        unsafe { h.as_mut().set_field(SHARED_SLOT_VERSION, Value::small_int(free - 1)) };
+    }
+    task.held_permits.push(h);
+    task.registers[dest] = Value::null();
+    task.pc += 1;
+    Ok(VmStatus::Running)
+}
+
+pub(super) fn sem_release(rt: &Runtime, task: &mut TaskContext, dest: usize, args_start: usize) -> Result<VmStatus, String> {
+    let h = cell(task.registers[args_start])?;
+    let Some(i) = task.held_permits.iter().position(|&x| x == h) else {
+        return Err("`release` by a task that holds no permit of this `Semaphore`".to_string());
+    };
+    task.held_permits.swap_remove(i);
+    give_back(rt, h);
+    task.registers[dest] = Value::null();
+    task.pc += 1;
+    Ok(VmStatus::Running)
+}
+
+pub(crate) fn release_held_permits(rt: &Runtime, task: &mut TaskContext) {
+    for h in std::mem::take(&mut task.held_permits) {
+        give_back(rt, h);
     }
 }
 

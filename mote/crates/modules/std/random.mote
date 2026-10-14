@@ -1,5 +1,4 @@
-/// std.random: a seedable generator. Explicit import.
-/// `Rng` owns its SplitMix64 state, so a seeded `Rng` is deterministic. `random()` draws from a fresh entropy seed. Not cryptographically secure.
+/// std.random: a seedable generator.
 
 import { * } from std.prelude
 
@@ -15,7 +14,7 @@ pub class Rng {
         return __random_bits(self.state)
     }
 
-    /// Uniform in [lo, hi). Returns lo if the range is empty.
+    /// Uniform in [lo, hi).
     pub fn next_int(var self, lo: Int, hi: Int) -> Int {
         if hi <= lo { return lo }
         return lo + self.next_bits() % (hi - lo)

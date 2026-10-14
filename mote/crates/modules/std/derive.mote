@@ -1,0 +1,5 @@
+/// std.derive: the modifiers behind the std traits, as one group.
+
+import std.derive.traits as traits
+import std.derive.json as json
+import std.derive.args as args

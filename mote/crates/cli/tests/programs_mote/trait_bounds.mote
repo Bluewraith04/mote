@@ -7,8 +7,7 @@ fn describe<T: Display>(x: T) -> String {
     return "value: ${x.to_string()}"
 }
 
-@derive(Display, Debug)
-class Point {
+class Point: (Display, Debug) {
     x: Int
     y: Int
 }

@@ -1,4 +1,4 @@
-//! `std.dev.libtools` natives: open a library, bind a symbol, call it.
+//! `std.libtools` natives: open a library, bind a symbol, call it.
 
 use super::*;
 use crate::local_refs::LocalReferenceScope;

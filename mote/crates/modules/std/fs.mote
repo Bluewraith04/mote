@@ -1,0 +1,289 @@
+/// std.fs: file handles and file system operations.
+
+import { * } from std.prelude
+import { Stream } from std.stream
+
+pub class File {
+    id: Int
+
+    /// Up to `max` bytes.
+    pub fn read(self, max: Int) -> Result<Bytes, Error> {
+        return __fs_read(self.id, max)
+    }
+
+    /// The next line without its ending.
+    pub fn read_line(self) -> Result<Option<String>, Error> {
+        let line = __fs_read_line(self.id)?
+        if line == null {
+            return Ok(None)
+        }
+        return Ok(Some(line))
+    }
+
+    /// Each remaining line as `Ok(line)`.
+    pub fn lines(self) -> Stream<Result<String, Error>> {
+        while true {
+            match self.read_line() {
+                Ok(got) => {
+                    match got {
+                        Some(line) => { yield Ok(line) }
+                        None => { return }
+                    }
+                }
+                Err(e) => {
+                    yield Err(e)
+                    return
+                }
+            }
+        }
+    }
+
+    /// Everything from the current position to end of file.
+    pub fn read_to_end(self) -> Result<Bytes, Error> {
+        let out = Bytes()
+        while true {
+            match self.read(65536) {
+                Ok(chunk) => {
+                    let c: Bytes = chunk
+                    if c.len() == 0 {
+                        return Ok(out)
+                    }
+                    out.extend(c)
+                }
+                Err(e) => { return Err(e) }
+            }
+        }
+        return Ok(out)
+    }
+
+    pub fn write(self, b: Bytes) -> Result<Null, Error> {
+        return __fs_write(self.id, b)
+    }
+
+    pub fn write_text(self, s: String) -> Result<Null, Error> {
+        return __fs_write_text(self.id, s)
+    }
+
+    /// Moves to `offset` bytes from the start; answers the new position.
+    pub fn seek(self, offset: Int) -> Result<Int, Error> {
+        return __fs_seek(self.id, offset, 0)
+    }
+
+    /// Moves `offset` bytes from the current position.
+    pub fn seek_by(self, offset: Int) -> Result<Int, Error> {
+        return __fs_seek(self.id, offset, 1)
+    }
+
+    /// Moves to `offset` bytes from the end.
+    pub fn seek_end(self, offset: Int) -> Result<Int, Error> {
+        return __fs_seek(self.id, offset, 2)
+    }
+
+    pub fn close(self) -> Result<Null, Error> {
+        return __fs_close(self.id)
+    }
+}
+
+fn owned(id: Int) -> File {
+    let f = File { id: id }
+    __release_on_collect(f, 1)
+    return f
+}
+
+fn opened(id: Result<Int, Error>) -> Result<File, Error> {
+    match id {
+        Ok(n) => { return Ok(owned(n)) }
+        Err(e) => { return Err(e) }
+    }
+}
+
+/// Opens an existing file for reading.
+pub fn open(path: String) -> Result<File, Error> {
+    return opened(__fs_open(path, 0))
+}
+
+/// Creates the file, or truncates it, for writing.
+pub fn create(path: String) -> Result<File, Error> {
+    return opened(__fs_open(path, 1))
+}
+
+/// Opens for writing at the end, creating the file if absent.
+pub fn append(path: String) -> Result<File, Error> {
+    return opened(__fs_open(path, 2))
+}
+
+/// What `stat` reports about a path.
+pub class Stat {
+    pub kind: Int
+    pub size: Int
+    pub modified: Int
+    pub mode: Int
+    pub inode: Int
+    pub device: Int
+    pub links: Int
+
+    pub fn is_file(self) -> Bool { return self.kind == 0 }
+    pub fn is_dir(self) -> Bool { return self.kind == 1 }
+    pub fn is_symlink(self) -> Bool { return self.kind == 3 }
+}
+
+/// Entry names of a directory, sorted, without `.` and `..`.
+pub fn list_dir(path: String) -> Result<List<String>, Error> {
+    return __fs_list_dir(path)
+}
+
+/// One entry of `read_dir` with its name and `lstat`.
+pub class Entry {
+    pub name: String
+    pub kind: Int
+    pub size: Int
+    pub modified: Int
+    pub mode: Int
+    pub inode: Int
+    pub device: Int
+    pub links: Int
+
+    pub fn is_file(self) -> Bool { return self.kind == 0 }
+    pub fn is_dir(self) -> Bool { return self.kind == 1 }
+    pub fn is_symlink(self) -> Bool { return self.kind == 3 }
+}
+
+/// The entries of a directory, sorted by name, each with its `lstat`.
+pub fn read_dir(path: String) -> Result<List<Entry>, Error> {
+    let parts = __fs_read_dir(path)?
+    var out: List<Entry> = []
+    var i = 0
+    while i < parts.len() {
+        out.push(Entry {
+            name: parts.get(i),
+            kind: parts.get(i + 1),
+            size: parts.get(i + 2),
+            modified: parts.get(i + 3),
+            mode: parts.get(i + 4),
+            inode: parts.get(i + 5),
+            device: parts.get(i + 6),
+            links: parts.get(i + 7)
+        })
+        i += 8
+    }
+    return Ok(out)
+}
+
+pub fn create_dir(path: String) -> Result<Null, Error> {
+    return __fs_create_dir(path, 0)
+}
+
+/// Creates the directory and its parents.
+pub fn create_dir_all(path: String) -> Result<Null, Error> {
+    return __fs_create_dir(path, 1)
+}
+
+pub fn remove_file(path: String) -> Result<Null, Error> {
+    return __fs_remove_file(path)
+}
+
+/// Removes an empty directory.
+pub fn remove_dir(path: String) -> Result<Null, Error> {
+    return __fs_remove_dir(path, 0)
+}
+
+/// Removes a directory and everything in it.
+pub fn remove_dir_all(path: String) -> Result<Null, Error> {
+    return __fs_remove_dir(path, 1)
+}
+
+/// Moves a file or directory.
+pub fn rename(src: String, dst: String) -> Result<Null, Error> {
+    return __fs_rename(src, dst)
+}
+
+/// Size, kind and modified time; follows symlinks.
+pub fn stat(path: String) -> Result<Stat, Error> {
+    let parts = __fs_stat(path)?
+    return Ok(stat_of(parts))
+}
+
+/// Like `stat`, but a symlink is not followed.
+pub fn lstat(path: String) -> Result<Stat, Error> {
+    let parts = __fs_lstat(path)?
+    return Ok(stat_of(parts))
+}
+
+fn stat_of(parts: List<Int>) -> Stat {
+    return Stat {
+        kind: parts.get(0),
+        size: parts.get(1),
+        modified: parts.get(2),
+        mode: parts.get(3),
+        inode: parts.get(4),
+        device: parts.get(5),
+        links: parts.get(6)
+    }
+}
+
+/// Where a symlink points.
+pub fn read_link(path: String) -> Result<String, Error> {
+    return __fs_read_link(path)
+}
+
+/// Makes `link` point at `target`.
+pub fn symlink(target: String, link: String) -> Result<Null, Error> {
+    return __fs_symlink(target, link)
+}
+
+/// Sets the modified time in Unix milliseconds.
+pub fn set_modified(path: String, millis: Int) -> Result<Null, Error> {
+    return __fs_set_modified(path, millis)
+}
+
+/// Sets the permission bits.
+pub fn set_mode(path: String, mode: Int) -> Result<Null, Error> {
+    return __fs_set_mode(path, mode)
+}
+
+/// The absolute path with every symlink resolved.
+pub fn canonicalize(path: String) -> Result<String, Error> {
+    return __fs_canonicalize(path)
+}
+
+pub fn exists(path: String) -> Bool {
+    return __fs_stat(path).is_ok()
+}
+
+@stable
+pub fn read_text(path: String) -> Result<String, Error> {
+    with f = open(path)? {
+        let b = f.read_to_end()?
+        match b.decode() {
+            Some(s) => { return Ok(s) }
+            None => { return Err(Error.new(ErrorKind.InvalidData, "read_text: invalid UTF-8: " + path)) }
+        }
+    }
+    return Err(Error.new(ErrorKind.Other, "unreachable"))
+}
+
+@stable
+pub fn write_text(path: String, s: String) -> Result<Null, Error> {
+    with f = create(path)? {
+        f.write_text(s)?
+        return Ok(null)
+    }
+    return Err(Error.new(ErrorKind.Other, "unreachable"))
+}
+
+@stable
+pub fn read_bytes(path: String) -> Result<Bytes, Error> {
+    with f = open(path)? {
+        return f.read_to_end()
+    }
+    return Err(Error.new(ErrorKind.Other, "unreachable"))
+}
+
+@stable
+pub fn write_bytes(path: String, b: Bytes) -> Result<Null, Error> {
+    with f = create(path)? {
+        f.write(b)?
+        return Ok(null)
+    }
+    return Err(Error.new(ErrorKind.Other, "unreachable"))
+}

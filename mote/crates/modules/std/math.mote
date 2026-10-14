@@ -1,9 +1,8 @@
-/// std.math: numeric helpers, used as `import std.math as math` then `math.sqrt(x)`.
-/// `Int` and `Float` do not overload, so the `Float` forms of `abs`, `min` and `max` are `fabs`, `fmin` and `fmax`.
+/// std.math: numeric helpers.
 
 import { * } from std.prelude
 
-/// Constants are nullary functions, as in `math.pi()`.
+/// Constants are nullary functions.
 pub fn pi() -> Float { return 3.141592653589793 }
 pub fn e() -> Float { return 2.718281828459045 }
 pub fn tau() -> Float { return 6.283185307179586 }
@@ -107,7 +106,7 @@ pub fn lcm(a: Int, b: Int) -> Int {
     return abs(a / gcd(a, b) * b)
 }
 
-/// `base` to a non-negative integer `exp`, by squaring. Overflow panics (as `*`).
+/// `base` to a non-negative integer `exp`.
 pub fn ipow(base: Int, exp: Int) -> Int {
     var result = 1
     var b = base

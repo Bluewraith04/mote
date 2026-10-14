@@ -1,13 +1,15 @@
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
+use crate::config::Registries;
 use crate::git::{validate_name, Git, GitRef, Repo};
 use crate::installer::{package_checksum, PackageInstaller};
 use crate::lockfile::Lockfile;
 use crate::manifest::{DependencySpec, PackageManifest, PackageMeta};
 use crate::native;
+use crate::regdeps::RegistryDeps;
 use crate::resolver::{AvailablePackage, DependencyResolver, ResolvedPackage};
-use crate::semver::Version;
+use crate::semver::{Version, VersionReq};
 
 /// The package commands: new, build, run, package and sync.
 pub struct PackageManager;
@@ -31,9 +33,12 @@ impl PackageManager {
                 edition: "2026".into(),
                 entry: entry.to_string(),
                 mote: Some(crate::manifest::toolchain_version()),
+                description: None,
+                license: None,
             },
             dependencies: BTreeMap::new(),
             run: None,
+            registries: BTreeMap::new(),
         };
 
         fs::create_dir_all(target_dir.join("src"))
@@ -69,12 +74,29 @@ impl PackageManager {
         Ok(())
     }
 
-    /// Adds `<git repository>[@ref]` to the manifest, resolves, and installs it.
+    /// Adds a git repository or registry package to the manifest and installs it.
     pub fn add_dependency(project_root: &Path, package_spec_str: &str) -> Result<(), String> {
+        Self::add_dependency_from(project_root, package_spec_str, None)
+    }
+
+    /// Adds a dependency, resolving a package name through `registry`.
+    pub fn add_dependency_from(project_root: &Path, package_spec_str: &str, registry: Option<&str>) -> Result<(), String> {
         let manifest_path = project_root.join("mote.toml");
         let mut manifest = PackageManifest::from_file(&manifest_path)?;
 
         let (repo_spec, at) = split_ref(package_spec_str);
+        if validate_name(repo_spec).is_ok() {
+            let req = registry_requirement(&manifest, repo_spec, at, registry)?;
+            let original = fs::read(&manifest_path).map_err(|e| format!("Failed to read mote.toml: {e}"))?;
+            manifest.dependencies.insert(repo_spec.to_string(), DependencySpec::from_registry(&req, registry));
+            manifest.save_to_file(&manifest_path)?;
+            return Self::install_dependencies(project_root, false).map(|_| ()).inspect_err(|_| {
+                let _ = fs::write(&manifest_path, &original);
+            });
+        }
+        if registry.is_some() {
+            return Err("--registry applies to a package name; a git repository has no registry".to_string());
+        }
         let repo = Repo::parse(repo_spec).map_err(|e| format!("{e}; `mote add` takes <repository>[@ref], and a local package is a path under [dependencies]"))?;
         let git = Git;
         let git_ref = match at {
@@ -112,7 +134,7 @@ impl PackageManager {
         Self::install_dependencies(project_root, false).map(|_| ())
     }
 
-    /// `mote sync`: resolves all declared dependencies, writes the lockfile, and puts the packages in `.mote_packages/`.
+    /// `mote sync`: resolves the dependencies, writes the lockfile and installs the packages.
     pub fn install_dependencies(project_root: &Path, locked: bool) -> Result<Vec<ResolvedPackage>, String> {
         let manifest_path = project_root.join("mote.toml");
         let manifest = PackageManifest::from_file(&manifest_path)?;
@@ -124,11 +146,13 @@ impl PackageManager {
 
         let mut solver = DependencyResolver::new();
         let mut git_jobs: Vec<GitJob> = Vec::new();
+        let mut registry_roots: Vec<(String, Option<String>, String)> = Vec::new();
         for (name, spec) in &manifest.dependencies {
             let git = spec.git()?;
             let Some(local_path) = spec.path() else {
                 let Some((repo, git_ref)) = git else {
-                    return Err(no_source(name));
+                    registry_roots.push((name.clone(), spec.registry().map(str::to_string), spec.version_req_str().to_string()));
+                    continue;
                 };
                 git_jobs.push(GitJob { name: name.clone(), repo, git_ref, required_by: manifest.package.name.clone() });
                 continue;
@@ -174,7 +198,6 @@ impl PackageManager {
             let source = format!("{prefix}{commit}");
             let locked_sum = entry.and_then(|q| q.checksum.as_deref());
             let locked_native = entry.map(|q| q.native.clone()).unwrap_or_default();
-            let granted = manifest.dependencies.get(name).is_some_and(|s| s.native());
             let (package, checksum, natives) = match installer.installed_git(name, &source, locked_sum, &locked_native) {
                 Some(package) => {
                     let sum = package_checksum(&project_root.join(".mote_packages").join(name))?;
@@ -189,12 +212,12 @@ impl PackageManager {
                     if entry.is_some() && natives != locked_native {
                         return Err(format!("{name}: the native files at {commit} differ from mote.lock; the repository changed"));
                     }
-                    native::require(name, &natives, granted)?;
+                    native::require(name, &natives)?;
                     installer.install_git(name, &source, &entries)?;
                     (package, sum, natives)
                 }
             };
-            native::require(name, &natives, granted)?;
+            native::require(name, &natives)?;
             git_sums.insert(name.clone(), checksum);
             git_natives.insert(name.clone(), natives);
 
@@ -205,7 +228,7 @@ impl PackageManager {
                     return Err(if spec.path().is_some() {
                         format!("{by}: a package fetched from git cannot have the path dependency {dep}")
                     } else {
-                        no_source(dep)
+                        format!("{by}: a package fetched from git can only depend on git packages; {dep} needs {{ git = \"https://host/user/repo\", tag = \"v1.0.0\" }}")
                     });
                 };
                 dependencies.insert(dep.clone(), spec.version_req_str().to_string());
@@ -214,18 +237,45 @@ impl PackageManager {
             solver.add_available_package(AvailablePackage { name: name.clone(), version: package.package.version.clone(), dependencies, source });
         }
 
-        let resolved = solver.resolve(&manifest)?;
+        let mut registry_installed = HashMap::new();
+        let mut regdeps = None;
+        let resolved = if registry_roots.is_empty() {
+            solver.resolve(&manifest)?
+        } else {
+            let before = solver.clone();
+            let mut deps = RegistryDeps::new(&manifest, old.as_ref(), &installer, true, locked)?;
+            deps.explore(&mut solver, &registry_roots, &manifest.package.name)?;
+            let resolved = match solver.resolve(&manifest) {
+                Err(first) if deps.used_lock() && !locked => {
+                    solver = before;
+                    deps = RegistryDeps::new(&manifest, old.as_ref(), &installer, false, locked)?;
+                    deps.explore(&mut solver, &registry_roots, &manifest.package.name)?;
+                    solver.resolve(&manifest).map_err(|_| first)?
+                }
+                other => other?,
+            };
+            if let Some(name) = deps.names().find(|n| pins.contains_key(*n) || manifest.dependencies.get(*n).is_some_and(|s| !s.is_registry())) {
+                return Err(format!("{name} comes from a registry and from a git repository or path"));
+            }
+            regdeps = Some(deps);
+            resolved
+        };
+        if let Some(deps) = regdeps.as_mut() {
+            registry_installed = deps.install(&resolved)?;
+        }
 
         let mut lockfile = Lockfile::from_resolved(&resolved);
         for p in &mut lockfile.packages {
-            if let Some(dir) = installer.local_source_dir(&p.source) {
+            if let Some(done) = registry_installed.remove(&p.name) {
+                p.checksum = Some(done.checksum);
+                p.native = done.native;
+            } else if let Some(dir) = installer.local_source_dir(&p.source) {
                 if !dir.join("src").is_dir() {
                     return Err(format!("path dependency '{}': {} is not a directory", p.name, dir.join("src").display()));
                 }
                 p.checksum = Some(package_checksum(&dir)?);
                 p.native = native::dir_checksums(&dir)?;
-                let granted = manifest.dependencies.get(&p.name).is_some_and(|s| s.native());
-                native::require(&p.name, &p.native, granted)?;
+                native::require(&p.name, &p.native)?;
             } else {
                 p.checksum = git_sums.get(&p.name).cloned();
                 p.native = git_natives.get(&p.name).cloned().unwrap_or_default();
@@ -262,7 +312,7 @@ impl PackageManager {
         Ok(resolved)
     }
 
-    /// `mote compile`: the project source into `dist/<name>.mbc`.
+    /// `mote compile`: the project source into a `.mbc` file.
     pub fn compile(project_root: &Path) -> Result<PathBuf, String> {
         Self::compile_program(project_root).map(|(path, _)| path)
     }
@@ -294,8 +344,7 @@ impl PackageManager {
         Ok((output_file, compiled))
     }
 
-    /// `mote package`: `dist/<name>-<version>.mpk` holding `mote.toml`, `<name>.mbc`, the `src/` tree,
-    /// and `interface.txt`.
+    /// `mote package`: writes the package archive to `dist/`.
     pub fn package(project_root: &Path) -> Result<PathBuf, String> {
         let manifest = PackageManifest::from_file(&project_root.join("mote.toml"))?;
         let (_mbc, compiled) = Self::compile_program(project_root)?;
@@ -325,6 +374,17 @@ impl PackageManager {
             entries.push((rel.clone(), bytes));
         }
         entries.push(("interface.txt".to_string(), interface.into_bytes()));
+        if project_root.join("README.md").is_file() {
+            entries.push(("README.md".to_string(), read(&project_root.join("README.md"))?));
+        }
+        if project_root.join("native").is_dir() {
+            let mut natives = Vec::new();
+            collect_sources(&project_root.join("native"), "native", &mut natives)?;
+            natives.sort();
+            for rel in natives {
+                entries.push((rel.clone(), read(&project_root.join(&rel))?));
+            }
+        }
 
         let out = project_root.join("dist").join(format!("{name}-{}.mpk", manifest.package.version));
         crate::mpk::MpkArchive::write(&entries, &out)?;
@@ -341,11 +401,29 @@ struct GitJob {
     required_by: String,
 }
 
-fn no_source(name: &str) -> String {
-    format!("{name}: a dependency needs a source; write {{ git = \"https://host/user/repo\", tag = \"v1.0.0\" }} or {{ path = \"../{name}\" }}")
+/// The requirement `mote add name[@at]` writes.
+fn registry_requirement(manifest: &PackageManifest, name: &str, at: Option<&str>, registry: Option<&str>) -> Result<String, String> {
+    let reg = Registries::for_manifest(manifest)?.get(registry)?;
+    let index = reg.index(name)?;
+    let live = || index.iter().filter(|e| !e.yanked);
+    let req = match at {
+        Some(at) if at.starts_with(['^', '~', '<', '>', '=', '*']) => at.to_string(),
+        Some(at) => format!("^{at}"),
+        None => {
+            let best = live().map(|e| &e.version).filter(|v| v.pre.is_empty()).max().ok_or_else(|| {
+                format!("{name} has no release in registry `{}`; name a version, such as `mote add {name}@1.0.0-rc.1`", reg.name())
+            })?;
+            format!("^{best}")
+        }
+    };
+    let parsed = VersionReq::parse(&req).map_err(|e| format!("'{req}' is not a version requirement: {e}"))?;
+    if !live().any(|e| parsed.matches(&e.version)) {
+        return Err(format!("no version of {name} in registry `{}` matches {req}", reg.name()));
+    }
+    Ok(req)
 }
 
-/// `repo@ref` split at the last `@` whose tail has no `/` or `:`, so `git@host:path` keeps its user.
+/// `repo@ref` split at the last `@` of the ref.
 pub(crate) fn split_ref(spec: &str) -> (&str, Option<&str>) {
     match spec.rfind('@') {
         Some(at) if !spec[at + 1..].is_empty() && !spec[at + 1..].contains(['/', ':']) => (&spec[..at], Some(&spec[at + 1..])),

@@ -116,15 +116,16 @@ Each concrete type gets its own compiled copy, so a call is a direct call and th
 
 ### Built-in traits
 
-`Display`, `Debug`, `Eq` and `Ord` are always in scope. `Int`, `Float`, `Char` and `String` satisfy all four; `Bool` satisfies all but `Ord`. `x.compare(y)` gives `-1`, `0` or `1`, and `std.iter.sort` needs `T: Ord`.
+`Display`, `Debug`, `Eq` and `Ord` come from `std.traits`: `import { Display, Eq, Ord } from std.traits`. `Int`, `Float`, `Char` and `String` satisfy all four; `Bool` satisfies all but `Ord`. `x.compare(y)` gives `-1`, `0` or `1`, and `std.iter.sort` needs `T: Ord`.
 
-### Deriving
+### Generated methods
 
-`@derive(Display, Debug)` adds `to_string` and `debug` to a struct, class or enum. `@derive(Json)` and `@derive(Args)` are covered in [std.data.json](std/json.md) and [std.dev.args](std/args.md).
+Listing `Display` and `Debug` on a struct, class or enum writes `to_string` and `debug`. `JsonCodec` and `Args` are covered in [std.json](std/json.md) and [std.args](std/args.md).
 
 ```mote
-@derive(Display, Debug)
-class Point {
+import { Display, Debug } from std.traits
+
+class Point: (Display, Debug) {
     x: Int
     y: Int
 }

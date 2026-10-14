@@ -1,4 +1,4 @@
-//! Git as the package source: any repository at a tag, branch or commit, read with the `git` command.
+//! Git as the package source: a repository at a tag, branch or commit.
 
 use std::fs;
 use std::io::Read;

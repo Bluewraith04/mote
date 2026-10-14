@@ -6,7 +6,7 @@ pub const MAX_STACK_ENV: &str = "MOTE_MAX_STACK";
 /// Environment variable overriding the heap limit.
 pub const MAX_HEAP_ENV: &str = "MOTE_MAX_HEAP";
 
-/// The heap limit in bytes (`None` is unlimited): `--max-heap`, then `MOTE_MAX_HEAP`, then `[run] max-heap`, then half of `available` memory.
+/// The heap limit in bytes, or `None` when unlimited.
 pub fn resolve_max_heap(flag: Option<&str>, env: Option<&str>, manifest: Option<&str>, available: Option<u64>) -> Result<Option<usize>, String> {
     for (source, raw) in [("--max-heap", flag), (MAX_HEAP_ENV, env), ("[run] max-heap", manifest)] {
         if let Some(raw) = raw {

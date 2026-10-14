@@ -1,6 +1,6 @@
-# std.sys.env
+# std.env
 
-Program arguments and environment variables; the environment is read-only. `import std.sys.env as env`.
+Program arguments and environment variables; the environment is read-only. `import std.env as env`.
 
 | Function | Answers |
 |---|---|
@@ -10,7 +10,7 @@ Program arguments and environment variables; the environment is read-only. `impo
 | `exit(code)` | flushes stdout and stderr, then ends the process with `code` |
 
 ```mote
-import std.sys.env as env
+import std.env as env
 
 println(env.args().len())
 match env.get_var("NO_SUCH_VARIABLE") {

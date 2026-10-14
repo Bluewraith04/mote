@@ -1,21 +1,23 @@
 # std.regex
 
-A small backtracking regex engine. `import { Regex } from std.regex`.
+Regular expressions over the Rust `regex` crate. `import { Regex } from std.regex`.
 
-It matches over bytes, not Unicode scalar values: `.` and a class match one byte, and `\w`, `\d`, `\s` are ASCII-only. A literal pattern still matches non-ASCII text correctly.
+It matches Unicode code points: `.` and a class match one character, and `\w`, `\d`, `\s` and `\b` are Unicode. Time is linear in the text, whatever the pattern.
 
 | Syntax | Meaning |
 |---|---|
-| `.` | any byte |
-| `[abc]`, `[^abc]`, `[a-z]` | a class, its negation, ranges |
-| `\d \D \w \W \s \S` | ASCII classes, usable inside `[...]` |
-| `^` `$` | start and end of the whole string |
+| `.` | any character except a line break (`(?s)` includes it) |
+| `[abc]`, `[^abc]`, `[a-z]`, `[[:alpha:]]` | a class, its negation, ranges, POSIX names |
+| `\d \D \w \W \s \S` | Unicode classes, usable inside `[...]` |
+| `\p{L}`, `\P{L}` | a general category |
+| `^` `$` | start and end of the text (of each line with `(?m)`) |
 | `\b` `\B` | word boundary, non-boundary |
 | `(...)`, `(?:...)`, `(?<name>...)` | capturing, non-capturing and named groups |
 | `a\|b` | alternation |
 | `* + ? {m} {m,} {m,n}` | quantifiers; a trailing `?` makes one lazy |
+| `(?i) (?m) (?s) (?x) (?U)` | flags: ignore case, multi-line, `.` matches line breaks, free spacing, swap greedy and lazy |
 
-No backreferences, lookahead or lookbehind. A repeat count above 1000 is an error.
+No backreferences or lookaround (a compile error), and no scripts: `\p{Greek}` is a compile error.
 
 ```mote
 import { Regex } from std.regex
@@ -36,12 +38,13 @@ true
 345
 ```
 
-`Regex.compile` answers `Result<Regex, Error>`; the `Err` names the first syntax problem and its byte offset.
+`Regex.compile` answers `Result<Regex, Error>`; the `Err` carries the compiler's reason in one line.
 
 | Method | Answers |
 |---|---|
 | `is_match(text)` | whether the pattern matches anywhere |
 | `find(text)` | the leftmost `Match?` |
+| `find_from(text, start)` | the leftmost `Match?` at byte offset `start` or later; the text before `start` still counts for `^` and `\b` |
 | `captures(text)` | the leftmost match's `Captures?` |
 | `find_all(text)` | every non-overlapping `Match` |
 | `split(text)` | `text` cut around every match |
@@ -49,4 +52,6 @@ true
 
 A `Match` has `start`, `end` (byte offsets) and `text`. `Captures` has `get(i)`, `get_named(name)` and `len()`; group 0 is the whole match.
 
-The engine backtracks, so a pathological pattern such as `(a*)*b` on a long non-matching input is slow. It is not suited to untrusted patterns on untrusted input.
+An empty match is never reported inside a character, and `find_all` skips an empty match right after a match.
+
+A program that imports `std.regex` is built on the full runtime, since the engine adds about 1 MB to the binary.

@@ -14,7 +14,7 @@ fn check(source: &str, tag: &str) -> String {
 #[test]
 fn bare_std_points_at_a_module() {
     let text = check("import { env } from std\nfn main() { }\n", "bare");
-    assert!(text.contains("unknown standard-library module 'std': name one, as in `import std.sys.env`"), "{text}");
+    assert!(text.contains("unknown standard-library module 'std': name one, as in `import std.env`"), "{text}");
 }
 
 #[test]
@@ -24,8 +24,8 @@ fn a_directory_of_modules_names_the_module_inside() {
 }
 
 #[test]
-fn an_old_top_level_path_names_where_the_module_moved() {
-    for (old, now) in [("json", "std.data.json"), ("fs", "std.sys.fs"), ("uuid", "std.data.uuid")] {
+fn an_old_grouped_path_names_the_flat_module() {
+    for (old, now) in [("sys.fs", "std.fs"), ("data.json", "std.json"), ("dev.args", "std.args"), ("net.socket", "std.socket"), ("net.tls", "std.tls")] {
         let text = check(&format!("import std.{old}\nfn main() {{ }}\n"), old);
         assert!(text.contains(&format!("unknown standard-library module 'std.{old}': did you mean `{now}`?")), "{text}");
     }
@@ -49,14 +49,6 @@ fn a_module_that_became_a_package_names_the_package() {
         let text = check(&format!("import std.{old}\nfn main() {{ }}\n"), old);
         assert!(text.contains(&format!("unknown standard-library module 'std.{old}': it is now the package `{package}`")), "{text}");
     }
-}
-
-#[test]
-fn a_member_a_group_lacks_is_an_error() {
-    let text = check("import std.data\nfn main() { println(data.nope.x()) }\n", "nomember");
-    assert!(text.contains("nope"), "{text}");
-    let text = check("import { nope } from std.data\nfn main() { }\n", "nomember_from");
-    assert!(text.contains("Cannot import private symbol 'nope'"), "{text}");
 }
 
 #[test]

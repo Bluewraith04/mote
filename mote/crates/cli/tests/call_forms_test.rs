@@ -1,4 +1,4 @@
-//! Call forms: a function stored in a field is called as `obj.f(x)`; a lambda argument's untyped parameters are resolved from the collection it goes into.
+//! Call forms: a function stored in a field is called as `obj.f(x)`.
 
 use std::process::Command;
 

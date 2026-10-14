@@ -1,4 +1,4 @@
-//! Painting a tree into a pixmap with only the bundled fonts, so the pixels do not depend on the machine.
+//! Painting a tree into a pixmap with only the bundled fonts.
 
 use gui::{Align, Dim, Direction, Kind, Painter, Position, Rect, StyleDef, Tree};
 use tiny_skia::Pixmap;

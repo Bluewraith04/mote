@@ -77,6 +77,7 @@ impl ModuleResolver {
         if pkg_dir.exists() {
             search_paths.push(pkg_dir);
         }
+        search_paths.extend(crate::core::core_dirs());
         Self {
             search_paths,
             ast_cache: HashMap::new(),
@@ -98,15 +99,12 @@ impl ModuleResolver {
                 None => {
                     let name = ast_path.to_dotted_string();
                     let inside = crate::embedded::modules_under(&ast_path.segments);
-                    let moved = match ast_path.segments.as_slice() {
-                        [_, one] => crate::embedded::moved_to(one),
-                        _ => None,
-                    };
+                    let moved = crate::embedded::renamed_to(&ast_path.segments);
                     if let Some(package) = crate::embedded::packaged_as(&ast_path.segments) {
                         return Err(format!("unknown standard-library module '{name}': it is now the package `{package}`"));
                     }
                     return Err(match (ast_path.segments.len(), inside.first(), moved) {
-                        (1, _, _) => format!("unknown standard-library module '{name}': name one, as in `import std.sys.env`"),
+                        (1, _, _) => format!("unknown standard-library module '{name}': name one, as in `import std.env`"),
                         (_, _, Some(now)) => format!("unknown standard-library module '{name}': did you mean `{now}`?"),
                         (_, Some(first), _) => format!("unknown standard-library module '{name}': did you mean `{first}`?"),
                         _ => format!("unknown standard-library module '{name}'"),
@@ -138,6 +136,25 @@ impl ModuleResolver {
             return Err(format!("Could not resolve relative module '{}' from '{:?}'", ast_path.to_dotted_string(), from_dir));
         }
 
+        if let Some(found) = self.search(ast_path) {
+            return Ok(found);
+        }
+        if ast_path.segments.first().is_some_and(|first| crate::core::is_library(first)) && crate::core::fetch_missing()? {
+            for dir in crate::core::core_dirs() {
+                if !self.search_paths.contains(&dir) {
+                    self.search_paths.push(dir);
+                }
+            }
+            if let Some(found) = self.search(ast_path) {
+                return Ok(found);
+            }
+        }
+
+        Err(format!("Module '{}' not found in search paths", ast_path.to_dotted_string()))
+    }
+
+    /// The module `ast_path` names in the first search path that has it.
+    fn search(&mut self, ast_path: &AstModulePath) -> Option<(CanonicalModuleId, PathBuf)> {
         for base in &self.search_paths.clone() {
             if let [first, rest @ ..] = ast_path.segments.as_slice() {
                 let src = base.join(first).join("src");
@@ -145,7 +162,7 @@ impl ModuleResolver {
                     if let Some(target) = self.resolve_under(&src, rest) {
                         let id = CanonicalModuleId::new(self.canonicalize_id(&target));
                         self.resolved_paths.insert(id.clone(), target.clone());
-                        return Ok((id, target));
+                        return Some((id, target));
                     }
                 }
             }
@@ -155,24 +172,23 @@ impl ModuleResolver {
                     if let Some(target) = self.try_resolve_file_or_dir(&cur.join(seg)) {
                         let id = CanonicalModuleId::new(self.canonicalize_id(&target));
                         self.resolved_paths.insert(id.clone(), target.clone());
-                        return Ok((id, target));
+                        return Some((id, target));
                     }
                     let pkg_target = cur.join(seg).join("src").join("lib.mote");
                     if pkg_target.exists() {
                         let id = CanonicalModuleId::new(self.canonicalize_id(&pkg_target));
                         self.resolved_paths.insert(id.clone(), pkg_target.clone());
-                        return Ok((id, pkg_target));
+                        return Some((id, pkg_target));
                     }
                 } else {
                     cur = cur.join(seg);
                 }
             }
         }
-
-        Err(format!("Module '{}' not found in search paths", ast_path.to_dotted_string()))
+        None
     }
 
-    /// The module `segments` names under `dir`: a package's `src/` for `import package.module`.
+    /// The module `segments` names under `dir`.
     fn resolve_under(&self, dir: &Path, segments: &[String]) -> Option<PathBuf> {
         let (last, parents) = segments.split_last()?;
         let mut cur = dir.to_path_buf();
@@ -206,7 +222,7 @@ impl ModuleResolver {
         path.canonicalize().unwrap_or_else(|_| path.to_path_buf()).to_string_lossy().to_string()
     }
 
-    /// Parses and caches the program for a resolved module, a source file or an embedded `std.*` module. Every non-`std` module gets an injected `import std.prelude`.
+    /// Parses and caches the program for a resolved module.
     pub(crate) fn parse_module(&mut self, id: &CanonicalModuleId, path: &Path) -> Result<Program, String> {
         if let Some(program) = self.ast_cache.get(id) {
             return Ok(program.clone());
@@ -246,6 +262,16 @@ impl ModuleResolver {
         let extra = Parser::new(tokens).parse().map_err(render)?;
         self.ast_cache.get_mut(id).expect("parsed above").items.extend(extra.items);
         Ok(())
+    }
+
+    /// The directory non-relative imports are searched from first.
+    pub(crate) fn root(&self) -> PathBuf {
+        self.search_paths[0].clone()
+    }
+
+    /// The parse-cache directory, when one is set.
+    pub(crate) fn cache_dir(&self) -> Option<&Path> {
+        self.cache_dir.as_deref()
     }
 
     /// Reuses parsed modules from `dir/modules`.

@@ -95,7 +95,7 @@ fn test_env_args_is_visible_on_every_worker() {
     std::fs::write(
         &main_file,
         "\
-import std.sys.env as env
+import std.env as env
 
 fn main() -> Int {
     var total = 0

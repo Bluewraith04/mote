@@ -69,6 +69,7 @@ A `spawn` block may use only Sendable values.
 | `Int`, `Float`, `Bool`, `Char`, `String` | a mutable `List`, `Map`, `Set` or `Bytes` |
 | structs of sendable fields | a class with a `var` field |
 | classes with no `var` field and sendable fields | a lambda that captures a `var` |
+| tuples, `Result<T, E>` and enums whose payloads are sendable | an enum with a `List`, `Map` or mutable class in a variant |
 | `Sender<T>`, `Receiver<T>`, `Task<T>`, `Shared<T>` | |
 | a named function, or a lambda capturing no `var` | |
 
@@ -107,7 +108,7 @@ Which task runs between two others is the scheduler's choice. `mote test --sched
 
 ## Channels
 
-`Channel<T>(n)` makes a channel and returns its two ends as a pair; `n` is the buffer size, and `0` makes each send wait for a receiver. A channel closes when its last `Sender` is gone, closed or owned by a task that ended; a `Receiver` then drains the buffer and gets `None`.
+`Channel<T>(n)` makes a channel and returns its two ends as a pair; `n` is the buffer size, and `0` makes each send wait for a receiver. A channel closes when its last `Sender` is gone, closed or owned by a task that ended; a `Receiver` then drains the buffer and gets `None`. `rx.close()` makes the receiver give up: the buffer is dropped and a later `send` is a fault.
 
 | Call | Result |
 |---|---|

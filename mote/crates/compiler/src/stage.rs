@@ -6,7 +6,7 @@ use crate::ast::{Expr, Program};
 use crate::span::Span;
 use crate::types::Type;
 
-/// The resolved type of every expression the checker visited; the only way later stages ask "what is this node's type".
+/// The resolved type of every expression the checker visited.
 #[derive(Default)]
 pub struct TypeTable {
     by_node: HashMap<Span, Type>,
@@ -16,10 +16,22 @@ pub struct TypeTable {
     variadic_lists: HashMap<Span, Type>,
     any_checks: HashMap<Span, Type>,
     type_tests: HashMap<Span, Type>,
+    try_failures: HashMap<Span, Type>,
     rewraps: HashMap<Span, i8>,
 }
 
 impl TypeTable {
+    /// Adds the `Failure` type each `?` converts to an `Error`.
+    pub(crate) fn with_try_failures(mut self, try_failures: HashMap<Span, Type>) -> Self {
+        self.try_failures = try_failures;
+        self
+    }
+
+    /// The `Failure` type whose `Err` the `?` at `span` converts with `into_error`.
+    pub(crate) fn try_failure(&self, span: Span) -> Option<&Type> {
+        self.try_failures.get(&span)
+    }
+
     /// Adds the target of each `is` test.
     pub(crate) fn with_type_tests(mut self, type_tests: HashMap<Span, Type>) -> Self {
         self.type_tests = type_tests;

@@ -24,7 +24,7 @@ fn describe(site: &MemorySite) -> String {
     }
 }
 
-/// One line per struct literal in a user module, in source order, then a summary; std modules are left out.
+/// One line per struct literal in a user module, then a summary.
 pub fn lines(sites: &[MemorySite]) -> Vec<String> {
     let mut rows: Vec<(String, usize, usize, String)> = Vec::new();
     let (mut registers, mut regions) = (0, 0);

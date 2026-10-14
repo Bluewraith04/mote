@@ -14,16 +14,16 @@ pub trait SafepointCoordinator: Send + Sync {
     /// Leaves the set; the caller holds no roots the collector cannot reach.
     fn leave(&self);
 
-    /// Leaves the set, handing over `roots` when a pause is in progress (roots only the leaver can reach).
+    /// Leaves the set, handing over `roots` when a pause is in progress.
     fn leave_reporting(&self, roots: &mut dyn FnMut() -> Vec<PausedRoot>);
 
     /// Lock-free: a pause is in progress.
     fn pause_pending(&self) -> bool;
 
-    /// At a safepoint: if a pause is in progress, reports `roots` once per pause and blocks until it ends.
+    /// At a safepoint: reports `roots` and blocks while a pause is in progress.
     fn participate(&self, roots: &mut dyn FnMut() -> Vec<PausedRoot>);
 
-    /// Stops every other entered mutator and runs `collect`; returns false, running nothing, when another pause won.
+    /// Stops every other entered mutator and runs `collect`.
     fn stop_the_world(&self, collect: &mut dyn FnMut()) -> bool;
 
     /// The roots reported for the pause in progress; call from `collect`.

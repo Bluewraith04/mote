@@ -255,7 +255,7 @@ fn test_std_env() {
     fs::write(
         &main_file,
         "\
-import std.sys.env as env
+import std.env as env
 
 fn main() -> Int {
     let a = env.args()
@@ -513,6 +513,8 @@ fn test_visibility_pub_vs_private() {
         span: Span::new(0, 0, 1, 1),
         stable_marks: vec![],
         test_marks: vec![],
+        applied: vec![],
+        modifier_marks: vec![],
     };
 
     let mut resolver = ModuleResolver::new(PathBuf::from("."));
@@ -981,12 +983,12 @@ fn test_a_glob_import_beats_the_prelude_for_the_same_name() {
     let temp = setup_temp_dir("glob_prelude");
     fs::write(
         temp.join("main.mote"),
-        "import { * } from std.sys.gui\nfn main() -> Int {\n    let d = Display.Flex\n    return 1\n}\nreturn main()",
+        "import { * } from std.gui\nfn main() -> Int {\n    let d = Display.Flex\n    return 1\n}\nreturn main()",
     )
     .unwrap();
 
     let mut compiler = MultiFileCompiler::new(temp.clone());
-    compiler.compile_program(&temp.join("main.mote")).expect("`Display` from std.sys.gui must win over the prelude's");
+    compiler.compile_program(&temp.join("main.mote")).expect("`Display` from std.gui must win over the prelude's");
 
     fs::remove_dir_all(temp).ok();
 }
@@ -1221,7 +1223,7 @@ fn test_module_with_no_top_level_gets_no_init_object() {
 
     let mut compiler = MultiFileCompiler::new(temp.clone());
     let compiled = compiler.compile_program(&temp.join("main.mote")).unwrap();
-    assert_eq!(compiled.code_objects.len(), 9);
+    assert_eq!(compiled.code_objects.len(), 12);
 
     assert_eq!(run_multifile(&temp, "main.mote"), 42);
     fs::remove_dir_all(temp).ok();
@@ -1239,7 +1241,7 @@ fn test_module_with_top_level_adds_one_init_object() {
 
     let mut compiler = MultiFileCompiler::new(temp.clone());
     let compiled = compiler.compile_program(&temp.join("main.mote")).unwrap();
-    assert_eq!(compiled.code_objects.len(), 9);
+    assert_eq!(compiled.code_objects.len(), 12);
 
     assert_eq!(run_multifile(&temp, "main.mote"), 9);
     fs::remove_dir_all(temp).ok();

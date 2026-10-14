@@ -1,13 +1,14 @@
-//! `std.sys.http_server` driven by raw TCP clients against a Mote server process.
+//! `std.http_server` driven by raw TCP clients against a Mote server process.
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 
-const APP: &str = r#"import std.sys.http_server as server
-import std.sys.io as io
-import std.data.json as json
+const APP: &str = r#"import std.http_server as server
+import std.io as io
+import std.json as json
+import { Stream } from std.stream
 
 fn route(req: server.Request) -> server.Response {
     if req.path == "/hello" { return server.Response.text(200, "hello") }
@@ -58,7 +59,48 @@ fn route(req: server.Request) -> server.Response {
     if req.path == "/bad-header" { return server.Response.text(200, "x").header("x-bad", "a\r\nb: c") }
     if req.path == "/bad-status" { return server.Response.empty(42) }
     if req.path == "/nan" { return server.Response.json(200, json.Json.Float(0.0 / 0.0)) }
+    if req.path == "/stream" { return streamed(false) }
+    if req.path == "/stream-sized" { return streamed(true) }
+    if req.path == "/upload" {
+        var n = 0
+        while true {
+            match req.read_body(1000) {
+                Ok(piece) => {
+                    let p: Bytes = piece
+                    if p.len() == 0 { break }
+                    n = n + p.len()
+                }
+                Err(e) => { return server.Response.text(400, e.message) }
+            }
+        }
+        return server.Response.text(200, "read ${n} body=${req.body.len()}")
+    }
+    if req.path == "/upload-stream" {
+        var n = 0
+        for got in req.body_stream() {
+            match got {
+                Ok(piece) => {
+                    let p: Bytes = piece
+                    n = n + p.len()
+                }
+                Err(e) => { return server.Response.text(400, e.message) }
+            }
+        }
+        return server.Response.text(200, "streamed ${n} body=${req.body.len()}")
+    }
     return server.Response.text(404, "no ${req.path}")
+}
+
+fn pieces() -> Stream<Bytes> {
+    yield "hello ".bytes()
+    yield Bytes()
+    yield "stream".bytes()
+}
+
+fn streamed(sized: Bool) -> server.Response {
+    let reply = server.Response.stream(200, pieces())
+    if sized { return reply.header("content-length", "12") }
+    return reply
 }
 
 fn handle(conn: server.Connection) {
@@ -68,6 +110,26 @@ fn handle(conn: server.Connection) {
             Ok(next) => {
                 match next {
                     Some(req) => {
+                        if req.path == "/reject" {
+                            let r = conn.reject(503, "down")
+                            break
+                        }
+                        if req.path == "/upgrade" {
+                            match req.upgrade(["upgrade", "test", "connection", "Upgrade"]) {
+                                Ok(pair) => {
+                                    let (up, lead) = pair
+                                    let more = up.read(100).unwrap()
+                                    let out = "got:".bytes()
+                                    out.extend(lead)
+                                    out.extend(more)
+                                    let sent = up.write(out)
+                                    let late = req.respond(server.Response.text(200, "late"))
+                                    let closed = up.close()
+                                }
+                                Err(e) => { }
+                            }
+                            break
+                        }
                         match req.respond(route(req)) {
                             Ok(sent) => {}
                             Err(e) => { let r = req.respond(server.Response.text(500, e.message)) }
@@ -86,6 +148,7 @@ fn main() {
     s.set_max_body(1000)
     s.set_max_header(2000)
     s.set_idle_timeout(1)
+    s.set_stream_over(6000)
     println(s.local_port().unwrap())
     io.stdout().flush()
     scope {
@@ -344,6 +407,112 @@ fn a_bad_reply_is_an_error_not_a_broken_response() {
 }
 
 #[test]
+fn a_rejected_request_is_answered_and_closed() {
+    let s = app("reject");
+    let (mut stream, mut reader) = connect(s.port);
+    stream.write_all(b"GET /reject HTTP/1.1\r\n\r\n").unwrap();
+    let r = read_reply(&mut reader, false).unwrap();
+    assert_eq!((r.status.as_str(), r.body.as_str()), ("HTTP/1.1 503 Service Unavailable", "down"));
+    assert_eq!(r.header("connection"), Some("close"));
+    assert!(closed(&mut reader));
+}
+
+#[test]
+fn an_upgrade_hands_over_the_connection_and_the_early_bytes() {
+    let s = app("upgrade");
+    let (mut stream, mut reader) = connect(s.port);
+    stream.write_all(b"GET /upgrade HTTP/1.1\r\nHost: x\r\nUpgrade: test\r\nConnection: Upgrade\r\n\r\nearly").unwrap();
+    let mut head = String::new();
+    loop {
+        let mut line = String::new();
+        reader.read_line(&mut line).unwrap();
+        head.push_str(&line);
+        if line == "\r\n" {
+            break;
+        }
+    }
+    assert!(head.starts_with("HTTP/1.1 101 Switching Protocols\r\n") && head.contains("upgrade: test\r\n"), "{head}");
+    stream.write_all(b"-ping").unwrap();
+    let mut rest = String::new();
+    reader.read_to_string(&mut rest).unwrap();
+    assert_eq!(rest, "got:early-ping");
+}
+
+fn raw_exchange(port: u16, raw: &str) -> String {
+    let (mut stream, mut reader) = connect(port);
+    stream.write_all(raw.as_bytes()).unwrap();
+    let mut out = Vec::new();
+    reader.read_to_end(&mut out).unwrap();
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+#[test]
+fn a_stream_reply_is_chunked_or_sized() {
+    let s = app("stream");
+    let chunked = raw_exchange(s.port, "GET /stream HTTP/1.1\r\nConnection: close\r\n\r\n");
+    assert!(chunked.contains("transfer-encoding: chunked\r\n"), "{chunked}");
+    assert!(chunked.ends_with("\r\n\r\n6\r\nhello \r\n6\r\nstream\r\n0\r\n\r\n"), "{chunked}");
+    let sized = raw_exchange(s.port, "GET /stream-sized HTTP/1.1\r\nConnection: close\r\n\r\n");
+    assert!(sized.contains("content-length: 12\r\n") && !sized.contains("transfer-encoding"), "{sized}");
+    assert!(sized.ends_with("\r\n\r\nhello stream"), "{sized}");
+    let head = raw_exchange(s.port, "HEAD /stream-sized HTTP/1.1\r\nConnection: close\r\n\r\n");
+    assert!(head.contains("content-length: 12\r\n") && head.ends_with("\r\n\r\n"), "{head}");
+}
+
+#[test]
+fn a_body_over_the_stream_size_is_read_in_pieces() {
+    let s = app("upload");
+    let big = "x".repeat(8000);
+    let r = raw_exchange(s.port, &format!("POST /upload HTTP/1.1\r\nContent-Length: 8000\r\n\r\n{big}"));
+    assert!(r.starts_with("HTTP/1.1 200 OK") && r.ends_with("read 8000 body=0"), "{r}");
+    assert!(r.contains("connection: close\r\n"), "{r}");
+    let small = raw_exchange(s.port, "POST /upload HTTP/1.1\r\nContent-Length: 5\r\nConnection: close\r\n\r\nhello");
+    assert!(small.ends_with("read 5 body=5"), "{small}");
+}
+
+#[test]
+fn body_stream_yields_the_body_in_pieces() {
+    let s = app("body_stream");
+    let big = "x".repeat(8000);
+    let r = raw_exchange(s.port, &format!("POST /upload-stream HTTP/1.1\r\nContent-Length: 8000\r\n\r\n{big}"));
+    assert!(r.starts_with("HTTP/1.1 200 OK") && r.ends_with("streamed 8000 body=0"), "{r}");
+    let small = raw_exchange(s.port, "POST /upload-stream HTTP/1.1\r\nContent-Length: 5\r\nConnection: close\r\n\r\nhello");
+    assert!(small.ends_with("streamed 5 body=5"), "{small}");
+}
+
+const CLOSER: &str =r#"import std.http_server as server
+import std.io as io
+import std.time as time
+
+fn main() {
+    let s = server.listen("127.0.0.1", 0).unwrap()
+    let c = s.closer()
+    println(s.local_port().unwrap())
+    io.stdout().flush()
+    spawn {
+        time.sleep(time.Duration.from_millis(200))
+        let closed = c.close()
+    }
+    match s.accept() {
+        Ok(conn) => { println("accepted") }
+        Err(e) => { println("closed") }
+    }
+}
+"#;
+
+#[test]
+fn a_closer_ends_a_pending_accept_from_another_task() {
+    let dir = std::env::temp_dir().join(format!("mote_httpd_closer_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("main.mote"), CLOSER).unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_mote")).arg("run").arg(dir.join("main.mote")).output().unwrap();
+    std::fs::remove_dir_all(&dir).ok();
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "{text}{}", String::from_utf8_lossy(&out.stderr));
+    assert!(text.trim_end().ends_with("closed"), "{text}");
+}
+
+#[test]
 fn bad_requests_are_answered_and_closed() {
     let s = app("refuse");
     let cases: [(String, &str); 7] = [
@@ -399,4 +568,36 @@ fn connections_are_served_at_the_same_time() {
     half.write_all(b"GET /hel").unwrap();
     let r = once(s.port, "GET /hello HTTP/1.1\r\n\r\n");
     assert_eq!(r.body, "hello");
+}
+
+#[test]
+fn a_detached_request_and_a_collected_reply_need_no_socket() {
+    let source = r#"import std.http_server as server
+import { Stream } from std.stream
+
+fn pieces() -> Stream<Bytes> {
+    yield "ab".bytes()
+    yield "cd".bytes()
+}
+
+fn main() {
+    let req = server.Request.detached("POST", "/a%20b?x=1", ["X-Name", "v"], "body".bytes())
+    let name = req.header("x-name").unwrap()
+    let q = req.query()
+    let x = q["x"]
+    println("${req.method} ${req.path} ${name} ${req.text().unwrap()} ${x}")
+    let whole = server.Response.stream(200, pieces()).header("X-A", "1")
+    println(whole.header_list())
+    println(whole.collect().unwrap().decode().unwrap())
+    println(server.Response.text(200, "plain").collect().unwrap().decode().unwrap())
+}
+"#;
+    let dir = std::env::temp_dir().join(format!("mote_httpd_detached_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("main.mote"), source).unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_mote")).arg("run").arg(dir.join("main.mote")).output().unwrap();
+    std::fs::remove_dir_all(&dir).ok();
+    let text = String::from_utf8_lossy(&out.stdout).into_owned();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(text, "POST /a b v body 1\n[\"x-a\", \"1\"]\nabcd\nplain\n");
 }

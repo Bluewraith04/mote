@@ -8,7 +8,9 @@ mod fake_net;
 pub mod memory;
 mod net;
 mod reactor;
+mod signals;
 mod system;
+mod term;
 pub mod tls;
 
 pub use fake::FakePlatform;

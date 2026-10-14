@@ -1,4 +1,4 @@
-//! Methods on enums, trait lists on enums, and `@derive` on enums.
+//! Methods on enums and trait lists on enums, including the generated traits.
 
 use std::process::Command;
 
@@ -123,20 +123,22 @@ fn a_listed_trait_with_a_missing_method_is_an_error() {
 }
 
 #[test]
-fn derive_display_and_debug_work_on_an_enum() {
-    let src = "@derive(Display, Debug)\nenum Shape {\n    Circle(Float)\n    Rect { w: Float, h: Float }\n    Empty\n}\nfn main() {\n    println(Shape.Circle(1.5).to_string())\n    println(Shape.Rect { w: 2.0, h: 3.0 }.debug())\n    println(\"${Shape.Empty}\")\n}\n";
+fn listed_display_and_debug_work_on_an_enum() {
+    let src = "import { Display, Debug } from std.traits\nenum Shape: (Display, Debug) {\n    Circle(Float)\n    Rect { w: Float, h: Float }\n    Empty\n}\nfn main() {\n    println(Shape.Circle(1.5).to_string())\n    println(Shape.Rect { w: 2.0, h: 3.0 }.debug())\n    println(\"${Shape.Empty}\")\n}\n";
     let (ok, text) = run(src, "derive");
     assert!(ok && text.trim() == "Circle(1.5)\nRect { w: 2.0, h: 3.0 }\nEmpty", "{text}");
 }
 
 #[test]
-fn derive_over_an_existing_enum_method_is_an_error() {
-    rejected("@derive(Display)\nenum E {\n    A\n\n    fn to_string(self) -> String { return \"a\" }\n}\nfn main() { }\n", "derive_clash", "already has a method named `to_string`");
+fn a_listed_trait_over_an_enum_method_keeps_the_written_one() {
+    let src = "import { Display } from std.traits\nenum E: (Display) {\n    A\n\n    fn to_string(self) -> String { return \"mine\" }\n}\nfn main() { println(E.A.to_string()) }\n";
+    let (ok, text) = run(src, "list_own");
+    assert!(ok && text.trim() == "mine", "{text}");
 }
 
 #[test]
-fn a_derived_enum_satisfies_display() {
-    let src = "@derive(Display)\nenum Level {\n    Low\n    High\n}\nfn show<T: Display>(x: T) -> String { return x.to_string() }\nfn main() {\n    println(show(Level.High))\n}\n";
+fn a_listed_enum_satisfies_display() {
+    let src = "import { Display } from std.traits\nenum Level: (Display) {\n    Low\n    High\n}\nfn show<T: Display>(x: T) -> String { return x.to_string() }\nfn main() {\n    println(show(Level.High))\n}\n";
     let (ok, text) = run(src, "derive_bound");
     assert!(ok && text.trim() == "High", "{text}");
 }

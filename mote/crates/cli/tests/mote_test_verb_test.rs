@@ -76,7 +76,7 @@ fn filter_is_a_regex_and_applies_to_ignored_tests() {
 fn an_invalid_filter_pattern_exits_two() {
     let src = "test \"a\" {\n    assert(true)\n}\n";
     let (ok, text) = run_test(src, "filter_bad", &["--filter", "("]);
-    assert!(!ok && text.contains("error: mote test --filter: unterminated group"), "{text}");
+    assert!(!ok && text.contains("error: mote test --filter: unclosed group"), "{text}");
 }
 
 #[test]

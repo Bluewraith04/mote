@@ -1,4 +1,4 @@
-//! `std.data.base64`.
+//! `std.base64`.
 
 use std::process::Command;
 
@@ -13,7 +13,7 @@ fn run(source: &str, tag: &str) -> String {
     text
 }
 
-const HEAD: &str = r#"import std.data.base64 as base64
+const HEAD: &str = r#"import std.base64 as base64
 
 fn back(r: Result<Bytes, Error>) -> String {
     match r {

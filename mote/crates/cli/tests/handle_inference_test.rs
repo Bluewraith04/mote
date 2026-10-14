@@ -13,7 +13,7 @@ fn run(src: &str, tag: &str) -> (bool, String) {
 
 #[test]
 fn cell_and_task_types_are_inferred() {
-    let src = "fn main() {\n    var a: Shared<Int> = Shared(0)\n    var b = Shared(\"hi\")\n    let s: String = b.get()\n    b.set(s + \"!\")\n    a.update(|n| { n += 1 })\n    var out = 0\n    scope {\n        let t: Task<Int> = spawn { 20 + 1 }\n        let u = spawn { return 21 }\n        out = t.join().unwrap() + u.join().unwrap()\n    }\n    println(\"${out} ${b.get()} ${a.get()}\")\n}\n";
+    let src = "import { Task } from std.task\n\nfn main() {\n    var a: Shared<Int> = Shared(0)\n    var b = Shared(\"hi\")\n    let s: String = b.get()\n    b.set(s + \"!\")\n    a.update(|n| { n += 1 })\n    var out = 0\n    scope {\n        let t: Task<Int> = spawn { 20 + 1 }\n        let u = spawn { return 21 }\n        out = t.join().unwrap() + u.join().unwrap()\n    }\n    println(\"${out} ${b.get()} ${a.get()}\")\n}\n";
     let (ok, text) = run(src, "run");
     assert!(ok && text == "42 hi! 1\n", "{text}");
 }

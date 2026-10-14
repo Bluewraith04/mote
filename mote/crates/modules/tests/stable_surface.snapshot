@@ -1,11 +1,30 @@
-std.error::Error [class] class Error { kind: ErrorKind, message: String }
-std.error::ErrorKind [enum] enum ErrorKind { NotFound PermissionDenied InvalidData Interrupted AlreadyExists WouldBlock TimedOut Unsupported Other }
+std.derive.args::args_modifier [modifier] fn args_modifier(d: meta.Decl) -> Result<meta.Additions, meta.Diagnostic>
+std.derive.json::json_modifier [modifier] fn json_modifier(d: meta.Decl) -> Result<meta.Additions, meta.Diagnostic>
+std.derive.traits::debug_modifier [modifier] fn debug_modifier(d: meta.Decl) -> Result<meta.Additions, meta.Diagnostic>
+std.derive.traits::display_modifier [modifier] fn display_modifier(d: meta.Decl) -> Result<meta.Additions, meta.Diagnostic>
+std.error::Error [class] class Error { kind: ErrorKind, message: String, code: String }
+std.error::ErrorKind [enum] enum ErrorKind { NotFound PermissionDenied InvalidData Interrupted AlreadyExists WouldBlock TimedOut Unsupported Other Unauthenticated Conflict RateLimited Unavailable }
+std.error::Failure [trait] trait Failure { fn into_error(self) -> Error }
 std.error::IoError [enum] enum IoError { NotFound PermissionDenied AlreadyExists Interrupted WouldBlock TimedOut Other }
 std.error::ParseError [enum] enum ParseError { InvalidSyntax Other }
 std.error::io_error_of [fn] fn io_error_of(e: Error) -> IoError
 std.error::parse_error_of [fn] fn parse_error_of(e: Error) -> ParseError
-std.sys.fs::read_bytes [fn] fn read_bytes(path: String) -> Result<Bytes, Error>
-std.sys.fs::read_text [fn] fn read_text(path: String) -> Result<String, Error>
-std.sys.fs::write_bytes [fn] fn write_bytes(path: String, b: Bytes) -> Result<Null, Error>
-std.sys.fs::write_text [fn] fn write_text(path: String, s: String) -> Result<Null, Error>
+std.fs::read_bytes [fn] fn read_bytes(path: String) -> Result<Bytes, Error>
+std.fs::read_text [fn] fn read_text(path: String) -> Result<String, Error>
+std.fs::write_bytes [fn] fn write_bytes(path: String, b: Bytes) -> Result<Null, Error>
+std.fs::write_text [fn] fn write_text(path: String, s: String) -> Result<Null, Error>
+std.meta::Additions [class] class Additions { public: String, private: String }
+std.meta::Attr [class] class Attr { name: String, args: List<String>, values: List<(String, String)> }
+std.meta::Decl [class] class Decl { kind: DeclKind, name: String, is_pub: Bool, doc: String, generics: List<GenericParam>, traits: List<TypeRef>, fields: List<Field>, variants: List<Variant>, methods: List<Method>, attrs: List<Attr> }
+std.meta::DeclKind [enum] enum DeclKind { Struct Class Enum }
+std.meta::Diagnostic [class] class Diagnostic { message: String }
+std.meta::Field [class] class Field { name: String, ty: TypeRef, is_pub: Bool, is_var: Bool, doc: String, default: String }
+std.meta::GenericParam [class] class GenericParam { name: String, bounds: List<TypeRef> }
+std.meta::Method [class] class Method { name: String, is_pub: Bool, has_self: Bool, params: List<Param>, returns: TypeRef? }
+std.meta::Param [class] class Param { name: String, ty: TypeRef? }
+std.meta::Shape [enum] enum Shape { Unit Tuple Struct }
+std.meta::TypeKind [enum] enum TypeKind { Named Optional Generic Tuple Function Array Union SelfType Var }
+std.meta::TypeRef [class] class TypeRef { kind: TypeKind, name: String, args: List<TypeRef> }
+std.meta::Variant [class] class Variant { name: String, shape: Shape, types: List<TypeRef>, fields: List<Field>, discriminant: Int?, doc: String, attrs: List<Attr> }
+std.meta::render [fn] fn render(t: TypeRef) -> String
 std.traits::Closeable [trait] trait Closeable { fn close(self) -> Result<Null, Error> }

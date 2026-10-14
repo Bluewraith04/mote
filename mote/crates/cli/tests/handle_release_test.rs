@@ -8,7 +8,7 @@ fn run(body: &str, tag: &str, extra: &str) -> (bool, String) {
     let dir = std::env::temp_dir().join(format!("mote_handles_{tag}_{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let file = dir.join("main.mote");
-    let source = format!("import {{ open }} from std.sys.fs\n\nfn main() {{\n{body}\n}}\n").replace("SELF", &file.to_string_lossy());
+    let source = format!("import {{ open }} from std.fs\n\nfn main() {{\n{body}\n}}\n").replace("SELF", &file.to_string_lossy());
     std::fs::write(&file, source).unwrap();
     let script = format!("ulimit -n 256; exec {} run {} {extra}", env!("CARGO_BIN_EXE_mote"), file.display());
     let out = Command::new("sh").arg("-c").arg(script).output().unwrap();
@@ -46,7 +46,7 @@ fn dropped_sockets_are_closed_by_the_collector() {
     let dir = std::env::temp_dir().join(format!("mote_handles_sockets_{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let file = dir.join("main.mote");
-    std::fs::write(&file, format!("import {{ listen }} from std.sys.net\n\nfn main() {{\n{source}\n}}\n")).unwrap();
+    std::fs::write(&file, format!("import {{ listen }} from std.socket\n\nfn main() {{\n{source}\n}}\n")).unwrap();
     let script = format!("ulimit -n 256; exec {} run {}", env!("CARGO_BIN_EXE_mote"), file.display());
     let out = Command::new("sh").arg("-c").arg(script).output().unwrap();
     std::fs::remove_dir_all(&dir).ok();

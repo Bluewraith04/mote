@@ -1,0 +1,25 @@
+import std.meta as meta
+import ..src.lib as same
+
+fn named(kind: meta.DeclKind, fields: List<meta.Field>) -> meta.Decl {
+    return meta.Decl.new(kind, "P", fields = fields)
+}
+
+fn int_field(name: String) -> meta.Field {
+    return meta.Field.new(name, meta.TypeRef.new(meta.TypeKind.Named, "Int"))
+}
+
+test "every field is compared" {
+    let a = same.same_modifier(named(meta.DeclKind.Struct, [int_field("x"), int_field("y")])).unwrap()
+    assert_eq(a.public, "fn same(self, other: Self) -> Bool { return self.x == other.x && self.y == other.y }")
+}
+
+test "a type with no fields is always the same" {
+    let a = same.same_modifier(named(meta.DeclKind.Class, [])).unwrap()
+    assert_eq(a.public, "fn same(self, other: Self) -> Bool { return true }")
+}
+
+test "an enum is refused" {
+    let r = same.same_modifier(named(meta.DeclKind.Enum, []))
+    assert(r.is_err())
+}

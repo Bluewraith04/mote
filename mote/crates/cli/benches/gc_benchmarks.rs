@@ -1,4 +1,4 @@
-//! GC-pressure throughput benchmarks: `NoGC` as an allocation baseline and the default collector, over the same two workloads. Run: `cargo bench -p cli --bench gc_benchmarks`.
+//! GC-pressure throughput benchmarks over an allocation baseline and the default collector.
 
 use std::ptr::NonNull;
 use std::time::Duration;

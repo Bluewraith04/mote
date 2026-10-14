@@ -9,7 +9,8 @@ Mote is a statically typed language that compiles to bytecode and runs on its ow
 | [Functions](functions.md) | parameters, lambdas, generators |
 | [Structs, classes and enums](types.md) | user-defined types and methods |
 | [Absence and failure](errors.md) | optionals, `Result`, `?` and `!` |
-| [Generics and traits](generics.md) | type parameters, bounds, `@derive` |
+| [Generics and traits](generics.md) | type parameters, bounds, generated methods |
+| [Modifiers](modifiers.md) | a trait that writes its own methods, in a package |
 | [Collections and strings](collections.md) | `List`, `Map`, `Set`, `Bytes`, `String` |
 | [Modules and packages](modules.md) | imports, `pub`, the standard-library layout |
 | [Concurrency](concurrency.md) | tasks, channels, `Shared` |
@@ -21,12 +22,13 @@ Mote is a statically typed language that compiles to bytecode and runs on its ow
 
 Names in the [prelude](std/prelude.md) need no import.
 
-| Group | Modules |
+| Kind | Modules |
 |---|---|
-| Core | [prelude](std/prelude.md), [error](std/error.md), [collections](std/collections.md), [iter](std/iter.md), [stream](std/stream.md), [string](std/string.md), [math](std/math.md), [regex](std/regex.md), [time](std/time.md), [date](std/date.md), [random](std/random.md), [task](std/task.md), [test](std/test.md) |
-| `std.data` | [json](std/json.md), [base64](std/base64.md), [uuid](std/uuid.md), [crypto](std/crypto.md) |
-| `std.sys` | [io](std/io.md), [fs](std/fs.md), [env](std/env.md), [process](std/process.md), [net](std/net.md), [http_server](std/http_server.md), [tls](std/tls.md), [gui](std/gui.md) |
-| `std.dev` | [args](std/args.md), [libtools](std/libtools.md) |
+| Core | [prelude](std/prelude.md), [error](std/error.md), [collections](std/collections.md), [iter](std/iter.md), [stream](std/stream.md), [string](std/string.md), [math](std/math.md), [regex](std/regex.md), [time](std/time.md), [date](std/date.md), [random](std/random.md), [task](std/task.md), [test](std/test.md), [meta](std/meta.md) |
+| Data | [json](std/json.md), [base64](std/base64.md), [uuid](std/uuid.md), [crypto](std/crypto.md) |
+| Machine | [io](std/io.md), [fs](std/fs.md), [env](std/env.md), [process](std/process.md), [gui](std/gui.md) |
+| Network | [socket](std/net.md), [tls](std/tls.md), [http_server](std/http_server.md) |
+| Program | [args](std/args.md), [libtools](std/libtools.md) |
 | `std.experimental` | [types](std/experimental-types.md) |
 
 Every `mote` example in these pages is run by the test suite, and its printed output is checked.

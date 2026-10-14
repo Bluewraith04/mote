@@ -1,6 +1,4 @@
-/// std.time: durations, monotonic instants and an injectable clock. Explicit import.
-/// `Duration` and `Instant` are value structs with methods instead of operators. An `Instant` carries no clock; measure an interval with `Clock.since`.
-/// `sleep` parks the calling task; other tasks keep running.
+/// std.time: durations, monotonic instants and an injectable clock.
 
 import { * } from std.prelude
 
@@ -22,7 +20,7 @@ pub struct Duration {
         return Duration { nanos: self.nanos - other.nanos }
     }
 
-    /// -1, 0 or 1.
+    /// The ordering of two durations as -1, 0 or 1.
     pub fn compare(self, other: Duration) -> Int {
         if self.nanos < other.nanos { return -1 }
         if self.nanos > other.nanos { return 1 }
@@ -50,8 +48,7 @@ pub class Clock {
 
     pub fn system() -> Clock { return Clock { is_fake: false, fake_nanos: 0 } }
 
-    /// A deterministic clock starting at `start_nanos`; it only moves when
-    /// `advance` is called.
+    /// A deterministic clock starting at `start_nanos`.
     pub fn fake(start_nanos: Int) -> Clock {
         return Clock { is_fake: true, fake_nanos: start_nanos }
     }
@@ -67,7 +64,7 @@ pub class Clock {
         return self.now().duration_since(earlier)
     }
 
-    /// Move a fake clock forward. A system clock cannot be advanced — a no-op.
+    /// Moves a fake clock forward.
     pub fn advance(var self, d: Duration) {
         if self.is_fake {
             self.fake_nanos = self.fake_nanos + d.nanos
@@ -83,5 +80,5 @@ pub fn unix_millis() -> Int { return __time_unix_millis() }
 
 pub fn sleep(d: Duration) { __time_sleep_nanos(d.nanos) }
 
-/// A `Receiver` that receives 1, 2, 3,... once per `period`; the timer runs until the program ends.
+/// A `Receiver` that receives a count once per `period`.
 pub fn ticker(period: Duration) -> Receiver<Int> { return __time_ticker(period.nanos) }

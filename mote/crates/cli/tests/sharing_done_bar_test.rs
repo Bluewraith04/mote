@@ -84,7 +84,6 @@ fn misuses() -> Vec<(&'static str, String, &'static str)> {
         ("spawn_captures_list", "fn main() {\n    var xs = [1]\n    scope {\n        spawn { xs.push(2) }\n    }\n}\n".into(), "Sendable"),
         ("send_a_list", "fn main() {\n    let (tx, rx) = Channel<List<Int>>(1)\n}\n".into(), "must be Sendable"),
         ("use_after_spawn", "fn main() {\n    let (tx, rx) = Channel<Int>(1)\n    scope {\n        spawn { tx.send(1) }\n        tx.send(2)\n    }\n}\n".into(), "moved into a `spawn`"),
-        ("receiver_close", "fn main() {\n    let (tx, rx) = Channel<Int>(1)\n    rx.close()\n}\n".into(), "can't close"),
         ("channel_type", "fn main() {\n    let c: Channel<Int> = Channel(1)\n}\n".into(), "`Channel` is not a type"),
         ("mutex", "fn main() {\n    let m: Mutex<Int> = Mutex(0)\n}\n".into(), "there is no `Mutex`"),
         ("mut_param", "fn f(mut x: Int) { }\nfn main() { }\n".into(), "write `var x`"),

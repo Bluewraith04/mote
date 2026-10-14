@@ -5,7 +5,7 @@ use std::process::Command;
 fn run(body: &str, tag: &str) -> Vec<String> {
     let dir = std::env::temp_dir().join(format!("mote_table_{}_{}", tag, std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    std::fs::write(dir.join("main.mote"), format!("fn main() {{\n{body}}}\n")).unwrap();
+    std::fs::write(dir.join("main.mote"), format!("import {{ Set }} from std.collections\n\nfn main() {{\n{body}}}\n")).unwrap();
     let out = Command::new(env!("CARGO_BIN_EXE_mote")).arg("run").arg(dir.join("main.mote")).output().unwrap();
     std::fs::remove_dir_all(&dir).ok();
     let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));

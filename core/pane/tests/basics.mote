@@ -1,0 +1,211 @@
+import std.gui as gui
+import { Stream } from std.stream
+import ..src.lib as pane
+import ..src.theme as theme
+
+class State {
+    var count: Int
+    var name: String
+    var done: Bool
+}
+
+fn fresh() -> State {
+    return State { count: 0, name: "", done: false }
+}
+
+/// The first node under the point.
+fn at(win: gui.Window, x: Float, y: Float) -> gui.Node {
+    return win.hit(x, y).unwrap().unwrap()
+}
+
+fn click(win: gui.Window, x: Float, y: Float) {
+    win.input(gui.Input.PointerMove(x, y)).unwrap()
+    win.input(gui.Input.PointerDown(x, y)).unwrap()
+    win.input(gui.Input.PointerUp(x, y)).unwrap()
+}
+
+/// Steps the app through every event queued so far, stopping at the marker `User(1)`.
+fn settle(var app: pane.Running<State>, win: gui.Window, events: Stream<gui.UiEvent>) {
+    win.post(1).unwrap()
+    for e in events {
+        match e {
+            gui.UiEvent.User(n) => { return }
+            _ => { app.step(e).unwrap() }
+        }
+    }
+}
+
+fn counter(s: State) -> pane.Element<State> {
+    return pane.vstack([
+        pane.h1("Counter"),
+        pane.text("Count: ${s.count}"),
+        pane.hstack([
+            pane.button("-").on_click(|var s| { s.count -= 1 }),
+            pane.button("+").on_click(|var s| { s.count += 1 }),
+        ]),
+        pane.input(s.name, |var s, t| { s.name = t }).on_submit(|var s| { s.done = true }),
+        pane.text("Hello ${s.name}"),
+    ])
+}
+
+test "clicking a button runs its handler and redraws" {
+    let win = gui.headless(300, 300).unwrap()
+    let state = fresh()
+    var app = pane.App("Test", state, counter).mount(win).unwrap()
+    let events = win.events()
+    click(win, 70.0, 100.0)
+    click(win, 70.0, 100.0)
+    click(win, 30.0, 100.0)
+    settle(app, win, events)
+    assert_eq(state.count, 1)
+    assert_eq(win.text(at(win, 20.0, 60.0)).unwrap(), "Count: 1")
+}
+
+fn centred(s: State) -> pane.Element<State> {
+    return pane.vstack([
+        pane.button("+").on_click(|var s| { s.count += 1 }),
+    ]).grow().center()
+}
+
+test "center puts a button in the middle of a stack that fills the window" {
+    let win = gui.headless(300, 300).unwrap()
+    let state = fresh()
+    var app = pane.App("Test", state, centred).mount(win).unwrap()
+    let events = win.events()
+    click(win, 30.0, 150.0)
+    settle(app, win, events)
+    assert_eq(state.count, 0)
+    click(win, 150.0, 150.0)
+    settle(app, win, events)
+    assert_eq(state.count, 1)
+}
+
+test "typing in an input updates the state and the text that shows it" {
+    let win = gui.headless(300, 300).unwrap()
+    let state = fresh()
+    var app = pane.App("Test", state, counter).mount(win).unwrap()
+    let events = win.events()
+    click(win, 100.0, 140.0)
+    win.input(gui.Input.Text("ann")).unwrap()
+    win.input(gui.Input.Key(gui.Key.Enter, gui.no_mods(), true)).unwrap()
+    settle(app, win, events)
+    assert_eq(state.name, "ann")
+    assert(state.done)
+    assert_eq(win.text(at(win, 20.0, 180.0)).unwrap(), "Hello ann")
+    assert_eq(win.text(at(win, 100.0, 140.0)).unwrap(), "ann")
+}
+
+test "a hovered button takes a darker color" {
+    let win = gui.headless(300, 300).unwrap()
+    var app = pane.App("Test", fresh(), counter).mount(win).unwrap()
+    win.present().unwrap()
+    assert_eq(win.pixel(80, 90).unwrap(), 627305471)
+    win.input(gui.Input.PointerMove(80.0, 90.0)).unwrap()
+    win.present().unwrap()
+    assert_eq(win.pixel(80, 90).unwrap(), 559535103)
+}
+
+fn rows_view(s: State) -> pane.Element<State> {
+    var rows: List<pane.Element<State>> = []
+    var i = 0
+    while i < s.count {
+        rows.push(pane.text("row ${i}"))
+        i = i + 1
+    }
+    return pane.vstack([
+        pane.button("more").on_click(|var s| { s.count += 1 }),
+        pane.button("fewer").on_click(|var s| { s.count -= 1 }),
+        pane.vstack(rows),
+    ])
+}
+
+test "children that come and go are added and removed" {
+    let win = gui.headless(300, 300).unwrap()
+    let state = fresh()
+    var app = pane.App("Test", state, rows_view).mount(win).unwrap()
+    let events = win.events()
+    click(win, 40.0, 40.0)
+    click(win, 40.0, 40.0)
+    click(win, 40.0, 40.0)
+    click(win, 40.0, 80.0)
+    click(win, 40.0, 80.0)
+    settle(app, win, events)
+    assert_eq(state.count, 1)
+    assert_eq(win.text(at(win, 20.0, 110.0)).unwrap(), "row 0")
+    assert(win.rect(at(win, 20.0, 134.0)).unwrap().get(3) > 100.0)
+}
+
+fn kind_view(s: State) -> pane.Element<State> {
+    var body: pane.Element<State> = pane.text("plain")
+    if s.count > 0 { body = pane.button("flip") }
+    return pane.vstack([
+        pane.button("go").on_click(|var s| { s.count += 1 }),
+        body,
+        pane.text("after"),
+    ])
+}
+
+test "a changed kind is rebuilt in its place" {
+    let win = gui.headless(300, 300).unwrap()
+    var app = pane.App("Test", fresh(), kind_view).mount(win).unwrap()
+    let events = win.events()
+    click(win, 40.0, 40.0)
+    settle(app, win, events)
+    assert_eq(win.text(at(win, 20.0, 80.0)).unwrap(), "flip")
+    assert_eq(win.text(at(win, 20.0, 120.0)).unwrap(), "after")
+}
+
+fn keyed_view(s: State) -> pane.Element<State> {
+    let a: pane.Element<State> = pane.input(s.name, |var s, t| { s.name = t }).key("a")
+    let b: pane.Element<State> = pane.input("fixed", |var s, t| { }).key("b")
+    var rows: List<pane.Element<State>> = [a, b]
+    if s.count % 2 == 1 { rows = [b, a] }
+    return pane.vstack([pane.button("flip").on_click(|var s| { s.count += 1 }), pane.vstack(rows)])
+}
+
+test "a keyed element keeps its node when the siblings reorder" {
+    let win = gui.headless(300, 300).unwrap()
+    var app = pane.App("Test", fresh(), keyed_view).mount(win).unwrap()
+    let events = win.events()
+    click(win, 100.0, 70.0)
+    win.input(gui.Input.Text("ann")).unwrap()
+    settle(app, win, events)
+    let before = at(win, 100.0, 70.0).id
+    click(win, 30.0, 30.0)
+    settle(app, win, events)
+    assert_eq(win.text(at(win, 100.0, 70.0)).unwrap(), "fixed")
+    assert_eq(win.text(at(win, 100.0, 116.0)).unwrap(), "ann")
+    assert_eq(at(win, 100.0, 116.0).id, before)
+    click(win, 30.0, 30.0)
+    settle(app, win, events)
+    assert_eq(at(win, 100.0, 70.0).id, before)
+}
+
+test "unkeyed siblings match by position and a changed kind leaves the rest" {
+    let win = gui.headless(300, 300).unwrap()
+    var app = pane.App("Test", fresh(), kind_view).mount(win).unwrap()
+    let events = win.events()
+    let after = at(win, 20.0, 95.0)
+    click(win, 40.0, 40.0)
+    settle(app, win, events)
+    assert_eq(at(win, 20.0, 110.0).id, after.id)
+}
+
+fn go_view(s: State) -> pane.Element<State> {
+    return pane.vstack([pane.button("go").on_click(|var s| { s.count += 1 })])
+}
+
+test "a theme set once restyles every element" {
+    let a = gui.headless(200, 100).unwrap()
+    pane.App("Theme", fresh(), go_view).mount(a).unwrap()
+    assert_eq(a.pixel(190, 90).unwrap(), 0xf4f5f7ff)
+    assert_eq(a.pixel(30, 30).unwrap(), 0x2563ebff)
+    let b = gui.headless(200, 100).unwrap()
+    pane.App("Theme", fresh(), go_view).theme(theme.dark()).mount(b).unwrap()
+    assert_eq(b.pixel(190, 90).unwrap(), 0x111827ff)
+    assert_eq(b.pixel(30, 30).unwrap(), 0x3b82f6ff)
+    let c = gui.headless(200, 100).unwrap()
+    pane.App("Theme", fresh(), go_view).theme(theme.contrast().accent(0xff0000ff).page(0x00ff00ff)).mount(c).unwrap()
+    assert_eq(c.pixel(190, 90).unwrap(), 0x00ff00ff)
+    assert_eq(c.pixel(30, 30).unwrap(), 0xff0000ff)
+}

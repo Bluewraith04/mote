@@ -92,7 +92,7 @@ fn parse_float(lex: &mut Lexer<TokenKind>) -> Result<f64, ()> {
     s.parse::<f64>().map_err(|_| ())
 }
 
-/// One segment of a string literal: a text run with escapes resolved, or a `${ … }` hole carrying its raw source.
+/// One segment of a string literal: a text run, or a `${ … }` hole carrying its raw source.
 #[derive(Clone, Debug, PartialEq)]
 pub enum StrPart {
     Lit(String),
@@ -223,6 +223,10 @@ fn parse_char(lex: &mut Lexer<TokenKind>) -> Result<char, ()> {
 pub enum TokenKind {
     #[regex(r"/\*", block_comment)]
     BlockComment,
+
+    /// A `///` line; `////` and longer runs are plain comments.
+    #[regex(r"///([^/\n][^\n]*)?", |lex| lex.slice()[3..].to_string(), priority = 10)]
+    DocComment(String),
 
     #[token("\n")]
     Newline,
@@ -445,7 +449,7 @@ impl TokenKind {
         let text = match self {
             Newline => return "the end of the line".into(),
             Eof => return "the end of the file".into(),
-            BlockComment => return "a comment".into(),
+            BlockComment | DocComment(_) => return "a comment".into(),
             Ident(name) => return format!("`{name}`"),
             Int(n) => return format!("the number {n}"),
             Float(x) => return format!("the number {x}"),
@@ -543,6 +547,52 @@ impl TokenKind {
         if self.is_keyword() { format!("the keyword `{text}`") } else { format!("`{text}`") }
     }
 
+    /// The token as it is written in source.
+    pub fn source_text(&self) -> String {
+        use TokenKind::*;
+        match self {
+            Ident(name) => name.clone(),
+            Int(n) => n.to_string(),
+            Float(x) => format!("{x:?}"),
+            Char(c) => format!("{c:?}"),
+            String(parts) => {
+                let mut out = std::string::String::from("\"");
+                for part in parts {
+                    match part {
+                        StrPart::Lit(s) => {
+                            for c in s.chars() {
+                                match c {
+                                    '\\' => out.push_str("\\\\"),
+                                    '"' => out.push_str("\\\""),
+                                    '$' => out.push_str("\\$"),
+                                    '\n' => out.push_str("\\n"),
+                                    '\r' => out.push_str("\\r"),
+                                    '\t' => out.push_str("\\t"),
+                                    '\0' => out.push_str("\\0"),
+                                    _ => out.push(c),
+                                }
+                            }
+                        }
+                        StrPart::Hole(src, _) => {
+                            out.push_str("${");
+                            out.push_str(src);
+                            out.push('}');
+                        }
+                    }
+                }
+                out.push('"');
+                out
+            }
+            other => {
+                let d = other.describe();
+                match (d.find('`'), d.rfind('`')) {
+                    (Some(a), Some(b)) if a < b => d[a + 1..b].to_string(),
+                    _ => d,
+                }
+            }
+        }
+    }
+
     fn is_keyword(&self) -> bool {
         use TokenKind::*;
         matches!(
@@ -558,11 +608,13 @@ impl TokenKind {
 pub struct Token {
     pub kind: TokenKind,
     pub span: Span,
+    /// The `///` lines before this token, joined by `\n`, one leading space removed.
+    pub doc: Option<Box<str>>,
 }
 
 impl Token {
     pub fn new(kind: TokenKind, span: Span) -> Self {
-        Self { kind, span }
+        Self { kind, span, doc: None }
     }
 
     /// Returns true if this token kind can potentially end a statement before a newline.

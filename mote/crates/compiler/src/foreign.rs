@@ -1,16 +1,16 @@
-//! The C signature a `std.dev.libtools` `bind<F>` names.
+//! The C signature a `std.libtools` `bind<F>` names.
 
 use crate::types::Type;
 
 /// Most parameters a bound C function takes.
-pub(crate) const MAX_PARAMS: usize = 6;
+pub(crate) const MAX_PARAMS: usize = 12;
 
-/// Whether `mangled` is `std.dev.libtools`'s `bind` or `bind_blocking`.
+/// Whether `mangled` is `std.libtools`'s `bind` or `bind_blocking`.
 pub(crate) fn is_bind(mangled: &str) -> bool {
     mangled.ends_with("libtools_bind") || is_bind_blocking(mangled)
 }
 
-/// Whether `mangled` is `std.dev.libtools`'s `bind_blocking`: its calls run off the worker.
+/// Whether `mangled` is `std.libtools`'s `bind_blocking`: its calls run off the worker.
 pub(crate) fn is_bind_blocking(mangled: &str) -> bool {
     mangled.ends_with("libtools_bind_blocking")
 }
@@ -26,7 +26,7 @@ pub(crate) fn make_sendable(result: &mut Type) {
     }
 }
 
-/// `F` as a signature string (`"fi>f"`: `i` Int, `f` Float, `b` Bool, `s` String, `p` Bytes, `v` Null) and its parameter count.
+/// `F` as a signature string and its parameter count.
 pub(crate) fn signature_of(f: Option<&Type>) -> Result<(String, usize), String> {
     let Some(Type::Function { params, ret, .. }) = f else {
         return Err("`bind` needs a function type, as in `bind<(Float) -> Float>(lib, name)`".into());

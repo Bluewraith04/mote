@@ -15,7 +15,7 @@ fn dir(name: &str) -> std::path::PathBuf {
 
 fn run(body: &str, tag: &str) -> Vec<String> {
     let dir = dir(tag);
-    std::fs::write(dir.join("main.mote"), format!("{TYPES}fn main() {{\n{body}}}\n")).unwrap();
+    std::fs::write(dir.join("main.mote"), format!("import {{ Stream }} from std.stream\n{TYPES}fn main() {{\n{body}}}\n")).unwrap();
     let out = Command::new(env!("CARGO_BIN_EXE_mote")).arg("run").arg(dir.join("main.mote")).output().unwrap();
     std::fs::remove_dir_all(&dir).ok();
     let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));

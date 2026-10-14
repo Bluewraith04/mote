@@ -46,7 +46,7 @@ struct Point {
     var y: Int
 }
 
-class Dog: Animal {
+class Dog: (Animal) {
     name: String
     fn bark(self) { println("woof") }
 }
@@ -73,7 +73,9 @@ enum Shape {
           (identifier)))))
   (class_item
     (identifier)
-    (identifier)
+    (trait_list
+      (named_type
+        (identifier)))
     (member_list
       (field_declaration
         (identifier)
@@ -192,6 +194,7 @@ import std.sys.io
 import { Any, List as L } from std.experimental.types
 
 @derive(Debug)
+@generate(std.derive.args.args_modifier)
 pub struct Id { n: Int }
 
 test "adds" { assert(1 + 1 == 2) }
@@ -217,7 +220,16 @@ test "adds" { assert(1 + 1 == 2) }
       (identifier)))
   (attribute
     (identifier)
-    (identifier))
+    (attribute_argument
+      (identifier)))
+  (attribute
+    (identifier)
+    (attribute_argument
+      (attribute_path
+        (identifier)
+        (identifier)
+        (identifier)
+        (identifier))))
   (struct_item
     (visibility)
     (identifier)
@@ -259,4 +271,106 @@ pub import { * } from .origin
     (visibility)
     (import_list)
     (module_path
+      (identifier))))
+
+================================================================================
+args type: docs, field defaults and attribute values
+================================================================================
+
+/// Copies files
+@arg(v = verbose, help = "text")
+class Options: (Args) {
+    /// print each file
+    verbose: Bool
+    count: Int = 3
+    out: String? = null
+    files: List<String> = []
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (doc_comment)
+  (attribute
+    (identifier)
+    (attribute_argument
+      (identifier)
+      (identifier))
+    (attribute_argument
+      (identifier)
+      (string
+        (string_content))))
+  (class_item
+    (identifier)
+    (trait_list
+      (named_type
+        (identifier)))
+    (member_list
+      (doc_comment)
+      (field_declaration
+        (identifier)
+        (named_type
+          (identifier)))
+      (field_declaration
+        (identifier)
+        (named_type
+          (identifier))
+        (integer))
+      (field_declaration
+        (identifier)
+        (nullable_type
+          (named_type
+            (identifier)))
+        (null))
+      (field_declaration
+        (identifier)
+        (generic_type
+          (named_type)
+          (type_arguments
+            (named_type
+              (identifier))))
+        (list_expression)))))
+
+================================================================================
+args enum: attribute on a variant and variant field defaults
+================================================================================
+
+enum Command: (Args) {
+    /// seek
+    @arg(F = fixed)
+    Seek {
+        /// plain text
+        fixed: Bool
+        jobs: Int = 8
+    }
+    Stop
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (enum_item
+    (identifier)
+    (trait_list
+      (named_type
+        (identifier)))
+    (doc_comment)
+    (attribute
+      (identifier)
+      (attribute_argument
+        (identifier)
+        (identifier)))
+    (enum_variant
+      (identifier)
+      (doc_comment)
+      (variant_field
+        (identifier)
+        (named_type
+          (identifier)))
+      (variant_field
+        (identifier)
+        (named_type
+          (identifier))
+        (integer)))
+    (enum_variant
       (identifier))))

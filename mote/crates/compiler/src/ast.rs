@@ -7,8 +7,35 @@ pub struct Program {
     pub span: Span,
     /// Every `@stable` item this program declared, with its signature already rendered.
     pub stable_marks: Vec<StableMark>,
-    /// Every discovered test: a `test "name" { }` block or a `@test` function. `fn_name` is the function's own name before mangling.
+    /// Every discovered test: a `test "name" { }` block or a `@test` function.
     pub test_marks: Vec<TestMark>,
+    /// Every modifier the modifier pass applied.
+    pub applied: Vec<AppliedModifier>,
+    /// Every `@modifier pub fn` this program declared.
+    pub modifier_marks: Vec<ModifierMark>,
+}
+
+/// One `@modifier` function: its own name before mangling.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct ModifierMark {
+    pub fn_name: String,
+    /// The member attributes it consumes, from `@modifier(reads = "arg")`.
+    pub reads: Vec<String>,
+    pub span: Span,
+}
+
+/// One modifier application: which modifier, its request span and what it generated.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct AppliedModifier {
+    pub name: String,
+    pub module: String,
+    pub span: Span,
+    /// The declaration it was applied to.
+    pub target: String,
+    /// The offset of the declaration's closing brace, where `mote expand` writes `code`.
+    pub insert_at: usize,
+    /// The generated source, public methods then helpers.
+    pub code: String,
 }
 
 /// One discovered test.
@@ -20,7 +47,7 @@ pub struct TestMark {
     pub span: Span,
 }
 
-/// One `@stable pub` item: its name, its kind and a span-free signature that changes only with the item's shape.
+/// One `@stable pub` item: its name, its kind and a span-free signature.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct StableMark {
     pub name: String,
@@ -30,7 +57,6 @@ pub struct StableMark {
 }
 
 /// An `@name` or `@name(arg, key = "text", …)` preceding an item, a field or a variant.
-/// `args` are the bare identifiers inside the parens; `values` are the `key = "text"` pairs, in order.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Attribute {
     pub name: String,
@@ -137,7 +163,7 @@ pub enum ParameterKind {
         /// `var self`: the method may write its receiver.
         is_var: bool,
     },
-    /// `...xs: T`: collects a call's trailing arguments into a `List<T>` (`Any` when untyped). Must be the last parameter and excludes defaults.
+    /// `...xs: T`: collects a call's trailing arguments into a `List<T>`.
     Variadic {
         name: String,
         ty: Option<TypeNode>,
@@ -183,7 +209,7 @@ pub struct FunctionDecl {
     pub span: Span,
 }
 
-/// A bodyless `native fn` declaration; no `body` and no `generic_params` (a generic one is a parse error).
+/// A bodyless `native fn` declaration.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct NativeFnDecl {
     pub name: String,
@@ -201,8 +227,12 @@ pub struct FieldDecl {
     pub is_mutable: bool,
     /// Readable outside the declaring module.
     pub is_pub: bool,
-    /// `@arg(…)` written before the field.
-    pub attrs: Vec<Attribute>,
+    /// The `///` lines before the field, joined by `\n`.
+    pub doc: String,
+    /// The value after `=`: `name: Type = value`.
+    pub default: Option<Expr>,
+    /// The default as source text, for modifiers.
+    pub default_text: String,
     pub span: Span,
 }
 
@@ -211,6 +241,10 @@ pub struct FieldDecl {
 pub struct StructDecl {
     pub name: String,
     pub generic_params: Vec<GenericParam>,
+    /// Attributes written before the declaration that no pass has consumed yet.
+    pub attrs: Vec<Attribute>,
+    /// The `///` lines before the declaration, joined by `\n`.
+    pub doc: String,
     /// Traits listed on the declaration line: `struct C: (A, B)`.
     pub traits: Vec<TypeNode>,
     pub fields: Vec<FieldDecl>,
@@ -236,6 +270,8 @@ pub struct EnumVariant {
     pub kind: EnumVariantKind,
     /// `@arg(…)` written before the variant.
     pub attrs: Vec<Attribute>,
+    /// The `///` lines before the variant, joined by `\n`.
+    pub doc: String,
     pub span: Span,
 }
 
@@ -244,6 +280,10 @@ pub struct EnumVariant {
 pub struct EnumDecl {
     pub name: String,
     pub generic_params: Vec<GenericParam>,
+    /// Attributes written before the declaration that no pass has consumed yet.
+    pub attrs: Vec<Attribute>,
+    /// The `///` lines before the declaration, joined by `\n`.
+    pub doc: String,
     /// Traits listed on the declaration line: `enum C: (A, B)`.
     pub traits: Vec<TypeNode>,
     pub variants: Vec<EnumVariant>,
@@ -257,6 +297,10 @@ pub struct EnumDecl {
 pub struct ClassDecl {
     pub name: String,
     pub generic_params: Vec<GenericParam>,
+    /// Attributes written before the declaration that no pass has consumed yet.
+    pub attrs: Vec<Attribute>,
+    /// The `///` lines before the declaration, joined by `\n`.
+    pub doc: String,
     /// Traits listed on the declaration line: `class C: (A, B)`.
     pub traits: Vec<TypeNode>,
     pub fields: Vec<FieldDecl>,
@@ -281,6 +325,8 @@ pub struct TraitMember {
 pub struct TraitDecl {
     pub name: String,
     pub generic_params: Vec<GenericParam>,
+    /// Attributes written before the declaration; `@generate(path)` names the trait's modifier.
+    pub attrs: Vec<Attribute>,
     pub members: Vec<TraitMember>,
     pub is_pub: bool,
     pub span: Span,
@@ -392,7 +438,7 @@ pub enum Stmt {
         name: String,
         ty: Option<TypeNode>,
         init: Expr,
-        /// See `Let::is_pub`.
+        /// `true` only for a top-level `pub var`.
         is_pub: bool,
         span: Span,
     },
@@ -424,7 +470,7 @@ pub enum Stmt {
     },
     ForIn {
         var_name: String,
-        /// The iterable. A `Range` literal is lowered as a counter loop; anything else uses the `iter()` / `next()` protocol.
+        /// The iterable; a `Range` literal is lowered as a counter loop.
         iter: Expr,
         body: Vec<Stmt>,
         span: Span,
@@ -471,7 +517,7 @@ pub enum Stmt {
         init: Expr,
         span: Span,
     },
-    /// `with name = expr { … }`: binds a `Closeable` resource and calls `.close()` on every exit from the block. Function bodies only.
+    /// `with name = expr { … }`: binds a `Closeable` resource and closes it on every exit.
     WithBlock {
         name: String,
         init: Expr,
@@ -666,7 +712,7 @@ pub enum Expr {
     Call {
         callee: Box<Expr>,
         args: Vec<Expr>,
-        /// `name = value` arguments: one entry per argument, `None` for a positional one; empty when none is named.
+        /// `name = value` arguments: one entry per argument, `None` for a positional one.
         #[serde(default)]
         names: Vec<Option<String>>,
         span: Span,
@@ -681,7 +727,7 @@ pub enum Expr {
         member: String,
         span: Span,
     },
-    /// `a?.f` / `a?.m(args)`: `body` reads `temp`, bound to `a`'s payload, and runs only when `a` is not `None`.
+    /// `a?.f` / `a?.m(args)`: runs only when `a` is not `None`.
     OptionalChain {
         object: Box<Expr>,
         temp: String,

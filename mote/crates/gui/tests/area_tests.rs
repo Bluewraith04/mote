@@ -3,7 +3,7 @@
 use gui::keys::{BACKSPACE, CTRL, DOWN, END, ENTER, HOME, LEFT, SHIFT, UP};
 use gui::{Dim, Input, Kind, Len, Painter, Rect, StyleDef, Surface, UiEvent};
 
-/// A 100 by 60 text area at (10, 10) in a 240 by 200 window, focused, with no text yet; its lines are 20 pixels tall.
+/// A focused 100 by 60 text area in a 240 by 200 window, with no text yet.
 fn scene() -> (Surface, u32) {
     let mut s = Surface::new(240, 200, Painter::bundled_only()).unwrap();
     let id = s.tree.intern_style(StyleDef {

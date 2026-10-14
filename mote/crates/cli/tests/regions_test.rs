@@ -37,7 +37,7 @@ fn region_sites(name: &str, source: &str) -> usize {
 }
 
 fn sites(name: &str, body: &str) -> usize {
-    region_sites(name, &format!("{POINT}{body}"))
+    region_sites(name, &format!("import {{ Stream }} from std.stream\n{POINT}{body}"))
 }
 
 #[test]

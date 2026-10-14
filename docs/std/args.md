@@ -1,20 +1,21 @@
 # Command-line arguments
 
-`@derive(Args)` on a struct, class or enum adds a command-line parser, its error messages and its help text. No import is needed. `env.args()` gives the raw list ([env](env.md)).
+Listing `Args` on a struct, class or enum, `struct Options: (Args)` with `import { Args } from std.args`, writes a command-line parser, its error messages and its help text. `env.args()` gives the raw list ([env](env.md)). Each field is read by its type and its default, and a `///` comment on a field, a command or the type is its help.
 
 ```mote,skip
-import std.sys.env
+import std.env
+import { Args } from std.args
 
-@derive(Args)
-@arg(help = "Copies files")
-class Options {
-    @arg(help = "print each file", short = "v")
+/// Copies files
+@arg(v = verbose)
+class Options: (Args) {
+    /// print each file
     verbose: Bool
-    @arg(help = "where to put them")
-    out: String?
-    @arg(default = "3", help = "how many copies")
-    count: Int
-    @arg(positional, help = "files to copy")
+    /// where to put them
+    out: String? = null
+    /// how many copies
+    count: Int = 3
+    /// files to copy
     files: List<String>
 }
 
@@ -37,47 +38,51 @@ A type that holds a `List` is a class.
 | `T.parse_or_exit(argv)` | `--help` prints the help and exits 0; a bad command line prints the error and usage to stderr and exits 2 |
 | `T.usage(program)` | the help text |
 
-| Field | Command line | Absent |
+A flag, else an option if the field has a default, else a positional.
+
+| Field | Reads as | Absent |
 |---|---|---|
 | `Bool` | the flag `--name` | `false` |
-| `Int`, `Float`, `String` | `--name value` or `--name=value` | an error, unless `default` is given |
-| `T?` | the same | `null` |
-| `List<T>` | the option repeated | `[]` |
-| with `@arg(positional)` | a bare argument, in declaration order | an error for `T`, `null` for `T?`, `[]` for `List<T>` |
+| `Int`, `Float` or `String` with `= value` | `--name value` or `--name=value` | the value |
+| `T?` with `= null` | the same | `null` |
+| `List<T>` with `= []` | the option repeated | `[]` |
+| `T` with no default | a bare argument, in declaration order | an error |
+| `T?` with no default | an optional bare argument | `null` |
+| `List<T>` with no default | every bare argument left, so it is the last positional | `[]` |
 | a named type | a subcommand | `null` for `C?`, an error for `C` |
 
-A field `out_dir` is the option `--out-dir`. `--` ends the options. `-o x`, `-o=x` and `-ox` read the option with `short = "o"`. A flag takes no value; combined short flags (`-vq`) are an error. The last of a repeated non-list option wins.
+A field `out_dir` is the option `--out-dir`. `--` ends the options. `-o x`, `-o=x` and `-ox` read the option with the short `o`. A flag takes no value; combined short flags (`-vq`) are an error. The last of a repeated non-list option wins. There is no required option: write it as a positional. A `Bool` with `= true` is an error.
 
-`@arg` keys: `help = "text"` (a field, variant or the type), `short = "o"`, `default = "3"`, and `positional`. `help` and `-h` are reserved.
+`@arg(x = field, …)` before a struct, class or command gives `field` the short flag `-x`: a key is one ASCII letter and the value a field name. A short on a positional or a subcommand, a letter used twice, the letter `h` and a name that is no field are errors. `help` and `-h` are reserved. An attribute before a field is an error.
 
-An enum that derives `Args` is a set of commands: `Build` is `build` and `RunTests` is `run-tests`. A struct field of that type takes the first bare argument as the command name; what follows belongs to the command. A unit variant is a command with no arguments; a tuple variant, and a subcommand inside a subcommand, are errors.
+An enum that lists `Args` is a set of commands: `Build` is `build` and `RunTests` is `run-tests`. A struct field of that type takes the first bare argument as the command name; what follows belongs to the command. A unit variant is a command with no arguments; a tuple variant, and a subcommand inside a subcommand, are errors.
 
 ```mote,skip
-@derive(Args)
-enum Command {
-    @arg(help = "add up the numbers")
+enum Command: (Args) {
+    /// add up the numbers
     Sum {
-        @arg(positional, help = "the numbers")
+        /// the numbers
         numbers: List<Int>
     }
-    @arg(help = "repeat a word")
+    /// repeat a word
+    @arg(n = times)
     Say {
-        @arg(positional, help = "the word")
+        /// the word
         word: String
-        @arg(short = "n", default = "1", help = "how many times")
-        times: Int
+        /// how many times
+        times: Int = 1
     }
 }
 
-@derive(Args)
-@arg(help = "Small tools")
-class Tool {
-    @arg(short = "q", help = "print only the result")
+/// Small tools
+@arg(q = quiet)
+class Tool: (Args) {
+    /// print only the result
     quiet: Bool
     command: Command
 }
 ```
 
-Errors read like `unknown option --x`, `option --x needs a value`, `missing option --x`, `missing argument <FILE>`, `invalid value for --count: expected an int, found "x"`, `unexpected argument "x"`, and `unknown command "x" (expected build, run)`.
+Errors read like `unknown option --x`, `option --x needs a value`, `missing argument <FILE>`, `invalid value for --count: expected an int, found "x"`, `unexpected argument "x"`, and `unknown command "x" (expected build, run)`.
 
 Not included: fields read from text (a `Path`, an enum of choices), counted flags, `--no-flag`, environment fallbacks, validators, per-subcommand help, shell completions.

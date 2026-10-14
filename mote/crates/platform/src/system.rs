@@ -8,7 +8,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use contracts::{
     EventSink, FileKind, FileMode, FileStat, Platform, PlatformError, PlatformErrorKind, PlatformRequest, ProcessOutput,
     PlatformResponse,
-    SourceHandle, SourceRequest, StdStream, Wake, Whence, Woken,
+    SourceHandle, SourceRequest, StdStream, WaitCancel, Wake, Whence, Woken,
 };
 
 use crate::dynlib::DynLibs;
@@ -68,12 +68,7 @@ impl SystemPlatform {
         *self.args.write().unwrap() = args;
     }
 
-    /// Whether `LibOpen` may load native libraries (`--allow-native`).
-    pub fn set_allow_native(&self, allowed: bool) {
-        self.libs.set_allowed(allowed);
-    }
-
-    /// The packages whose native libraries `LibOpenPackage` may load, each with its library directory.
+    /// The packages whose native libraries `LibOpenPackage` loads, each with its library directory.
     pub fn set_native_packages(&self, packages: Vec<(String, std::path::PathBuf)>) {
         self.libs.set_packages(packages);
     }
@@ -190,11 +185,18 @@ impl Platform for SystemPlatform {
             }
             PlatformRequest::LocalOffset { unix_seconds } => PlatformResponse::Int(local_offset(unix_seconds)?),
             dir @ (PlatformRequest::ListDir { .. }
+            | PlatformRequest::ReadDir { .. }
             | PlatformRequest::CreateDir { .. }
             | PlatformRequest::RemoveFile { .. }
             | PlatformRequest::RemoveDir { .. }
             | PlatformRequest::Rename { .. }
-            | PlatformRequest::Stat { .. }) => return dir_request(dir),
+            | PlatformRequest::Stat { .. }
+            | PlatformRequest::Canonicalize { .. }
+            | PlatformRequest::Lstat { .. }
+            | PlatformRequest::ReadLink { .. }
+            | PlatformRequest::Symlink { .. }
+            | PlatformRequest::SetModified { .. }
+            | PlatformRequest::SetMode { .. }) => return dir_request(dir),
             PlatformRequest::RunProcess { program, args, env, stdin, cwd } => {
                 return run_process(program, args, env, stdin, cwd)
             }
@@ -203,6 +205,15 @@ impl Platform for SystemPlatform {
             PlatformRequest::LibSymbol { lib, name, signature } => PlatformResponse::Int(self.libs.symbol(lib, &name, &signature)?),
             PlatformRequest::LibCall { symbol, args, .. } => return self.libs.call(symbol, args),
             PlatformRequest::LibClose { lib } => return self.libs.close(lib),
+            PlatformRequest::TermOpen { mouse } => {
+                crate::term::open(mouse)?;
+                PlatformResponse::Unit
+            }
+            PlatformRequest::TermClose => {
+                crate::term::close();
+                PlatformResponse::Unit
+            }
+            PlatformRequest::TermSize => PlatformResponse::Int(crate::term::size()?),
             PlatformRequest::SocketClose { id } => {
                 if let (Some(source), Some(Some(reactor))) = (self.net.close(id)?, self.reactor.get()) {
                     reactor.release(&source);
@@ -227,11 +238,18 @@ impl Platform for SystemPlatform {
                 | PlatformRequest::FileSeek { .. }
                 | PlatformRequest::FileClose { .. }
                 | PlatformRequest::ListDir { .. }
+                | PlatformRequest::ReadDir { .. }
                 | PlatformRequest::CreateDir { .. }
                 | PlatformRequest::RemoveFile { .. }
                 | PlatformRequest::RemoveDir { .. }
                 | PlatformRequest::Rename { .. }
                 | PlatformRequest::Stat { .. }
+                | PlatformRequest::Canonicalize { .. }
+                | PlatformRequest::Lstat { .. }
+                | PlatformRequest::ReadLink { .. }
+                | PlatformRequest::Symlink { .. }
+                | PlatformRequest::SetModified { .. }
+                | PlatformRequest::SetMode { .. }
                 | PlatformRequest::RunProcess { .. }
                 | PlatformRequest::ReadFile { .. }
                 | PlatformRequest::ReadFileBytes { .. }
@@ -240,25 +258,33 @@ impl Platform for SystemPlatform {
         )
     }
 
-    fn wait(&self, request: PlatformRequest, wake: Wake) -> Result<(), Box<(PlatformRequest, Wake)>> {
+    fn wait(&self, request: PlatformRequest, wake: Wake) -> Result<Option<WaitCancel>, Box<(PlatformRequest, Wake)>> {
         let Some(reactor) = self.reactor() else { return Err(Box::new((request, wake))) };
+        let cancel = |key: usize| -> Option<WaitCancel> {
+            let reactor = reactor.clone();
+            Some(Box::new(move || reactor.cancel_wait(key)))
+        };
         if let PlatformRequest::Sleep { nanos } = request {
-            reactor.sleep(Duration::from_nanos(nanos), wake);
-            return Ok(());
+            return Ok(cancel(reactor.sleep(Duration::from_nanos(nanos), wake)));
         }
         match self.net.readiness(&request) {
             Readiness::Now(result) => {
                 wake(Woken::Done(result));
-                Ok(())
+                Ok(None)
             }
-            Readiness::Wait(source, limit) => reactor.readable(source, request, limit, wake),
+            Readiness::Wait(source, limit) => reactor.readable(source, request, limit, wake).map(cancel),
             Readiness::Run => Err(Box::new((request, wake))),
         }
     }
 
     fn open_source(&self, request: SourceRequest, sink: EventSink) -> Result<SourceHandle, PlatformError> {
-        let SourceRequest::Timer { period_nanos } = request else {
-            return Err(PlatformError { kind: PlatformErrorKind::Other, message: "not a platform source".to_string() });
+        let period_nanos = match request {
+            SourceRequest::Timer { period_nanos } => period_nanos,
+            SourceRequest::Signals { codes } => return crate::signals::watch(&codes, sink),
+            SourceRequest::Terminal => return crate::term::watch(sink),
+            SourceRequest::Custom(_) => {
+                return Err(PlatformError { kind: PlatformErrorKind::Other, message: "not a platform source".to_string() });
+            }
         };
         let reactor = self
             .reactor()
@@ -339,6 +365,30 @@ fn entropy() -> i64 {
     h.finish() as i64
 }
 
+fn file_stat(meta: std::fs::Metadata) -> PlatformResponse {
+    let kind = if meta.file_type().is_symlink() {
+        FileKind::Symlink
+    } else if meta.is_file() {
+        FileKind::File
+    } else if meta.is_dir() {
+        FileKind::Dir
+    } else {
+        FileKind::Other
+    };
+    let modified_millis =
+        meta.modified().ok().and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map_or(0, |d| d.as_millis() as i64);
+    use std::os::unix::fs::MetadataExt;
+    PlatformResponse::Stat(FileStat {
+        kind,
+        size: meta.len() as i64,
+        modified_millis,
+        mode: i64::from(meta.mode() & 0o7777),
+        inode: meta.ino() as i64,
+        device: meta.dev() as i64,
+        links: meta.nlink() as i64,
+    })
+}
+
 fn dir_request(request: PlatformRequest) -> Result<PlatformResponse, PlatformError> {
     Ok(match request {
         PlatformRequest::ListDir { path } => {
@@ -348,6 +398,21 @@ fn dir_request(request: PlatformRequest) -> Result<PlatformResponse, PlatformErr
             }
             names.sort();
             PlatformResponse::Strings(names)
+        }
+        PlatformRequest::ReadDir { path } => {
+            let mut entries = Vec::new();
+            for entry in std::fs::read_dir(&path).map_err(io_error)? {
+                let entry = entry.map_err(io_error)?;
+                let meta = match entry.metadata() {
+                    Ok(meta) => meta,
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+                    Err(e) => return Err(io_error(e)),
+                };
+                let PlatformResponse::Stat(stat) = file_stat(meta) else { unreachable!() };
+                entries.push((entry.file_name().to_string_lossy().into_owned(), stat));
+            }
+            entries.sort_by(|a, b| a.0.cmp(&b.0));
+            PlatformResponse::Entries(entries)
         }
         PlatformRequest::CreateDir { path, recursive: true } => {
             std::fs::create_dir_all(path).map_err(io_error)?;
@@ -373,21 +438,34 @@ fn dir_request(request: PlatformRequest) -> Result<PlatformResponse, PlatformErr
             std::fs::rename(from, to).map_err(io_error)?;
             PlatformResponse::Unit
         }
-        PlatformRequest::Stat { path } => {
-            let meta = std::fs::metadata(path).map_err(io_error)?;
-            let kind = if meta.is_file() {
-                FileKind::File
-            } else if meta.is_dir() {
-                FileKind::Dir
-            } else {
-                FileKind::Other
-            };
-            let modified_millis = meta
-                .modified()
-                .ok()
-                .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-                .map_or(0, |d| d.as_millis() as i64);
-            PlatformResponse::Stat(FileStat { kind, size: meta.len() as i64, modified_millis })
+        PlatformRequest::Stat { path } => file_stat(std::fs::metadata(path).map_err(io_error)?),
+        PlatformRequest::Lstat { path } => file_stat(std::fs::symlink_metadata(path).map_err(io_error)?),
+        PlatformRequest::ReadLink { path } => {
+            let target = std::fs::read_link(path).map_err(io_error)?;
+            PlatformResponse::Text(target.to_string_lossy().into_owned())
+        }
+        PlatformRequest::Symlink { target, link } => {
+            std::os::unix::fs::symlink(target, link).map_err(io_error)?;
+            PlatformResponse::Unit
+        }
+        PlatformRequest::SetModified { path, millis } => {
+            let millis = u64::try_from(millis).map_err(|_| PlatformError {
+                kind: PlatformErrorKind::InvalidData,
+                message: format!("{path}: modified time before 1970"),
+            })?;
+            let time = UNIX_EPOCH + std::time::Duration::from_millis(millis);
+            std::fs::File::open(path).and_then(|f| f.set_modified(time)).map_err(io_error)?;
+            PlatformResponse::Unit
+        }
+        PlatformRequest::SetMode { path, mode } => {
+            use std::os::unix::fs::PermissionsExt;
+            let permissions = std::fs::Permissions::from_mode((mode & 0o7777) as u32);
+            std::fs::set_permissions(path, permissions).map_err(io_error)?;
+            PlatformResponse::Unit
+        }
+        PlatformRequest::Canonicalize { path } => {
+            let real = std::fs::canonicalize(path).map_err(io_error)?;
+            PlatformResponse::Text(real.to_string_lossy().into_owned())
         }
         _ => unreachable!("not a directory request"),
     })

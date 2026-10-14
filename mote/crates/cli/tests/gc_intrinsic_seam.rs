@@ -1,4 +1,4 @@
-//! The GC traces `header → backing → element` for objects allocated through the intrinsic seam and sizes them on sweep.
+//! The GC traces objects allocated through the intrinsic seam and sizes them on sweep.
 
 use gc::gc::GCController;
 use gc::plan::GCConfig;

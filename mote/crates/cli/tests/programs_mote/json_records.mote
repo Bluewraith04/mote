@@ -1,20 +1,17 @@
-import std.data.json as json
+import std.json as json
 
-@derive(Json)
-enum Role {
+enum Role: (JsonCodec) {
     Guest
     Member(Int)
     Admin { level: Int, scopes: List<String> }
 }
 
-@derive(Json)
-struct Address {
+struct Address: (JsonCodec) {
     city: String
     zip: Int
 }
 
-@derive(Json)
-class User {
+class User: (JsonCodec) {
     name: String
     email: String?
     role: Role

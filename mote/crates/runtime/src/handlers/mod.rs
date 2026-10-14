@@ -1,4 +1,4 @@
-//! Per-opcode execution: `Runtime::step` delegates to [`execute`], and each match arm's body lives in a submodule grouped by instruction shape.
+//! Per-opcode execution, with each match arm's body in a submodule.
 
 use isa::opcode::Opcode::{self, *};
 
@@ -22,7 +22,7 @@ pub mod three_reg;
 /// The two-register opcodes.
 pub mod two_reg;
 
-/// Executes one decoded instruction; each arm advances `pc` itself, or assigns it for control flow.
+/// Executes one decoded instruction.
 pub fn execute(
     rt: &Runtime,
     task: &mut TaskContext,

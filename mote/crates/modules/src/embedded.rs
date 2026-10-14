@@ -1,4 +1,4 @@
-//! The `std` sources bundled into the compiler. A non-relative `import std.<name>` resolves to one of these instead of the filesystem, and every non-`std` module is compiled with an injected `import std.prelude`.
+//! The `std` sources bundled into the compiler.
 
 use compiler::ast::{Item, ImportDecl, ModulePath, Program};
 use compiler::span::Span;
@@ -14,31 +14,35 @@ const EMBEDDED_STD: &[(&str, &str)] = &[
     ("collections", include_str!("../std/collections.mote")),
     ("string", include_str!("../std/string.mote")),
     ("math", include_str!("../std/math.mote")),
-    ("sys", include_str!("../std/sys.mote")),
-    ("sys.env", include_str!("../std/sys/env.mote")),
-    ("sys.io", include_str!("../std/sys/io.mote")),
-    ("sys.fs", include_str!("../std/sys/fs.mote")),
-    ("sys.process", include_str!("../std/sys/process.mote")),
-    ("sys.net", include_str!("../std/sys/net.mote")),
-    ("sys.http_server", include_str!("../std/sys/http_server.mote")),
-    ("sys.tls", include_str!("../std/sys/tls.mote")),
-    ("sys.gui", include_str!("../std/sys/gui.mote")),
-    ("data.crypto", include_str!("../std/data/crypto.mote")),
+    ("env", include_str!("../std/env.mote")),
+    ("io", include_str!("../std/io.mote")),
+    ("fs", include_str!("../std/fs.mote")),
+    ("process", include_str!("../std/process.mote")),
+    ("signal", include_str!("../std/signal.mote")),
+    ("term", include_str!("../std/term.mote")),
+    ("socket", include_str!("../std/socket.mote")),
+    ("http_server", include_str!("../std/http_server.mote")),
+    ("tls", include_str!("../std/tls.mote")),
+    ("gui", include_str!("../std/gui.mote")),
+    ("crypto", include_str!("../std/crypto.mote")),
     ("time", include_str!("../std/time.mote")),
     ("date", include_str!("../std/date.mote")),
-    ("data", include_str!("../std/data.mote")),
-    ("data.json", include_str!("../std/data/json.mote")),
-    ("dev", include_str!("../std/dev.mote")),
-    ("dev.args", include_str!("../std/dev/args.mote")),
-    ("data.base64", include_str!("../std/data/base64.mote")),
-    ("data.uuid", include_str!("../std/data/uuid.mote")),
-    ("dev.libtools", include_str!("../std/dev/libtools.mote")),
+    ("json", include_str!("../std/json.mote")),
+    ("args", include_str!("../std/args.mote")),
+    ("base64", include_str!("../std/base64.mote")),
+    ("uuid", include_str!("../std/uuid.mote")),
+    ("libtools", include_str!("../std/libtools.mote")),
     ("regex", include_str!("../std/regex.mote")),
     ("random", include_str!("../std/random.mote")),
     ("stream", include_str!("../std/stream.mote")),
     ("task", include_str!("../std/task.mote")),
     ("test", include_str!("../std/test.mote")),
     ("experimental.types", include_str!("../std/experimental/types.mote")),
+    ("meta", include_str!("../std/meta.mote")),
+    ("derive", include_str!("../std/derive.mote")),
+    ("derive.traits", include_str!("../std/derive/traits.mote")),
+    ("derive.json", include_str!("../std/derive/json.mote")),
+    ("derive.args", include_str!("../std/derive/args.mote")),
 ];
 
 /// The synthetic module-id / path string for embedded module `name`.
@@ -62,13 +66,13 @@ pub fn all() -> &'static [(&'static str, &'static str)] {
     EMBEDDED_STD
 }
 
-/// The embedded modules nested under `segments`, as dotted paths: `std.experimental` gives `std.experimental.types`.
+/// The embedded modules nested under `segments`, as dotted paths.
 pub(crate) fn modules_under(segments: &[String]) -> Vec<String> {
     let prefix = format!("{}.", segments.join("."));
     EMBEDDED_STD.iter().filter_map(|(n, _)| format!("std.{n}").strip_prefix(&prefix).map(|_| format!("std.{n}"))).collect()
 }
 
-/// The direct members of the embedded group `segments` (`std.data` gives `json`, `yaml`,...), each with its full path; empty when it is not a group.
+/// The direct members of the embedded group `segments`, each with its full path.
 pub(crate) fn group_members(segments: &[String]) -> Vec<(String, Vec<String>)> {
     let Some(group) = segments.strip_prefix(&["std".to_string()]).map(|rest| rest.join(".")) else {
         return Vec::new();
@@ -86,25 +90,32 @@ pub(crate) fn group_members(segments: &[String]) -> Vec<(String, Vec<String>)> {
         .collect()
 }
 
-/// The grouped path an old top-level `std.<name>` moved to (`json` gives `std.data.json`), if any.
-pub(crate) fn moved_to(name: &str) -> Option<String> {
-    let suffix = format!(".{name}");
-    EMBEDDED_STD.iter().find(|(n, _)| n.ends_with(&suffix)).map(|(n, _)| format!("std.{n}"))
-}
-
-/// The package a `std` module became (`std.sys.ui` is the package `pane`), if it did.
-pub(crate) fn packaged_as(segments: &[String]) -> Option<&'static str> {
+/// The flat path an old grouped `std.<group>.<name>` is now, if there is one.
+pub(crate) fn renamed_to(segments: &[String]) -> Option<String> {
     let path: Vec<&str> = segments.iter().map(String::as_str).collect();
     match path.as_slice() {
-        ["std", "sys", "ui"] => Some("pane"),
-        ["std", "dev", "log"] | ["std", "log"] => Some("log"),
-        ["std", "sys", "path"] | ["std", "path"] => Some("path"),
-        ["std", "data", "toml"] | ["std", "toml"] => Some("toml"),
-        ["std", "data", "yaml"] | ["std", "yaml"] => Some("yaml"),
-        ["std", "data", "compress"] | ["std", "compress"] => Some("compress"),
-        ["std", "data", "archive"] | ["std", "archive"] => Some("archive"),
-        ["std", "data", "sql"] | ["std", "sql"] => Some("sqlite"),
-        ["std", "sys", "http"] | ["std", "http"] => Some("http"),
+        ["std", "sys" | "data" | "dev" | "net", name] if EMBEDDED_STD.iter().any(|(n, _)| n == name) => Some(format!("std.{name}")),
+        _ => None,
+    }
+}
+
+/// The package a `std` module became, if it did.
+pub(crate) fn packaged_as(segments: &[String]) -> Option<&'static str> {
+    let path: Vec<&str> = segments.iter().map(String::as_str).collect();
+    let name = match path.as_slice() {
+        ["std", name] | ["std", "sys" | "data" | "dev" | "net", name] => *name,
+        _ => return None,
+    };
+    match name {
+        "ui" => Some("pane"),
+        "log" => Some("log"),
+        "path" => Some("path"),
+        "toml" => Some("toml"),
+        "yaml" => Some("yaml"),
+        "compress" => Some("compress"),
+        "archive" => Some("archive"),
+        "sql" => Some("sqlite"),
+        "http" => Some("http"),
         _ => None,
     }
 }
@@ -123,7 +134,7 @@ pub fn resolve(segments: &[String]) -> Option<CanonicalModuleId> {
     }
 }
 
-/// Prepends `import std.prelude` to a user module; a no-op for embedded modules and for one that already imports it.
+/// Prepends `import std.prelude` to a user module that does not import it.
 pub(crate) fn inject_prelude_import(program: &mut Program) {
     let already = program.items.iter().any(|it| {
         matches!(it, Item::Import(imp)

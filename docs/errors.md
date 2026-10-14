@@ -122,6 +122,8 @@ true
 
 `?` needs a function that returns the same kind: an optional (`T?`) for an optional, a `Result` for a `Result`. In a `Result` function, turn an optional into one with `o.ok_or(e)?`. A function that declares no result type, including `main` and top-level code, also accepts `?`: on a failure it simply ends there, and the failure is dropped.
 
+A `Result` function passes on only the error type it returns: `?` on a `Result<T, String>` in a function that returns `Result<U, Error>` is refused. A callee's error that implements `Failure` is the exception; [std.error](std/error.md) shows how it becomes an `Error`.
+
 ## Methods
 
 | Method | On | Result |
@@ -140,7 +142,7 @@ true
 Every fallible standard-library operation returns a `Result` whose `Err` holds an `Error`, with a `kind` and a `message`. `ErrorKind` is `NotFound`, `PermissionDenied`, `InvalidData`, `Interrupted`, `AlreadyExists`, `WouldBlock`, `TimedOut`, `Unsupported` or `Other`.
 
 ```mote
-import { read_file } from std.sys.io
+import { read_file } from std.io
 
 match read_file("missing.txt") {
     Ok(text) => println(text)

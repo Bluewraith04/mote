@@ -1,5 +1,4 @@
-//! `.mpk` package archives: a gzip-compressed ustar archive, sorted and timestamp-free
-//! so the same package always produces the same bytes.
+//! `.mpk` package archives: a reproducible gzip-compressed ustar archive.
 
 use std::fs;
 use std::io::{Read, Write};

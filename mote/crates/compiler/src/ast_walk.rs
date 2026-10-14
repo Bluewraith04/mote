@@ -31,6 +31,11 @@ pub(crate) fn exprs_mut(items: &mut [Item], f: &mut dyn FnMut(&mut Expr)) {
     }
 }
 
+/// Calls `f` on each expression of one function, parents before children.
+pub(crate) fn function_exprs_mut(d: &mut FunctionDecl, f: &mut dyn FnMut(&mut Expr)) {
+    function(d, f);
+}
+
 fn function(d: &mut FunctionDecl, f: &mut dyn FnMut(&mut Expr)) {
     params(&mut d.params, f);
     stmts(&mut d.body, f);

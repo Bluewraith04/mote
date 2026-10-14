@@ -1,8 +1,7 @@
-/// std.stream: lazy `Stream` sources and adapters. Consume with `for` or `.next()`.
-/// A fallible source is a stream of `Result`: a read failure arrives as a final `Err` item, then the stream ends.
+/// std.stream: lazy `Stream` sources and adapters.
 
 import { * } from std.prelude
-import std.sys.io as io
+import std.io as io
 
 /// `f` applied to every element, pulled lazily.
 pub fn map<T, U>(s: Stream<T>, f: (T) -> U) -> Stream<U> {
@@ -20,8 +19,7 @@ pub fn filter<T>(s: Stream<T>, pred: (T) -> Bool) -> Stream<T> {
     }
 }
 
-/// The first `n` elements, pulled lazily — the source is never asked for more
-/// than `n` items.
+/// The first `n` elements, pulled lazily.
 pub fn take<T>(s: Stream<T>, n: Int) -> Stream<T> {
     var i = 0
     for x in s {
@@ -33,7 +31,7 @@ pub fn take<T>(s: Stream<T>, n: Int) -> Stream<T> {
     }
 }
 
-/// One `String` per UTF-8 code point of `s` (there is no `Char` conversion yet).
+/// One `String` per UTF-8 code point of `s`.
 pub fn chars(s: String) -> Stream<String> {
     let b = s.bytes()
     let n = b.len()
@@ -51,7 +49,7 @@ pub fn chars(s: String) -> Stream<String> {
     }
 }
 
-/// The lines of `s` split on `\n`, without the empty piece after a final newline.
+/// The lines of `s` split on `\n`.
 pub fn lines(s: String) -> Stream<String> {
     let parts = s.split("\n")
     let last = parts.len() - 1
@@ -62,7 +60,7 @@ pub fn lines(s: String) -> Stream<String> {
     }
 }
 
-/// Each line of stdin as `Ok(line)`; a read failure is one `Err`, then the end.
+/// Each line of stdin as `Ok(line)`.
 pub fn stdin_lines() -> Stream<Result<String, Error>> {
     let sin = io.stdin()
     while true {
@@ -81,7 +79,7 @@ pub fn stdin_lines() -> Stream<Result<String, Error>> {
     }
 }
 
-/// Each line of the file at `path` as `Ok(line)`; an unreadable file is one `Err`.
+/// Each line of the file at `path` as `Ok(line)`.
 pub fn file_lines(path: String) -> Stream<Result<String, Error>> {
     match io.read_file(path) {
         Ok(text) => {

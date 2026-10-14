@@ -1,4 +1,4 @@
-//! Memory benchmark set. Run: `cargo test --release -p cli --test memory_bench_test -- --ignored --nocapture`.
+//! Memory benchmark set.
 
 use std::process::Command;
 use std::time::Instant;
@@ -74,4 +74,19 @@ fn struct_calls() {
 #[ignore]
 fn lambda_churn() {
     bench("lambda_churn", 3_000_000, &[]);
+}
+
+#[test]
+#[ignore]
+fn steady_service_churn() {
+    for n in [10_000, 1_000_000, 4_000_000] {
+        bench("steady_service", n, &[]);
+    }
+}
+
+/// Shows how long a collection waits for a worker inside a native call.
+#[test]
+#[ignore]
+fn a_native_call_holds_the_collector() {
+    bench("native_stall", 256, &["--workers", "2"]);
 }

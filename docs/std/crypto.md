@@ -1,6 +1,6 @@
-# std.data.crypto
+# std.crypto
 
-Hashes, HMAC, secure random bytes and password hashing, over the RustCrypto crates. `import std.data.crypto as crypto`. Data is `Bytes`.
+Hashes, HMAC, secure random bytes and password hashing, over the RustCrypto crates. `import std.crypto as crypto`. Data is `Bytes`.
 
 | Function | Answers |
 |---|---|
@@ -13,7 +13,7 @@ Hashes, HMAC, secure random bytes and password hashing, over the RustCrypto crat
 | `verify_password(password, hash)` | `Result<Bool, Error>`; `false` for a wrong password, `Err` when `hash` is not a password hash |
 
 ```mote
-import std.data.crypto as crypto
+import std.crypto as crypto
 
 fn main() {
     println(crypto.to_hex(crypto.sha256("abc".bytes())))
@@ -28,7 +28,7 @@ true
 ```
 
 ```mote
-import std.data.crypto as crypto
+import std.crypto as crypto
 
 fn main() {
     let hash = crypto.hash_password("correct horse")!

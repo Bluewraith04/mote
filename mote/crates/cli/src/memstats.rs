@@ -25,7 +25,7 @@ fn ms_line(key: &str, ns: u64) -> String {
     format!("mem.{key} = {:.3}", ns as f64 / 1e6)
 }
 
-/// The lines `--mem-stats` prints for a finished run; `peak_rss` is the process's peak resident memory, if known.
+/// The lines `--mem-stats` prints for a finished run.
 pub fn lines(rt: &Runtime, peak_rss: Option<u64>) -> Vec<String> {
     let mut out = Vec::new();
     if let Some(rss) = peak_rss {

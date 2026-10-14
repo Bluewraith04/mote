@@ -72,7 +72,7 @@ pub(crate) fn enumerate_all_roots(
     task.clear_dead_registers(code_objects);
 }
 
-/// Reports globals, every queued/blocked/detached task, other workers' self-reported roots, and `running`.
+/// Reports globals, every task and every other worker's roots.
 pub(crate) fn scan_roots(rt: &Runtime, running: &mut TaskContext, visitor: &mut dyn FnMut(ValueSlot)) {
     scan_task_roots(running, &rt.code_objects, visitor);
     {
@@ -125,7 +125,7 @@ fn scan_task_roots(
     if let Some(ptr) = task.handle {
         visit_synthetic_root(visitor, ptr);
     }
-    for &ptr in task.held_turns.iter().chain(&task.owned_senders) {
+    for &ptr in task.held_turns.iter().chain(&task.held_permits).chain(&task.owned_senders) {
         visit_synthetic_root(visitor, ptr);
     }
 

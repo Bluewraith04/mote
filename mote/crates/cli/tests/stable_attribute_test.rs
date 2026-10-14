@@ -30,7 +30,7 @@ fn stable_on_a_private_item_is_rejected() {
 
 #[test]
 fn stable_on_an_import_is_rejected() {
-    let src = "@stable\nimport std.sys.fs\npub fn main() {\n    println(\"ok\")\n}\n";
+    let src = "@stable\nimport std.fs\npub fn main() {\n    println(\"ok\")\n}\n";
     rejected(src, "bad_kind", "can only be used on a `fn`, `struct`, `class`, `enum` or `trait`");
 }
 

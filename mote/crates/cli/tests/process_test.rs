@@ -1,4 +1,4 @@
-//! `std.sys.process` through `mote run`, running real children.
+//! `std.process` through `mote run`, running real children.
 #![cfg(unix)]
 
 use std::process::Command;
@@ -6,7 +6,7 @@ use std::process::Command;
 fn run(name: &str, body: &str) -> (String, Option<i32>) {
     let dir = std::env::temp_dir().join(format!("mote_process_{name}_{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    let source = format!("import std.sys.process as process\nimport {{ Output }} from std.sys.process\n\n{body}");
+    let source = format!("import std.process as process\nimport {{ Output }} from std.process\n\n{body}");
     std::fs::write(dir.join("main.mote"), source).unwrap();
     let out = Command::new(env!("CARGO_BIN_EXE_mote")).arg("run").arg(dir.join("main.mote")).output().unwrap();
     std::fs::remove_dir_all(&dir).ok();

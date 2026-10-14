@@ -1,0 +1,46 @@
+/// Builds text, headings, buttons and inputs styled by the window's theme.
+
+import std.gui as gui
+import .element
+import .theme
+
+fn heading<S>(label: String, px: Float) -> element.Element<S> {
+    return element.element(gui.Kind.Text, theme.Role.Heading(px), label, [])
+}
+
+/// A line of text.
+pub fn text<S>(label: String) -> element.Element<S> {
+    return element.element(gui.Kind.Text, theme.Role.Text, label, [])
+}
+
+/// Text in several looks that wraps as one paragraph.
+pub fn rich<S>(runs: List<gui.Run>) -> element.Element<S> {
+    return element.element(gui.Kind.Text, theme.Role.Text, "", []).with_runs(runs)
+}
+
+pub fn h1<S>(label: String) -> element.Element<S> { return heading(label, 28.0) }
+
+pub fn h2<S>(label: String) -> element.Element<S> { return heading(label, 24.0) }
+
+pub fn h3<S>(label: String) -> element.Element<S> { return heading(label, 20.0) }
+
+pub fn h4<S>(label: String) -> element.Element<S> { return heading(label, 18.0) }
+
+pub fn h5<S>(label: String) -> element.Element<S> { return heading(label, 16.0) }
+
+pub fn h6<S>(label: String) -> element.Element<S> { return heading(label, 14.0) }
+
+/// A button.
+pub fn button<S>(label: String) -> element.Element<S> {
+    return element.element(gui.Kind.Button, theme.Role.Button, label, [])
+}
+
+/// A one-line text field showing `value`.
+pub fn input<S>(value: String, on_change: (var S, String) -> Null) -> element.Element<S> {
+    return element.element(gui.Kind.Input, theme.Role.Input, value, []).on_change(on_change)
+}
+
+/// A text field of many lines showing `value`, wrapped to its width.
+pub fn input_multi<S>(value: String, on_change: (var S, String) -> Null) -> element.Element<S> {
+    return element.element(gui.Kind.TextArea, theme.Role.Area, value, []).on_change(on_change)
+}

@@ -1,5 +1,4 @@
-//! The narrow views of the machine that opcode handlers depend on, so a handler runs against
-//! a test double instead of a whole `Runtime`.
+//! The narrow views of the machine that opcode handlers depend on.
 
 use std::ptr::NonNull;
 

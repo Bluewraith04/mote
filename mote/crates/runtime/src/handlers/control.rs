@@ -1,5 +1,4 @@
-//! Constant loads and control flow: `LOADI LOADK JMP JMPIF JMPIFNOT CALL CALLV
-//! GETCAPTURE RET NOP`. `HALT` is handled inline in [`super::execute`].
+//! Constant loads and control flow opcodes.
 
 use std::ptr::NonNull;
 
@@ -72,14 +71,14 @@ pub(crate) fn jmpifnot(rt: &Runtime, task: &mut TaskContext, operands: u32) -> R
     Ok(VmStatus::Running)
 }
 
-/// Calls a code object by static index: polls a safepoint, lays out the callee's register window after the caller's, copies the arguments and pushes a frame.
+/// Calls a code object by static index and pushes a frame.
 pub fn call(rt: &Runtime, task: &mut TaskContext, operands: u32) -> Result<VmStatus, String> {
     rt.safepoint_poll(task)?;
     let (dest_reg, callee_idx) = decode_ri(operands);
     enter_call(rt, task, dest_reg, callee_idx as usize, dest_reg as usize + 1, None)
 }
 
-/// Indirect call: `rB` holds a function value; calls the code object named by its slot 0 and records it on the frame for `GETCAPTURE`.
+/// Indirect call of the function value in `rB`.
 pub(crate) fn callv(rt: &Runtime, task: &mut TaskContext, operands: u32) -> Result<VmStatus, String> {
     rt.safepoint_poll(task)?;
     let (dest_reg, callee_reg, arg_start) = decode_r3(operands);
@@ -189,7 +188,7 @@ fn enter_call(
     Ok(VmStatus::Running)
 }
 
-/// Returns `rA` (or `null`) to the caller's destination register; at the bottom frame, writes `registers[0]` and halts.
+/// Returns `rA` (or `null`) to the caller's destination register.
 pub fn ret(rt: &Runtime, task: &mut TaskContext, operands: u32) -> Result<VmStatus, String> {
     let (ret_reg, _) = decode_r2(operands);
     let current_frame = task.call_stack.last().unwrap();
@@ -212,7 +211,7 @@ pub fn ret(rt: &Runtime, task: &mut TaskContext, operands: u32) -> Result<VmStat
     Ok(VmStatus::Running)
 }
 
-/// `RETN rA, n`: the `n` registers from `rA` go to the caller's destination register and the ones after it.
+/// `RETN rA, n` returns the `n` registers from `rA` to the caller.
 pub(crate) fn retn(task: &mut TaskContext, operands: u32) -> Result<VmStatus, String> {
     let (first, count) = decode_r2(operands);
     let frame = task.call_stack.last().unwrap();
@@ -239,7 +238,7 @@ pub(crate) fn nop(task: &mut TaskContext) -> Result<VmStatus, String> {
     Ok(VmStatus::Running)
 }
 
-/// `SCOPEENTER`: opens a structured-concurrency scope on the running task, recording the call-stack depth so `SPAWN` only attaches to a scope opened in its own function.
+/// `SCOPEENTER` opens a structured-concurrency scope on the running task.
 pub(crate) fn scopeenter(task: &mut TaskContext) -> Result<VmStatus, String> {
     task.shared.scopes.lock().unwrap().push(ScopeFrame {
         owner_call_depth: task.call_stack.len(),
@@ -249,7 +248,7 @@ pub(crate) fn scopeenter(task: &mut TaskContext) -> Result<VmStatus, String> {
     Ok(VmStatus::Running)
 }
 
-/// `SCOPEEXIT rA`: closes the innermost scope. While children run, parks the task with `pc` left here; otherwise pops the scope and writes the outcome to `rA`.
+/// `SCOPEEXIT rA` closes the innermost scope, parking the task while children run.
 pub(crate) fn scopeexit(rt: &Runtime, task: &mut TaskContext, operands: u32) -> Result<VmStatus, String> {
     let (dest_reg, _) = decode_r2(operands);
     let sf = {
@@ -279,7 +278,7 @@ pub(crate) fn scopeexit(rt: &Runtime, task: &mut TaskContext, operands: u32) -> 
     Ok(VmStatus::Running)
 }
 
-/// `SPAWN rA, rB`: starts the zero-argument closure in `rB` as a child task; `rA` receives its `Task<T>` handle.
+/// `SPAWN rA, rB` starts the closure in `rB` as a child task.
 pub fn spawn(rt: &Runtime, task: &mut TaskContext, operands: u32) -> Result<VmStatus, String> {
     let (dest_reg, closure_reg) = decode_r2(operands);
     let base = task.call_stack.last().unwrap().base;
@@ -323,7 +322,14 @@ pub fn spawn(rt: &Runtime, task: &mut TaskContext, operands: u32) -> Result<VmSt
             rt.sched.lock().unwrap().detached.insert(handle);
         }
     }
+    let child_id = child.task_id;
     rt.schedule(child);
+    if let Some(depth) = attach_depth {
+        let faulted = task.shared.scopes.lock().unwrap()[depth].first_error.is_some();
+        if faulted {
+            rt.cancel_task(child_id);
+        }
+    }
 
     task.registers[base + (dest_reg as usize)] = Value::boxed(handle);
     task.pc += 1;

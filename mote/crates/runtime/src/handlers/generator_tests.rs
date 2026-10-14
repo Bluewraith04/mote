@@ -1,5 +1,4 @@
-//! Hand-assembled generator programs: resume/yield/done, calls inside a body, the
-//! running-generator fault, and cancellation observed inside a body.
+//! Hand-assembled generator programs run through the handlers.
 
 use std::sync::atomic::Ordering;
 use std::time::Duration;

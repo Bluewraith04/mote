@@ -1,9 +1,9 @@
-//! `std.data.crypto` against published test vectors.
+//! `std.crypto` against published test vectors.
 
 use std::process::Command;
 
 fn run(body: &str, tag: &str) -> Vec<String> {
-    let source = format!("import std.data.crypto as crypto\nimport std.data as data\n\nfn main() {{\n{body}}}\n");
+    let source = format!("import std.crypto as crypto\n\nfn main() {{\n{body}}}\n");
     let dir = std::env::temp_dir().join(format!("mote_crypto_{}_{}", tag, std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("main.mote"), source).unwrap();
@@ -83,7 +83,7 @@ fn hex_and_comparison_helpers() {
     println(crypto.constant_time_eq(\"tag\".bytes(), \"tab\".bytes()))
     println(crypto.constant_time_eq(\"tag\".bytes(), \"tags\".bytes()))
     println(crypto.constant_time_eq(Bytes(), Bytes()))
-    println(data.crypto.to_hex(\"a\".bytes()))
+    println(crypto.to_hex(\"a\".bytes()))
 ",
         "hex",
     );

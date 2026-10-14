@@ -15,9 +15,8 @@ pub fn attached() -> Option<Result<compiler::CompiledProgram, String>> {
 /// Runs `compiled` on the scheduler and exits with its status; `TIER` is the natives to install.
 pub fn run<const TIER: u8>(compiled: compiler::CompiledProgram) -> ! {
     ffi::builtins::set_script_args(env::args().collect());
-    ffi::builtins::set_allow_native(env::var("MOTE_ALLOW_NATIVE").is_ok_and(|v| v == "1"));
     if let Ok(exe) = env::current_exe() {
-        ffi::builtins::set_native_packages(pkg::native::built_grants(&exe));
+        ffi::builtins::set_native_packages(pkg::native::built_libraries(&exe));
     }
     let mut registry = isa::value::TypeRegistry::new();
     for t in &compiled.type_descriptors {

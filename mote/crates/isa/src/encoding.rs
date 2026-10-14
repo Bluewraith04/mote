@@ -37,8 +37,7 @@ pub fn encode_ret(ret_reg: u8) -> Instruction {
     encode_r2(Opcode::RET, ret_reg, 0)
 }
 
-/// `SCOPEEXIT rA` — `rA` receives the close-out outcome: `null`, or
-/// an unobserved fault message as a heap `String`.
+/// `SCOPEEXIT rA`: `rA` receives the close-out outcome, `null` or a fault message.
 pub fn encode_scopeexit(dest: u8) -> Instruction {
     encode_r2(Opcode::SCOPEEXIT, dest, 0)
 }

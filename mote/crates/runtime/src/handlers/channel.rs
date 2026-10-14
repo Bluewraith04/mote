@@ -1,5 +1,4 @@
-//! Channels: a channel object is the `Receiver<T>`, and each `Sender<T>` is a handle counting as one of its senders.
-//! The channel closes when its last sender is closed or its owner task ends. `send` and `recv` check `task.cancelled` first.
+//! Channels: a channel object is the `Receiver<T>` and each `Sender<T>` is a handle to it.
 
 use std::collections::VecDeque;
 use std::ptr::NonNull;
@@ -39,8 +38,7 @@ pub(crate) fn alloc_channel(rt: &Runtime, capacity: usize) -> NonNull<ObjectHead
         .descriptor(CHANNEL_TYPE_ID)
         .expect("CHANNEL_TYPE_ID is registered in IntrinsicTypeTable::default");
     let mut obj = rt.with_mutator(|m| alloc_intrinsic_object(m, desc, 9));
-    // SAFETY: freshly allocated with 9 slots; no collection can run before the calling native
-    // returns (the intrinsic module's GC-safety invariant).
+    // SAFETY: freshly allocated with 9 slots.
     unsafe {
         let h = obj.as_mut();
         h.set_field(CHAN_SLOT_ID, Value::uint(channel_id));
@@ -207,7 +205,7 @@ pub(crate) fn channel_send(rt: &Runtime, task: &mut TaskContext, dest: usize, ar
     Ok(VmStatus::Running)
 }
 
-/// A cancelled task leaving `send` or `recv` hands on the wake it may have been given, so the next waiter takes the free slot or the item.
+/// A cancelled task leaving `send` or `recv` hands its wake on to the next waiter.
 fn pass_wake_on(rt: &Runtime, channel: Option<NonNull<ObjectHeader>>, receiving: bool) {
     let Some(channel) = channel else { return };
     // SAFETY: `CHAN_SLOT_ID` is written once, in `alloc_channel`.
@@ -360,7 +358,42 @@ pub(crate) fn close_sender(rt: &Runtime, mut sender: NonNull<ObjectHeader>) {
     }
 }
 
+fn is_channel(object: NonNull<ObjectHeader>) -> bool {
+    // SAFETY: a live object's `type_ptr` is a live descriptor.
+    unsafe { object.as_ref().type_ptr.as_ref().id == CHANNEL_TYPE_ID }
+}
+
+/// The receiver gives up: buffered items are dropped, later sends fail, and every parked task wakes.
+fn close_receiver(rt: &Runtime, mut channel: NonNull<ObjectHeader>) {
+    // SAFETY: `CHAN_SLOT_ID` is written once, in `alloc_channel`.
+    let channel_id = unsafe { channel.as_ref().get_field(CHAN_SLOT_ID) }.as_uint().unwrap_or(0);
+    let waiters: Vec<u64> = {
+        let _guard = channel_lock(rt, channel_id).lock().unwrap();
+        // SAFETY: a live channel's slots are initialised by `alloc_channel`, and its lock is held.
+        unsafe {
+            channel.as_mut().set_field(CHAN_SLOT_CLOSED, Value::small_int(1));
+            channel.as_mut().set_field(CHAN_SLOT_HEAD, Value::uint(0));
+            channel.as_mut().set_field(CHAN_SLOT_LEN, Value::uint(0));
+        }
+        let mut st = rt.sched.lock().unwrap();
+        let mut waiters: Vec<u64> = st.send_waiters.remove(&channel_id).into_iter().flatten().collect();
+        waiters.extend(st.recv_waiters.remove(&channel_id).into_iter().flatten());
+        waiters.extend(st.handoff_waiters.remove(&channel_id).into_iter().flatten());
+        waiters
+    };
+    rt.close_source(channel_id);
+    for id in waiters {
+        rt.unblock_or_note_early(id);
+    }
+}
+
 pub(crate) fn channel_close(rt: &Runtime, task: &mut TaskContext, dest: usize, args_start: usize) -> Result<VmStatus, String> {
+    if let Some(channel) = task.registers[args_start].as_object_ptr().filter(|&o| is_channel(o)) {
+        close_receiver(rt, channel);
+        task.registers[dest] = Value::null();
+        task.pc += 1;
+        return Ok(VmStatus::Running);
+    }
     let (sender, _, _) = sender_parts(task.registers[args_start], "close")?;
     close_sender(rt, sender);
     if let Some(i) = task.owned_senders.iter().position(|&s| s == sender) {
@@ -391,7 +424,7 @@ pub(crate) fn move_captured_senders(parent: &mut TaskContext, child: &mut TaskCo
 mod tests {
     use super::*;
 
-    /// A channel with `len` buffered items and a task parked on it, as a receiver or a sender.
+    /// A channel with `len` buffered items and a task parked on it.
     fn channel_with_waiter(rt: &Runtime, capacity: usize, len: u64, receiving: bool) -> (NonNull<ObjectHeader>, u64) {
         let mut channel = alloc_channel(rt, capacity);
         // SAFETY: freshly allocated by `alloc_channel`.

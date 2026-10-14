@@ -25,7 +25,7 @@ fn a_list_of_int_is_not_a_list_of_any() {
     );
     for (ty, value) in [("Map<String, Any>", "m"), ("Set<Any>", "s"), ("Receiver<Any>", "c"), ("Sender<Any>", "t"), ("Shared<Any>", "x")] {
         let src = format!(
-            "import {{ Any }} from std.experimental.types\npub fn main() {{\n    let m: Map<String, Int> = Map()\n    let s: Set<Int> = Set()\n    let (t, c) = Channel<Int>(1)\n    let x = Shared(0)\n    let w: {ty} = {value}\n}}\n"
+            "import {{ Any }} from std.experimental.types\nimport {{ Set }} from std.collections\npub fn main() {{\n    let m: Map<String, Int> = Map()\n    let s: Set<Int> = Set()\n    let (t, c) = Channel<Int>(1)\n    let x = Shared(0)\n    let w: {ty} = {value}\n}}\n"
         );
         rejected(&src, &format!("inv_{value}"), &format!("of type '{ty}'"));
     }
@@ -33,7 +33,7 @@ fn a_list_of_int_is_not_a_list_of_any() {
 
 #[test]
 fn read_only_handles_stay_covariant() {
-    let src = "import { Any } from std.experimental.types\npub fn main() {\n    scope {\n        let t: Task<Int> = spawn { 41 + 1 }\n        let u: Task<Any> = t\n        println(u.join().unwrap())\n    }\n}\n";
+    let src = "import { Any } from std.experimental.types\nimport { Task } from std.task\npub fn main() {\n    scope {\n        let t: Task<Int> = spawn { 41 + 1 }\n        let u: Task<Any> = t\n        println(u.join().unwrap())\n    }\n}\n";
     let (ok, text) = mote("run", src, "task");
     assert!(ok && text == "42\n", "{text}");
 }
@@ -156,6 +156,7 @@ fn a_recorded_value_equals_an_unrecorded_one() {
 #[test]
 fn generic_code_records_the_caller_s_type_arguments() {
     let src = r#"import std.iter as iter
+import { Stream } from std.stream
 
 struct Box<T> {
     v: T
@@ -288,7 +289,7 @@ fn a_check_compares_the_whole_type() {
         let shown = ty.replace("Option<String>", "String?");
         assert!(!ok && text.contains(&format!("expected `{shown}`")), "{ty}: {text}");
     }
-    let src = "import { Any } from std.experimental.types\npub fn main() {\n    var a: Any = (1, \"s\")\n    let t: (Int, Any) = a\n    a = |n: Int| n\n    let f: (Int) -> Null = a\n    a = null\n    let n: Int? = a\n    var h: Any = 0\n    scope {\n        h = spawn { 1 }\n    }\n    let k: Task<Any> = h\n    println(\"passed\")\n}\n";
+    let src = "import { Any } from std.experimental.types\nimport { Task } from std.task\npub fn main() {\n    var a: Any = (1, \"s\")\n    let t: (Int, Any) = a\n    a = |n: Int| n\n    let f: (Int) -> Null = a\n    a = null\n    let n: Int? = a\n    var h: Any = 0\n    scope {\n        h = spawn { 1 }\n    }\n    let k: Task<Any> = h\n    println(\"passed\")\n}\n";
     let (ok, text) = mote("run", src, "whole_ok");
     assert!(ok && text == "passed\n", "{text}");
 }

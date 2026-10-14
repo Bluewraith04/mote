@@ -109,14 +109,9 @@ fn cancelling_a_task_running_on_a_different_real_worker_actually_stops_it() {
     zero_globals(&rt);
 
     let main = rt.acquire_task(0, 8, None, 0);
-    let finished = rt
-        .run_main_parallel(main, 2)
-        .expect("the cancelled child's fault is unobserved, but that's reported via r4, not Err");
+    let finished = rt.run_main_parallel(main, 2).expect("a cancelled child is not a fault");
 
-    let fault = finished.registers[4]
-        .as_heap_string()
-        .expect("r4 holds the unobserved fault's message, not null");
-    assert!(fault.contains("cancelled"), "expected a cancellation fault, got: {fault}");
+    assert!(finished.registers[4].is_null(), "a cancelled child does not fault its scope");
 
     let progress = rt.globals.lock().unwrap()[0].as_int().unwrap_or(-1);
     assert!(

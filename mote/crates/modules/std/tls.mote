@@ -1,0 +1,36 @@
+/// std.tls: certificates for TLS sockets.
+
+import { * } from std.prelude
+
+/// A certificate chain and its private key.
+pub class Identity {
+    cert: String
+    key: String
+
+    /// The certificate chain as PEM text.
+    pub fn cert_pem(self) -> String { return self.cert }
+
+    /// The private key as PEM text.
+    pub fn key_pem(self) -> String { return self.key }
+}
+
+/// An identity from PEM text.
+pub fn identity_from_pem(cert: String, key: String) -> Result<Identity, Error> {
+    match __tls_check_identity(cert, key) {
+        Ok(done) => { return Ok(Identity { cert: cert, key: key }) }
+        Err(e) => { return Err(e) }
+    }
+}
+
+/// An identity from a PEM certificate chain file and a PEM private key file.
+pub fn identity_from_files(cert_path: String, key_path: String) -> Result<Identity, Error> {
+    let cert = __io_read_file(cert_path)?
+    let key = __io_read_file(key_path)?
+    return identity_from_pem(cert, key)
+}
+
+/// A new self-signed certificate valid for `names`.
+pub fn self_signed(names: List<String>) -> Result<Identity, Error> {
+    let parts = __tls_self_signed(names)?
+    return identity_from_pem(parts.get(0), parts.get(1))
+}

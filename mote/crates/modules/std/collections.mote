@@ -1,9 +1,8 @@
 /// std.collections: set algebra and constructors over `Map` and `Set`.
-/// The primitives (`.get`, `.set`, `.add`, `.remove`, `.contains`, `.keys`, `.items`) are methods.
 
 import { * } from std.prelude
 
-/// A `Set` holding every element of `xs` (duplicates collapsed).
+/// A `Set` holding every element of `xs`.
 pub fn set_from<T>(xs: List<T>) -> Set<T> {
     var s: Set<T> = Set()
     for x in xs {
@@ -55,7 +54,7 @@ pub fn map_from<K, V>(pairs: List<(K, V)>) -> Map<K, V> {
     return m
 }
 
-/// Every entry of `a` and `b`; on a shared key, `b`'s value wins.
+/// Every entry of `a` and `b`, with `b` winning on a shared key.
 pub fn merge<K, V>(a: Map<K, V>, b: Map<K, V>) -> Map<K, V> {
     var m: Map<K, V> = Map()
     for k in a.keys() {
@@ -67,7 +66,7 @@ pub fn merge<K, V>(a: Map<K, V>, b: Map<K, V>) -> Map<K, V> {
     return m
 }
 
-/// A new `Map` with every value passed through `f`; keys are unchanged.
+/// A new `Map` with every value passed through `f`.
 pub fn map_values<K, V, W>(m: Map<K, V>, f: (V) -> W) -> Map<K, W> {
     var out: Map<K, W> = Map()
     for k in m.keys() {

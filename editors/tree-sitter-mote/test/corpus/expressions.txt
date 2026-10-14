@@ -294,3 +294,70 @@ fn f() {
               (binary_expression
                 (identifier)
                 (identifier)))))))))
+
+================================================================================
+slices
+================================================================================
+
+fn f() {
+    let a = xs[1..3]
+    let b = xs[..n]
+    let c = xs[i..]
+    let d = xs[..]
+    let e = xs[..=2]
+    let f = xs[0..10..2]
+    xs[0..2] = 7
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (function_item
+    (identifier)
+    (parameters)
+    (block
+      (let_declaration
+        (identifier)
+        (index_expression
+          (identifier)
+          (slice_bounds
+            (integer)
+            (integer))))
+      (let_declaration
+        (identifier)
+        (index_expression
+          (identifier)
+          (slice_bounds
+            (identifier))))
+      (let_declaration
+        (identifier)
+        (index_expression
+          (identifier)
+          (slice_bounds
+            (identifier))))
+      (let_declaration
+        (identifier)
+        (index_expression
+          (identifier)
+          (slice_bounds)))
+      (let_declaration
+        (identifier)
+        (index_expression
+          (identifier)
+          (slice_bounds
+            (integer))))
+      (let_declaration
+        (identifier)
+        (index_expression
+          (identifier)
+          (slice_bounds
+            (integer)
+            (integer)
+            (integer))))
+      (assignment
+        (index_expression
+          (identifier)
+          (slice_bounds
+            (integer)
+            (integer)))
+        (integer)))))

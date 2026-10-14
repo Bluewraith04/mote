@@ -1,4 +1,4 @@
-//! Packages that carry `native/<triple>/` libraries, through `mote sync`, against repositories and directories on disk.
+//! Packages that carry `native/<triple>/` libraries, through `mote sync`.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -31,7 +31,7 @@ fn git(dir: &Path, args: &[&str]) {
     assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
 }
 
-/// A repository `lib` at tag `v1.0.0` holding a `lib.mote` and one `native/<triple>/libx` per triple in `triples`.
+/// A repository `lib` at tag `v1.0.0` with a native library per triple.
 fn publish(root: &Path, triples: &[&str]) -> String {
     let dir = root.join("lib");
     fs::create_dir_all(dir.join("src")).unwrap();
@@ -57,11 +57,11 @@ fn make_app(root: &Path, dep: &str) -> PathBuf {
 }
 
 #[test]
-fn a_granted_package_installs_only_this_machines_libraries_and_the_lock_checksums_each_triple() {
+fn a_package_installs_only_this_machines_libraries_and_the_lock_checksums_each_triple() {
     let root = scratch("granted");
     let host = host_triple();
     let url = publish(&root, &[&host, "other-unknown-triple"]);
-    let app = make_app(&root, &format!("lib = {{ git = \"{url}\", tag = \"v1.0.0\", native = true }}"));
+    let app = make_app(&root, &format!("lib = {{ git = \"{url}\", tag = \"v1.0.0\" }}"));
 
     PackageManager::install_dependencies(&app, false).unwrap();
     let lock = Lockfile::from_file(&app.join("mote.lock")).unwrap();
@@ -82,14 +82,15 @@ fn a_granted_package_installs_only_this_machines_libraries_and_the_lock_checksum
 }
 
 #[test]
-fn native_code_without_a_grant_is_refused() {
+fn native_code_needs_no_grant_and_an_old_grant_is_ignored() {
     let root = scratch("ungranted");
     let host = host_triple();
     let url = publish(&root, &[&host]);
     let app = make_app(&root, &format!("lib = {{ git = \"{url}\", tag = \"v1.0.0\" }}"));
-    let err = PackageManager::install_dependencies(&app, false).unwrap_err();
-    assert!(err.contains("lib carries native code; list it in mote.toml with native = true"), "{err}");
-    assert!(!app.join(".mote_packages/lib").exists());
+    PackageManager::install_dependencies(&app, false).unwrap();
+    assert!(app.join(".mote_packages/lib/native").join(&host).join("libx.bin").is_file());
+    let app = make_app(&root, &format!("lib = {{ git = \"{url}\", tag = \"v1.0.0\", native = true }}"));
+    PackageManager::install_dependencies(&app, false).unwrap();
     fs::remove_dir_all(&root).ok();
 }
 
@@ -97,7 +98,7 @@ fn native_code_without_a_grant_is_refused() {
 fn a_package_with_no_library_for_this_machine_is_refused() {
     let root = scratch("wrong_triple");
     let url = publish(&root, &["other-unknown-triple"]);
-    let app = make_app(&root, &format!("lib = {{ git = \"{url}\", tag = \"v1.0.0\", native = true }}"));
+    let app = make_app(&root, &format!("lib = {{ git = \"{url}\", tag = \"v1.0.0\" }}"));
     let err = PackageManager::install_dependencies(&app, false).unwrap_err();
     assert!(err.contains(&format!("lib has no native code for {}", host_triple())), "{err}");
     fs::remove_dir_all(&root).ok();
@@ -108,7 +109,7 @@ fn a_changed_library_fails_against_the_lock() {
     let root = scratch("changed");
     let host = host_triple();
     let url = publish(&root, &[&host]);
-    let app = make_app(&root, &format!("lib = {{ git = \"{url}\", tag = \"v1.0.0\", native = true }}"));
+    let app = make_app(&root, &format!("lib = {{ git = \"{url}\", tag = \"v1.0.0\" }}"));
     PackageManager::install_dependencies(&app, false).unwrap();
     let lock = fs::read_to_string(app.join("mote.lock")).unwrap();
     let at = lock.rfind("sha256:").unwrap() + "sha256:".len();
@@ -121,7 +122,7 @@ fn a_changed_library_fails_against_the_lock() {
 }
 
 #[test]
-fn a_path_package_copies_this_machines_libraries_and_needs_the_grant() {
+fn a_path_package_copies_this_machines_libraries() {
     let root = scratch("path");
     let host = host_triple();
     let lib = root.join("lib");
@@ -134,15 +135,11 @@ fn a_path_package_copies_this_machines_libraries_and_needs_the_grant() {
     fs::write(lib.join("native/other-unknown-triple/libx.bin"), b"elsewhere").unwrap();
 
     let app = make_app(&root, "lib = { path = \"../lib\" }");
-    let err = PackageManager::install_dependencies(&app, false).unwrap_err();
-    assert!(err.contains("lib carries native code"), "{err}");
-
-    let app = make_app(&root, "lib = { path = \"../lib\", native = true }");
     PackageManager::install_dependencies(&app, false).unwrap();
     assert!(app.join(".mote_packages/lib/native").join(&host).join("libx.bin").is_file());
     assert!(!app.join(".mote_packages/lib/native/other-unknown-triple").exists());
     let lock = Lockfile::from_file(&app.join("mote.lock")).unwrap();
     assert_eq!(lock.packages[0].native.len(), 2);
-    assert_eq!(pkg::native::grants(&app), vec![("lib".to_string(), app.join(".mote_packages/lib/native").join(&host))]);
+    assert_eq!(pkg::native::libraries(&app), vec![("lib".to_string(), app.join(".mote_packages/lib/native").join(&host))]);
     fs::remove_dir_all(&root).ok();
 }

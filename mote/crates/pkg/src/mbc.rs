@@ -3,23 +3,7 @@ use std::path::Path;
 
 use compiler::CompiledProgram;
 
-/// On-disk container for a compiled Mote program — a `.mbc` file.
-///
-/// [`CompiledProgram::to_bytes`] is the encoding of the program *structure*; this
-/// wrapper adds file-level framing: a magic number, a format version distinct
-/// from the structure's own version byte, an explicit payload length, and a
-/// CRC-32 integrity check.
-///
-/// Layout (all integers little-endian):
-///
-/// ```text
-/// offset  size  field
-/// 0       5     magic            b"MOTEC"
-/// 5       2     format version   u16, currently 2
-/// 7       4     payload length   u32
-/// 11      4     payload CRC-32    u32 (IEEE, reflected)
-/// 15      N     payload          CompiledProgram::to_bytes()
-/// ```
+/// The on-disk `.mbc` container for a compiled Mote program.
 pub struct MbcFile;
 
 impl MbcFile {
@@ -27,7 +11,7 @@ impl MbcFile {
     pub(crate) const FORMAT_VERSION: u16 = 3;
     const HEADER_LEN: usize = 15;
 
-    /// Serialize `program` into the `.mbc` container format.
+    /// Serializes `program` into the `.mbc` container format.
     pub fn encode(program: &CompiledProgram) -> Vec<u8> {
         let payload = program.to_bytes();
         let mut buf = Vec::with_capacity(Self::HEADER_LEN + payload.len());
@@ -39,8 +23,7 @@ impl MbcFile {
         buf
     }
 
-    /// Parse a `.mbc` container, verifying magic, version, length and checksum
-    /// before decoding the program.
+    /// Parses a `.mbc` container and decodes the program.
     pub fn decode(bytes: &[u8]) -> Result<CompiledProgram, String> {
         if bytes.len() < Self::HEADER_LEN {
             return Err(format!(
@@ -78,13 +61,13 @@ impl MbcFile {
         CompiledProgram::from_bytes(payload)
     }
 
-    /// Encode `program` and write it to `path`.
+    /// Encodes `program` and writes it to `path`.
     pub fn write(program: &CompiledProgram, path: &Path) -> Result<(), String> {
         fs::write(path, Self::encode(program))
             .map_err(|e| format!("failed to write '{}': {}", path.display(), e))
     }
 
-    /// Read and decode a `.mbc` file at `path`.
+    /// Reads and decodes a `.mbc` file at `path`.
     pub fn read(path: &Path) -> Result<CompiledProgram, String> {
         let bytes = fs::read(path)
             .map_err(|e| format!("failed to read '{}': {}", path.display(), e))?;

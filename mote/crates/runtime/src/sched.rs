@@ -1,5 +1,4 @@
-//! The task scheduler. [`SchedState`] holds the run queue, parked tasks, free pool and id counters behind one lock on [`Runtime::sched`]; each worker thread runs [`drive_loop`].
-//! A task is either published (in `run_queue` or `blocked`) or checked out by one worker. Cross-task operations go through [`TaskShared`], kept in `SchedState::registry` while the task lives.
+//! The task scheduler: the run queue, parked tasks and the worker loops.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::ptr::NonNull;
@@ -60,6 +59,8 @@ pub struct SchedState {
     pub(crate) offload_done: HashMap<u64, Result<crate::PlatformResult, String>>,
     pub(crate) offload_pending: HashMap<u64, crate::PlatformContinuation>,
     pub(crate) offload_inflight: usize,
+    /// Ends the reactor wait a parked task is in.
+    pub(crate) offload_cancel: HashMap<u64, contracts::WaitCancel>,
     pub(crate) mem: TaskStats,
 }
 
@@ -83,7 +84,7 @@ impl TaskStats {
     }
 }
 
-/// The condition variables idle threads wait on: one for the pool's workers, one for the home worker.
+/// The condition variables idle threads wait on.
 #[derive(Default)]
 pub(crate) struct Wake {
     pool: Condvar,
@@ -91,13 +92,19 @@ pub(crate) struct Wake {
 }
 
 impl Wake {
-    /// Wakes one thread that can run a task with this `pinned` flag; a pinned wake also reaches the single-thread runs, which wait on the pool's condvar.
+    /// Wakes one thread that can run a task with this `pinned` flag.
     pub(crate) fn task(&self, pinned: bool) {
         if pinned {
             self.home.notify_one();
             wake_home_loop();
         }
         self.pool.notify_one();
+    }
+
+    /// Wakes for a task made ready off the workers.
+    pub(crate) fn task_from_pool(&self, pinned: bool) {
+        self.task(pinned);
+        wake_home_loop();
     }
 
     pub(crate) fn all(&self) {
@@ -169,7 +176,7 @@ impl Role {
     }
 }
 
-/// A ready queue; every queue adds to one shared counter so `safepoint_poll` can ask "is anything waiting" without the `sched` lock.
+/// A ready queue that adds to one shared counter of waiting tasks.
 #[derive(Default)]
 pub struct ReadyQueue {
     queue: VecDeque<TaskContext>,
@@ -223,7 +230,7 @@ impl SchedState {
         }
     }
 
-    /// Puts a ready task on the queue its `pinned` flag names; the caller wakes a thread with [`Wake::task`].
+    /// Puts a ready task on the queue its `pinned` flag names.
     pub(crate) fn enqueue(&mut self, task: TaskContext) {
         if task.pinned {
             self.home_queue.push_back(task);
@@ -262,7 +269,7 @@ impl SchedState {
         });
     }
 
-    /// Moves a parked task to its ready queue and returns whether it was pinned, or notes an early wake.
+    /// Moves a parked task to its ready queue and returns whether it was pinned.
     pub(crate) fn wake_or_note_early(&mut self, id: u64) -> Option<bool> {
         match self.blocked.remove(&id) {
             Some(t) => {
@@ -278,11 +285,7 @@ impl SchedState {
     }
 }
 
-// SAFETY: `NonNull<ObjectHeader>` (in `detached`, and reachable through a
-// `TaskContext`'s own fields) is never dereferenced except by code that
-// already holds the appropriate lock or exclusive ownership of the task it
-// came from — see `Runtime`'s own `Send`/`Sync` safety comment in lib.rs,
-// which this state lives behind.
+// SAFETY: object pointers are dereferenced only by code holding the lock or exclusive ownership of the task.
 unsafe impl Send for SchedState {}
 
 fn self_scan_root_ptrs(task: &mut TaskContext, code_objects: &[crate::CodeObject]) -> Vec<NonNull<ObjectHeader>> {
@@ -306,6 +309,7 @@ fn self_scan_root_ptrs(task: &mut TaskContext, code_objects: &[crate::CodeObject
         out.push(ptr);
     }
     out.extend_from_slice(&task.held_turns);
+    out.extend_from_slice(&task.held_permits);
     out.extend_from_slice(&task.owned_senders);
     task.arenas.for_each_heap_pointer(|ptr| out.push(ptr));
     for (_, saved) in &task.arena_saves {
@@ -334,7 +338,7 @@ impl Drop for CheckedOutGuard<'_> {
 }
 
 impl Runtime {
-    /// Publishes a task: registers its [`TaskShared`], pushes it on the ready queue and wakes a sleeping worker.
+    /// Publishes a task on the ready queue and wakes a sleeping worker.
     pub fn schedule(&self, task: TaskContext) {
         let mut st = self.sched.lock().unwrap();
         st.registry.insert(task.task_id, Arc::clone(&task.shared));
@@ -356,7 +360,7 @@ impl Runtime {
         self.sched.lock().unwrap().free_pool.len()
     }
 
-    /// A `TaskContext` for a task entering code object `code_idx`, reusing a pooled one when available.
+    /// A `TaskContext` for a task entering code object `code_idx`.
     pub fn acquire_task(
         &self,
         code_idx: usize,
@@ -437,7 +441,7 @@ impl Runtime {
         }
     }
 
-    /// Wakes a task parked at its `SCOPEEXIT`; one parked on anything else, or still running, is left alone.
+    /// Wakes a task parked at its `SCOPEEXIT`.
     pub(crate) fn unblock_scope(&self, id: u64) {
         let mut st = self.sched.lock().unwrap();
         if st.blocked.get(&id).is_some_and(|t| t.scope_parked) {
@@ -467,7 +471,7 @@ impl Runtime {
         Ok(())
     }
 
-    /// Runs `main` and every task it spawns on this thread, and returns the finished main task, whose `registers[0]` is the program result.
+    /// Runs `main` and every task it spawns on this thread, and returns the finished main task.
     pub fn run_main(&mut self, main: TaskContext) -> Result<TaskContext, String> {
         let main_id = main.task_id;
         self.schedule(main);
@@ -486,7 +490,7 @@ impl Runtime {
         Ok(finished)
     }
 
-    /// Runs `main` on `num_workers` OS threads that pull tasks from one shared, locked run queue; the calling thread also runs the tasks that pinned themselves to it.
+    /// Runs `main` on `num_workers` OS threads that pull tasks from one shared run queue.
     pub fn run_main_parallel(&self, main: TaskContext, num_workers: usize) -> Result<TaskContext, String> {
         assert!(num_workers >= 1, "run_main_parallel: num_workers must be at least 1");
         let main_id = main.task_id;
@@ -524,10 +528,7 @@ impl Runtime {
         let detached = std::mem::take(&mut st.detached);
         let mut fault: Option<String> = None;
         for handle in &detached {
-            // SAFETY: every handle in `detached` was allocated by
-            // `sched_intrinsics::alloc_task_handle` and kept alive as a GC
-            // root (`crate::roots::scan_roots`) for as long as it's in this
-            // list.
+            // SAFETY: every handle in `detached` is kept alive as a GC root while it is listed.
             let (status, observed, task_id) = unsafe {
                 let h = handle.as_ref();
                 (
@@ -555,15 +556,22 @@ impl Runtime {
 
     fn complete_child(&self, mut child: TaskContext, err: Option<String>) {
         crate::handlers::shared_cell::release_held_turns(self, &mut child);
+        crate::handlers::shared_cell::release_held_permits(self, &mut child);
         crate::handlers::sched_intrinsics::close_owned_senders(self, &mut child);
         if let Some(handle) = child.handle {
             let ok_value = child.registers.first().copied().unwrap_or_else(Value::null);
             crate::handlers::sched_intrinsics::complete_handle(self, handle, ok_value, err.as_deref());
         }
 
+        let cancelled_end = child.shared.cancelled.load(Ordering::SeqCst);
         if child.shared.parent.is_none() {
             let mut st = self.sched.lock().unwrap();
             match &err {
+                Some(e) if cancelled_end && e.starts_with("task was cancelled") => {
+                    if let Some(handle) = child.handle {
+                        st.detached.remove(&handle);
+                    }
+                }
                 Some(e) => {
                     st.detached_faults.insert(child.task_id, e.clone());
                 }
@@ -575,7 +583,8 @@ impl Runtime {
             }
         }
 
-        let faulted = err.is_some();
+        let fault = err.as_ref().filter(|e| !(cancelled_end && e.starts_with("task was cancelled")));
+        let faulted = fault.is_some();
         if let Some(pid) = child.shared.parent {
             let depth = child.shared.scope_depth;
             let mut wake = false;
@@ -583,7 +592,7 @@ impl Runtime {
                 let mut scopes = parent_shared.scopes.lock().unwrap();
                 if let Some(sf) = scopes.get_mut(depth) {
                     sf.pending = sf.pending.saturating_sub(1);
-                    if let Some(e) = &err
+                    if let Some(e) = fault
                         && sf.first_error.is_none()
                     {
                         sf.first_error = Some(e.clone());
@@ -596,7 +605,6 @@ impl Runtime {
                 self.cancel_children(pid, Some(depth));
             }
             if wake {
-                // A plain unblock: a parent that has not parked yet re-checks `pending` as it parks, and one still running needs no wake.
                 self.unblock_scope(pid);
             }
         }
@@ -625,11 +633,20 @@ impl Runtime {
             ids
         };
         for id in newly_cancelled {
+            self.end_platform_wait(id);
             self.unblock(id);
         }
     }
 
-    /// Cancels another task: sets its flag and drops its waiter entries in one section, so a send or unlock cannot spend its wake on a task that no longer waits, then wakes it.
+    /// Ends the reactor wait a cancelled task is parked in.
+    pub(crate) fn end_platform_wait(&self, id: u64) {
+        let cancel = self.sched.lock().unwrap().offload_cancel.remove(&id);
+        if cancel.is_some_and(|cancel| cancel()) {
+            self.offload.handle().complete(id, Err("task was cancelled".to_string()));
+        }
+    }
+
+    /// Cancels another task: sets its flag, drops its waiter entries and wakes it.
     pub(crate) fn cancel_task(&self, id: u64) {
         {
             let mut st = self.sched.lock().unwrap();
@@ -638,6 +655,7 @@ impl Runtime {
             }
             st.forget_waiter(id);
         }
+        self.end_platform_wait(id);
         self.unblock(id);
     }
 

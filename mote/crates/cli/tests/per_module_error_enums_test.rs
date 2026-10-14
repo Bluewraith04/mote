@@ -13,7 +13,7 @@ fn run(source: &str, tag: &str) -> (bool, String) {
 
 #[test]
 fn io_error_of_maps_a_missing_file_to_not_found() {
-    let src = "import std.sys.fs as fs\nimport { io_error_of } from std.error\npub fn main() {\n    match fs.read_text(\"/does/not/exist/at/all.txt\") {\n        Ok(_) => { println(\"unexpected ok\") }\n        Err(e) => {\n            match io_error_of(e) {\n                NotFound => { println(\"not found\") }\n                _ => { println(\"other\") }\n            }\n        }\n    }\n}\n";
+    let src = "import std.fs as fs\nimport { io_error_of } from std.error\npub fn main() {\n    match fs.read_text(\"/does/not/exist/at/all.txt\") {\n        Ok(_) => { println(\"unexpected ok\") }\n        Err(e) => {\n            match io_error_of(e) {\n                NotFound => { println(\"not found\") }\n                _ => { println(\"other\") }\n            }\n        }\n    }\n}\n";
     let (ok, text) = run(src, "io_not_found");
     assert!(ok && text == "not found\n", "{text}");
 }
@@ -27,7 +27,7 @@ fn parse_error_of_maps_a_bad_int_to_invalid_syntax() {
 
 #[test]
 fn existing_error_typed_callers_are_unaffected() {
-    let src = "import std.sys.fs as fs\npub fn main() {\n    match fs.read_text(\"/does/not/exist/at/all.txt\") {\n        Ok(_) => { println(\"unexpected ok\") }\n        Err(e) => { println(e.message) }\n    }\n}\n";
+    let src = "import std.fs as fs\npub fn main() {\n    match fs.read_text(\"/does/not/exist/at/all.txt\") {\n        Ok(_) => { println(\"unexpected ok\") }\n        Err(e) => { println(e.message) }\n    }\n}\n";
     let (ok, text) = run(src, "unaffected");
     assert!(ok && text.starts_with("open:"), "{text}");
 }

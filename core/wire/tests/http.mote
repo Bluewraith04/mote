@@ -1,0 +1,300 @@
+import std.socket as net
+import std.http_server as server
+import std.json as json
+import std.time as time
+import { parse_int } from std.string
+import { Duration } from std.time
+import ..src.lib as http
+
+/// What a route sends: a status, header name and value pairs, and a body.
+class Reply {
+    var status: Int
+    var headers: List<String>
+    var body: Bytes
+}
+
+fn reply(status: Int, headers: List<String>, body: Bytes) -> Reply {
+    return Reply { status: status, headers: headers, body: body }
+}
+
+fn header_of(head: List<String>, name: String) -> String {
+    var i = 1
+    while i < head.len() {
+        let line = head.get(i)
+        let at = line.split(":")
+        if at.get(0).to_lower() == name {
+            return line.slice(at.get(0).len() + 1, line.len()).trim()
+        }
+        i = i + 1
+    }
+    return ""
+}
+
+fn route(method: String, path: String, head: List<String>, body: String) -> Reply {
+    let none: List<String> = []
+    if path == "/hello" { return reply(200, ["Content-Type", "text/plain", "X-Greeting", "hi"], "hello".bytes()) }
+    if path == "/missing" { return reply(404, none, "nope".bytes()) }
+    if path == "/redirect" { return reply(302, ["Location", "/hello"], Bytes()) }
+    if path == "/loop" { return reply(302, ["Location", "/loop"], Bytes()) }
+    if path == "/echo" {
+        let kind = header_of(head, "content-type")
+        let token = header_of(head, "x-token")
+        let text = "${method} ct=${kind} token=${token} len=${body.len()}\n${body}"
+        return reply(200, none, text.bytes())
+    }
+    if path == "/json" { return reply(200, ["Content-Type", "application/json"], "{\"a\":[1,2],\"ok\":true}".bytes()) }
+    if path == "/slow" {
+        time.sleep(Duration.from_millis(2500))
+        return reply(200, none, "late".bytes())
+    }
+    if path == "/big" { return reply(200, none, "x".repeat(10000).bytes()) }
+    if path == "/binary" {
+        var all = Bytes()
+        var i = 0
+        while i < 256 {
+            all.push(i)
+            i = i + 1
+        }
+        return reply(200, none, all)
+    }
+    if path == "/multi" { return reply(200, ["Set-Cookie", "a=1", "Set-Cookie", "b=2"], Bytes()) }
+    if path == "/head" && method == "HEAD" { return reply(200, ["X-Method", "head"], Bytes()) }
+    return reply(500, none, "unrouted".bytes())
+}
+
+/// Answers one request from the connection by `route`.
+fn serve_connection(conn: net.TcpStream) {
+    var buf = ""
+    var done = false
+    while !done {
+        match conn.read(4096) {
+            Ok(chunk) => {
+                if chunk.len() == 0 { return }
+                buf = buf + chunk.decode().unwrap()
+                if buf.contains("\r\n\r\n") {
+                    let parts = buf.split("\r\n\r\n")
+                    let head = parts.get(0).split("\r\n")
+                    var body = ""
+                    var i = 1
+                    while i < parts.len() {
+                        if i > 1 { body = body + "\r\n\r\n" }
+                        body = body + parts.get(i)
+                        i = i + 1
+                    }
+                    var want = 0
+                    let declared = header_of(head, "content-length")
+                    if declared != "" { want = parse_int(declared).unwrap() }
+                    if body.len() >= want {
+                        let request = head.get(0).split(" ")
+                        let method = request.get(0)
+                        let r = route(method, request.get(1), head, body)
+                        var out = "HTTP/1.1 ${r.status} X\r\nContent-Length: ${r.body.len()}\r\nConnection: close\r\n"
+                        var k = 0
+                        while k < r.headers.len() {
+                            out = out + r.headers.get(k) + ": " + r.headers.get(k + 1) + "\r\n"
+                            k = k + 2
+                        }
+                        let sent = conn.write_text(out + "\r\n")
+                        if method != "HEAD" { let more = conn.write(r.body) }
+                        done = true
+                    }
+                }
+            }
+            Err(e) => { return }
+        }
+    }
+    let closed = conn.close()
+}
+
+class Flag {
+    var on: Bool
+}
+
+fn serve(listener: net.TcpListener, stop: Shared<Flag>) {
+    scope {
+        while true {
+            match listener.accept() {
+                Ok(conn) => {
+                    if stop.get().on { break }
+                    spawn { serve_connection(conn) }
+                }
+                Err(e) => { break }
+            }
+        }
+    }
+}
+
+/// Makes the connection that wakes the accept of a server whose stop flag is raised.
+fn halt(l: net.TcpListener) {
+    match net.connect("127.0.0.1", l.local_port().unwrap()) {
+        Ok(c) => { let x = c.close() }
+        Err(e) => { }
+    }
+}
+
+fn start() -> net.TcpListener {
+    return net.listen("127.0.0.1", 0).unwrap()
+}
+
+fn base_of(l: net.TcpListener) -> String {
+    return "http://127.0.0.1:${l.local_port().unwrap()}"
+}
+
+test "a get answers status, headers and text" {
+    let l = start()
+    let base = base_of(l)
+    var stop = Shared(Flag { on: false })
+    scope {
+        spawn { serve(l, stop) }
+        let r = http.get(base + "/hello").unwrap()
+        assert_eq(r.status, 200)
+        assert(r.ok())
+        assert_eq(r.text().unwrap(), "hello")
+        assert_eq(r.header("X-Greeting").unwrap(), "hi")
+        assert(r.header("x-nothing").is_none())
+        assert_eq(r.header("content-type").unwrap(), "text/plain")
+        stop.update(|f| { f.on = true })
+        halt(l)
+    }
+}
+
+test "a bad status is an answer, not an error" {
+    let l = start()
+    let base = base_of(l)
+    var stop = Shared(Flag { on: false })
+    scope {
+        spawn { serve(l, stop) }
+        let r = http.get(base + "/missing").unwrap()
+        assert_eq(r.status, 404)
+        assert(!r.ok())
+        assert_eq(r.text().unwrap(), "nope")
+        match r.error_for_status() {
+            Ok(x) => { assert(false) }
+            Err(e) => { assert(e.message.ends_with("/missing")) }
+        }
+        assert(http.get(base + "/missing").unwrap().error_for_status().is_err())
+        assert(http.get(base + "/hello").unwrap().error_for_status().is_ok())
+        stop.update(|f| { f.on = true })
+        halt(l)
+    }
+}
+
+test "redirects are followed up to a limit" {
+    let l = start()
+    let base = base_of(l)
+    var stop = Shared(Flag { on: false })
+    scope {
+        spawn { serve(l, stop) }
+        assert_eq(http.get(base + "/redirect").unwrap().text().unwrap(), "hello")
+        assert(http.request("GET", base + "/loop").send().is_err())
+        let first = http.request("GET", base + "/redirect").max_redirects(0).send().unwrap()
+        let target = first.header("location").unwrap()
+        assert_eq("${first.status} ${target}", "302 /hello")
+        stop.update(|f| { f.on = true })
+        halt(l)
+    }
+}
+
+test "bodies, headers, json and forms are sent" {
+    let l = start()
+    let base = base_of(l)
+    var stop = Shared(Flag { on: false })
+    scope {
+        spawn { serve(l, stop) }
+        assert_eq(http.request("POST", base + "/echo").body("raw".bytes()).send().unwrap().text().unwrap(), "POST ct= token= len=3\nraw")
+        assert_eq(http.request("PUT", base + "/echo").header("X-Token", "abc").text("note").send().unwrap().text().unwrap(), "PUT ct=text/plain; charset=utf-8 token=abc len=4\nnote")
+        assert_eq(http.post_json(base + "/echo", json.parse("{\"k\": [1, 2]}").unwrap()).unwrap().text().unwrap(), "POST ct=application/json token= len=11\n{\"k\":[1,2]}")
+        assert_eq(http.HttpClient().post_form(base + "/echo", {"a": "1 2", "b": "x&y"}).unwrap().text().unwrap(), "POST ct=application/x-www-form-urlencoded token= len=13\na=1+2&b=x%26y")
+        assert_eq(http.HttpClient().delete(base + "/echo").unwrap().text().unwrap(), "DELETE ct= token= len=0\n")
+        assert_eq(http.request("patch", base + "/echo").header("x-token", "one").header("X-TOKEN", "two").send().unwrap().text().unwrap(), "PATCH ct= token=two len=0\n")
+        stop.update(|f| { f.on = true })
+        halt(l)
+    }
+}
+
+test "a json answer parses" {
+    let l = start()
+    let base = base_of(l)
+    var stop = Shared(Flag { on: false })
+    scope {
+        spawn { serve(l, stop) }
+        let j = http.get(base + "/json").unwrap().json().unwrap()
+        assert_eq(json.to_text(j).unwrap(), "{\"a\":[1,2],\"ok\":true}")
+        assert(http.get(base + "/hello").unwrap().json().is_err())
+        stop.update(|f| { f.on = true })
+        halt(l)
+    }
+}
+
+test "binary bodies, head and repeated headers" {
+    let l = start()
+    let base = base_of(l)
+    var stop = Shared(Flag { on: false })
+    scope {
+        spawn { serve(l, stop) }
+        let b = http.get(base + "/binary").unwrap()
+        assert_eq(b.body.len(), 256)
+        assert_eq(b.body.get(255), 255)
+        assert(b.text().is_err())
+        assert_eq(http.HttpClient().head(base + "/head").unwrap().header("x-method").unwrap(), "head")
+        assert_eq(http.get(base + "/multi").unwrap().header("set-cookie").unwrap(), "a=1")
+        stop.update(|f| { f.on = true })
+        halt(l)
+    }
+}
+
+test "limits and failures are errors" {
+    let l = start()
+    let base = base_of(l)
+    var stop = Shared(Flag { on: false })
+    scope {
+        spawn { serve(l, stop) }
+        match http.request("GET", base + "/slow").timeout(1).send() {
+            Ok(r) => { assert(false) }
+            Err(e) => { assert(e.kind == ErrorKind.TimedOut) }
+        }
+        assert(http.request("GET", base + "/big").max_body(100).send().is_err())
+        assert_eq(http.request("GET", base + "/big").max_body(10000).send().unwrap().body.len(), 10000)
+        assert(http.get("http://127.0.0.1:1/").is_err())
+        assert(http.get("not a url").is_err())
+        assert(http.get("ftp://127.0.0.1/").is_err())
+        stop.update(|f| { f.on = true })
+        halt(l)
+    }
+}
+
+test "the standard library's server answers the client" {
+    var s = server.listen("127.0.0.1", 0).unwrap()
+    let port = s.local_port().unwrap()
+    scope {
+        spawn {
+            let a = http.get("http://127.0.0.1:${port}/x?name=zed").unwrap()
+            let b = http.request("POST", "http://127.0.0.1:${port}/x").body("abc".bytes()).send().unwrap()
+            assert_eq(a.text().unwrap(), "GET zed 0")
+            assert_eq(b.text().unwrap(), "POST world 3")
+        }
+        let conn = s.accept().unwrap()
+        var requests = conn.requests()
+        var served = 0
+        while served < 2 {
+            match requests.next() {
+                Ok(next) => {
+                    match next {
+                        Some(req) => {
+                            let who = req.query().get_or("name", "world")
+                            let sent = req.respond(server.Response.text(200, "${req.method} ${who} ${req.body.len()}"))
+                            served = served + 1
+                        }
+                        None => { served = 2 }
+                    }
+                }
+                Err(e) => { served = 2 }
+            }
+        }
+    }
+}
+
+test "query strings percent-encode in order" {
+    assert_eq(http.query({"q": "a b", "x": "1&2=3", "é": "ü"}), "q=a+b&x=1%262%3D3&%C3%A9=%C3%BC")
+    assert_eq(http.query(Map<String, String>()), "")
+}

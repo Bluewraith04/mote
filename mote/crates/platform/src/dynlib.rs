@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::ffi::{c_char, c_int, c_void, CStr, CString};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use contracts::{CArg, PlatformError, PlatformErrorKind, PlatformResponse};
@@ -75,7 +75,6 @@ enum Slot {
 }
 
 pub(crate) struct DynLibs {
-    allowed: AtomicBool,
     packages: Mutex<Vec<(String, PathBuf)>>,
     next: AtomicI64,
     libs: Mutex<HashMap<i64, (Arc<Library>, PathBuf)>>,
@@ -90,7 +89,6 @@ fn error(kind: PlatformErrorKind, message: impl Into<String>) -> PlatformError {
 impl DynLibs {
     pub(crate) fn new() -> Self {
         DynLibs {
-            allowed: AtomicBool::new(false),
             packages: Mutex::new(Vec::new()),
             next: AtomicI64::new(1),
             libs: Mutex::new(HashMap::new()),
@@ -99,26 +97,19 @@ impl DynLibs {
         }
     }
 
-    pub(crate) fn set_allowed(&self, allowed: bool) {
-        self.allowed.store(allowed, Ordering::SeqCst);
-    }
-
-    /// The packages granted native access, each with the directory holding its libraries.
+    /// The packages with native libraries, each with the directory holding them.
     pub(crate) fn set_packages(&self, packages: Vec<(String, PathBuf)>) {
         *self.packages.lock().unwrap() = packages;
     }
 
     pub(crate) fn open(&self, path: &str) -> Result<i64, PlatformError> {
-        if !self.allowed.load(Ordering::SeqCst) {
-            return Err(error(PlatformErrorKind::PermissionDenied, "native libraries are off; run with --allow-native"));
-        }
         self.load(Path::new(path))
     }
 
-    /// Opens `name` from the directory of a granted package, with no `--allow-native`.
+    /// Opens `name` from the native directory of an installed package.
     pub(crate) fn open_package(&self, package: &str, name: &str) -> Result<i64, PlatformError> {
         let dir = self.packages.lock().unwrap().iter().find(|(p, _)| p == package).map(|(_, d)| d.clone());
-        let dir = dir.ok_or_else(|| error(PlatformErrorKind::PermissionDenied, format!("{package} is not granted native access")))?;
+        let dir = dir.ok_or_else(|| error(PlatformErrorKind::NotFound, format!("{package} has no native libraries")))?;
         if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
             return Err(error(PlatformErrorKind::InvalidData, format!("'{name}' is not a library name")));
         }
@@ -130,14 +121,14 @@ impl DynLibs {
     }
 
     fn load(&self, path: &Path) -> Result<i64, PlatformError> {
-        // SAFETY: loading runs the library's initialisers; `--allow-native` or a package grant is the caller's consent to that.
+        // SAFETY: loading runs the library's initialisers; the program asking for the library is the consent to that.
         let lib = unsafe { Library::new(path) }.map_err(|e| error(PlatformErrorKind::NotFound, e.to_string()))?;
         let id = self.next.fetch_add(1, Ordering::SeqCst);
         self.libs.lock().unwrap().insert(id, (Arc::new(lib), path.to_path_buf()));
         Ok(id)
     }
 
-    /// One symbol per library path, name and signature, so binding the same function again adds nothing.
+    /// One symbol per library path, name and signature.
     pub(crate) fn symbol(&self, lib: i64, name: &str, signature: &str) -> Result<i64, PlatformError> {
         let (lib, path) = self.libs.lock().unwrap().get(&lib).cloned().ok_or_else(|| error(PlatformErrorKind::InvalidData, "the library is closed"))?;
         let key = (path, name.to_string(), signature.to_string());
@@ -218,7 +209,6 @@ mod tests {
     #[test]
     fn binding_the_same_function_again_reuses_its_symbol() {
         let libs = DynLibs::new();
-        libs.set_allowed(true);
         let first = libs.open("libm.so.6").unwrap();
         let second = libs.open("libm.so.6").unwrap();
         let a = libs.symbol(first, "sin", "f>f").unwrap();

@@ -1,11 +1,12 @@
 [package]
 name = "platform"
-version = "0.1.2"
+version = "0.1.3"
 edition = "2024"
 license = "MIT"
 
 [dependencies]
 contracts = { path = "../contracts" }
+crossterm = "0.29.0"
 libffi = "5.2.0"
 libloading = "0.9.0"
 polling = "3.11.0"
@@ -15,6 +16,7 @@ webpki-roots = "1.0.9"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+signal-hook = "0.4.5"
 
 [dev-dependencies]
 rcgen = { version = "0.14.10", default-features = false, features = ["crypto", "pem", "ring"] }

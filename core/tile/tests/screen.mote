@@ -1,0 +1,200 @@
+import ..src.screen as screen
+import ..src.ansi as ansi
+
+fn put_text(var s: screen.Screen, col: Int, row: Int, text: String) {
+    var c = col
+    for cell in screen.cells(text, -1, -1, 0) {
+        s.put(c, row, cell)
+        c = c + 1
+    }
+}
+
+test "a screen starts blank and shows what is put on it" {
+    var s = screen.Screen.new(6, 2)
+    put_text(s, 1, 0, "hi")
+    put_text(s, 0, 1, "é!")
+    assert_eq(s.lines(), [" hi", "é!"])
+}
+
+test "a wide character takes two cells and the second holds nothing" {
+    var s = screen.Screen.new(6, 1)
+    put_text(s, 1, 0, "日a")
+    assert_eq(s.lines(), [" 日a"])
+    assert_eq(s.get(1, 0).ch, "日")
+    assert_eq(s.get(2, 0).ch, "")
+    assert_eq(s.get(3, 0).ch, "a")
+    assert_eq(screen.glyphs("a日é").len(), 4)
+}
+
+test "painting over one half of a wide character blanks the other half" {
+    var over_second = screen.Screen.new(4, 1)
+    put_text(over_second, 0, 0, "日")
+    put_text(over_second, 1, 0, "x")
+    assert_eq(over_second.lines(), [" x"])
+    var over_first = screen.Screen.new(4, 1)
+    put_text(over_first, 0, 0, "日")
+    put_text(over_first, 0, 0, "x")
+    assert_eq(over_first.lines(), ["x"])
+    assert_eq(over_first.get(1, 0).ch, " ")
+    var again = screen.Screen.new(4, 1)
+    put_text(again, 0, 0, "日")
+    put_text(again, 0, 0, "日")
+    assert_eq(again.lines(), ["日"])
+    var shifted = screen.Screen.new(5, 1)
+    put_text(shifted, 0, 0, "日本")
+    put_text(shifted, 1, 0, "本")
+    assert_eq(shifted.lines(), [" 本"])
+}
+
+test "a combining mark is one cell with the character before it" {
+    var s = screen.Screen.new(4, 1)
+    put_text(s, 0, 0, "e\u{301}x")
+    assert_eq(s.lines(), ["e\u{301}x"])
+    assert_eq(s.get(1, 0).ch, "x")
+}
+
+test "a wide character is written once and the cursor skips its second cell" {
+    var s = screen.Screen.new(4, 1)
+    put_text(s, 0, 0, "日ab")
+    assert_eq(s.diff(None, true), "\u{1b}[0m\u{1b}[2J\u{1b}[1;1H\u{1b}[0m日ab\u{1b}[0m")
+    var t = screen.Screen.new(4, 1)
+    put_text(t, 0, 0, "日aX")
+    assert_eq(t.diff(Some(s), true), "\u{1b}[1;4H\u{1b}[0mX\u{1b}[0m")
+}
+
+test "a change to the second cell of a wide character writes the character again" {
+    var a = screen.Screen.new(4, 1)
+    put_text(a, 0, 0, "日")
+    var b = screen.Screen.new(4, 1)
+    b.set(0, 0, "日", 0xff0000, -1, 0)
+    b.set(1, 0, "", 0xff0000, -1, 0)
+    assert_eq(b.diff(Some(a), true).contains("日"), true)
+    var c = screen.Screen.new(4, 1)
+    put_text(c, 0, 0, "日")
+    assert_eq(c.diff(Some(c), true), "")
+}
+
+test "narrow text over a wide character is written cell by cell" {
+    var a = screen.Screen.new(4, 1)
+    put_text(a, 0, 0, "日b")
+    var b = screen.Screen.new(4, 1)
+    put_text(b, 0, 0, "xyb")
+    assert_eq(b.diff(Some(a), true), "\u{1b}[1;1H\u{1b}[0mxy\u{1b}[0m")
+}
+
+test "a cell outside the screen is dropped" {
+    var s = screen.Screen.new(2, 1)
+    put_text(s, 1, 0, "abc")
+    put_text(s, -1, 0, "z")
+    assert_eq(s.lines(), [" a"])
+}
+
+test "the first frame clears and writes every cell" {
+    var s = screen.Screen.new(2, 1)
+    put_text(s, 0, 0, "ab")
+    let out = s.diff(None, true)
+    assert_eq(out, "\u{1b}[0m\u{1b}[2J\u{1b}[1;1H\u{1b}[0mab\u{1b}[0m")
+}
+
+test "a later frame writes only the changed cells" {
+    var a = screen.Screen.new(4, 2)
+    put_text(a, 0, 0, "abcd")
+    var b = screen.Screen.new(4, 2)
+    put_text(b, 0, 0, "abxd")
+    assert_eq(b.diff(Some(a), true), "\u{1b}[1;3H\u{1b}[0mx\u{1b}[0m")
+    assert_eq(b.diff(Some(b), true), "")
+}
+
+test "a changed look is written with its colours, and no colour drops them" {
+    var s = screen.Screen.new(1, 1)
+    s.put(0, 0, screen.cell("x", 0xff0000, -1, 1))
+    let blank = screen.Screen.new(1, 1)
+    assert_eq(s.diff(Some(blank), true), "\u{1b}[1;1H\u{1b}[0;1;38;2;255;0;0mx\u{1b}[0m")
+    assert_eq(s.diff(Some(blank), false), "\u{1b}[1;1H\u{1b}[0;1mx\u{1b}[0m")
+}
+
+test "a screen of another size is redrawn in full" {
+    var a = screen.Screen.new(2, 1)
+    let b = screen.Screen.new(3, 1)
+    assert_eq(b.diff(Some(a), true).starts_with("\u{1b}[0m\u{1b}[2J"), true)
+}
+
+test "ansi helpers" {
+    assert_eq(ansi.cursor_to(0, 0), "\u{1b}[1;1H")
+    assert_eq(ansi.cursor_to(9, 4), "\u{1b}[5;10H")
+}
+
+test "fill_rect blanks a rectangle in one look and leaves the rest" {
+    var s = screen.Screen.new(5, 3)
+    put_text(s, 0, 0, "abcde")
+    put_text(s, 0, 1, "fghij")
+    put_text(s, 0, 2, "klmno")
+    s.fill_rect(1, 0, 4, 2, 0xff0000, 0x00ff00, 4)
+    assert_eq(s.lines(), ["a   e", "f   j", "klmno"])
+    assert_eq(s.get(1, 1).fg, 0xff0000)
+    assert_eq(s.get(3, 0).bg, 0x00ff00)
+    assert_eq(s.get(3, 0).bits, 4)
+    assert_eq(s.get(0, 0).bg, -1)
+    assert_eq(s.get(4, 1).bits, 0)
+}
+
+test "fill_rect with no background keeps each cell's own" {
+    var s = screen.Screen.new(3, 1)
+    s.put(1, 0, screen.cell("x", -1, 0x112233, 0))
+    s.fill_rect(0, 0, 3, 1, -1, -1, 0)
+    assert_eq(s.get(1, 0).ch, " ")
+    assert_eq(s.get(1, 0).bg, 0x112233)
+}
+
+test "fill_rect cut through a wide character blanks the half outside as well" {
+    var left = screen.Screen.new(4, 1)
+    put_text(left, 0, 0, "日本")
+    left.fill_rect(1, 0, 4, 1, -1, -1, 0)
+    assert_eq(left.lines(), [""])
+    assert_eq(left.get(0, 0).ch, " ")
+    var right = screen.Screen.new(4, 1)
+    put_text(right, 0, 0, "日本")
+    right.fill_rect(0, 0, 3, 1, -1, -1, 0)
+    assert_eq(right.lines(), [""])
+    assert_eq(right.get(3, 0).ch, " ")
+    var empty = screen.Screen.new(4, 1)
+    put_text(empty, 0, 0, "abcd")
+    empty.fill_rect(2, 0, 2, 1, -1, -1, 0)
+    assert_eq(empty.lines(), ["abcd"])
+}
+
+test "write_run paints glyphs from a column, as set would, clipped to the columns it is given" {
+    var s = screen.Screen.new(8, 2)
+    s.write_run(2, 0, screen.glyphs("abcdef"), 0x010203, -1, 1, 0, 8)
+    assert_eq(s.lines()[0], "  abcdef")
+    assert_eq(s.get(2, 0).fg, 0x010203)
+    assert_eq(s.get(2, 0).bits, 1)
+    s.write_run(2, 1, screen.glyphs("abcdef"), -1, -1, 0, 3, 6)
+    assert_eq(s.lines()[1], "   bcd")
+    s.write_run(0, 5, screen.glyphs("zz"), -1, -1, 0, 0, 8)
+    s.write_run(-2, 1, screen.glyphs("XYZW"), -1, -1, 0, 0, 8)
+    assert_eq(s.lines()[1], "ZW bcd")
+}
+
+test "write_run draws a wide character cut by the right clip as a blank, and keeps one that fits" {
+    var s = screen.Screen.new(6, 1)
+    s.write_run(0, 0, screen.glyphs("a日本"), -1, -1, 0, 0, 3)
+    assert_eq(s.lines(), ["a日"])
+    s.write_run(0, 0, screen.glyphs("a日本"), -1, -1, 0, 0, 2)
+    assert_eq(s.lines(), ["a"])
+    assert_eq(s.get(1, 0).ch, " ")
+    assert_eq(s.get(3, 0).ch, " ")
+    var t = screen.Screen.new(6, 1)
+    t.write_run(0, 0, screen.glyphs("a日本"), -1, -1, 0, 0, 6)
+    assert_eq(t.lines(), ["a日本"])
+}
+
+test "write_run over a wide character blanks its other half, and a second half at the left clip" {
+    var s = screen.Screen.new(4, 1)
+    put_text(s, 0, 0, "日")
+    s.write_run(1, 0, screen.glyphs("x"), -1, -1, 0, 0, 4)
+    assert_eq(s.lines(), [" x"])
+    var t = screen.Screen.new(4, 1)
+    t.write_run(0, 0, screen.glyphs("日a"), -1, -1, 0, 1, 4)
+    assert_eq(t.lines(), ["  a"])
+}

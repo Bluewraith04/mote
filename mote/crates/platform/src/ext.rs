@@ -1,4 +1,4 @@
-//! What a full runtime adds to the base platform: TLS. A lean runtime leaves it out and links none of its code.
+//! What a full runtime adds to the base platform: TLS.
 
 use std::any::Any;
 use std::io;
@@ -32,7 +32,7 @@ pub(crate) trait Tls: Send + Sync {
     fn server(&self, tcp: Arc<TcpStream>, settings: &ServerSettings) -> Result<Arc<dyn Secure>, PlatformError>;
 }
 
-/// The TLS of a lean runtime; a plain `Option` let the optimizer fill `None` with the real TLS's vtable.
+/// The TLS of a lean runtime, which has none.
 pub(crate) struct NoTls;
 
 pub(crate) static NO_TLS: NoTls = NoTls;

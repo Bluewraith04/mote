@@ -1,6 +1,6 @@
-# std.sys.io
+# std.io
 
-Standard streams and one-shot file operations. `import std.sys.io as io`.
+Standard streams and one-shot file operations. `import std.io as io`.
 
 | Function | Answers |
 |---|---|

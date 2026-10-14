@@ -20,23 +20,15 @@ A module name cannot be used as a value, so import a function by name to pass it
 
 ## The standard library
 
-Everyday modules sit directly under `std`: `string`, `math`, `collections`, `iter`, `stream`, `time`, `date`, `random`, `regex`, `task` and `test`. The rest sit in three groups.
-
-| Group | Members |
-|---|---|
-| `std.data` | `json`, `base64`, `uuid`, `crypto` |
-| `std.sys` | `io`, `fs`, `env`, `process`, `net`, `http_server`, `tls`, `gui` |
-| `std.dev` | `log`, `args`, `libtools` |
-
-A member is imported as `import std.data.json as json`, as the whole group (`import std.data`, used as `data.json.parse(t)`), or by name (`import { json, base64 } from std.data`).
+Every module sits directly under `std`: `string`, `math`, `collections`, `iter`, `stream`, `time`, `date`, `random`, `regex`, `task` and `test`; `io`, `fs`, `env`, `process` and `gui`; `socket`, `tls` and `http_server`; `json`, `base64`, `uuid` and `crypto`; `args` and `libtools`. A module is imported as `import std.json as json`.
 
 ```mote
-import std.data
-import { fs } from std.sys
+import std.json as json
+import std.fs as fs
 
 fn main() {
-    let doc = data.json.parse("{\"name\": \"demo\", \"ports\": [80, 443]}")!
-    println(data.json.to_text(doc)!)
+    let doc = json.parse("{\"name\": \"demo\", \"ports\": [80, 443]}")!
+    println(json.to_text(doc)!)
     println(fs.exists("/no/such/path"))
 }
 ```

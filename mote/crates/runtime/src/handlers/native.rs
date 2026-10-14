@@ -1,11 +1,14 @@
-//! `CALLNATIVE`/`CALLNATIVEW` dispatch natives through the installed [`crate::NativeDispatchHook`]; `CALLINTRINSIC` runs scheduler-aware intrinsics.
+//! `CALLNATIVE`, `CALLNATIVEW` and `CALLINTRINSIC` dispatch natives and intrinsics.
 
 use super::sched_intrinsics;
 use crate::util::{decode_r3, decode_ri};
 use crate::{NativeOutcome, PlatformContinuation, Runtime, TaskContext, VmStatus};
 use contracts::{NativeCtx, NativeError, PlatformRequest, Wake, Woken};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
-/// `rA = native_fn[b](rC..)`: an 8-bit registry id, or a slot of the program's native table when it has one.
+/// `rA = native_fn[b](rC..)`: calls a native by registry id or program-table slot.
 pub(crate) fn callnative(
     rt: &Runtime,
     task: &mut TaskContext,
@@ -146,11 +149,63 @@ fn platform_call(
         Woken::Run(request) => handle.submit(id, Box::new(move || runner.execute(request))),
         Woken::Done(output) => handle.complete(id, Ok(output)),
     });
-    if let Err(unwaited) = platform.wait(request, wake) {
-        let (request, _) = *unwaited;
-        rt.offload.submit(id, Box::new(move || platform.execute(request)));
+    let mut finished = None;
+    match platform.wait(request, wake) {
+        Ok(Some(cancel)) => {
+            let mut st = rt.sched.lock().unwrap();
+            if !st.offload_done.contains_key(&id) {
+                st.offload_cancel.insert(id, cancel);
+            }
+        }
+        Ok(None) => {}
+        Err(unwaited) => {
+            let (request, _) = *unwaited;
+            let done = Arc::new(AtomicBool::new(false));
+            let flag = done.clone();
+            let hot = rt.offload.submit(
+                id,
+                Box::new(move || {
+                    let answer = platform.execute(request);
+                    flag.store(true, Ordering::Release);
+                    answer
+                }),
+            );
+            if hot {
+                finished = Some(done);
+            }
+        }
+    }
+    if let Some(done) = finished {
+        if !task.shared.cancelled.load(Ordering::SeqCst) && spin_until(&done, WORKER_SPIN) {
+            for _ in 0..SETTLE_SPINS {
+                match resume_platform(rt, task, dest, fallible)? {
+                    VmStatus::Parked => std::hint::spin_loop(),
+                    status => return Ok(status),
+                }
+            }
+        }
+    }
+    if task.shared.cancelled.load(Ordering::SeqCst) {
+        rt.end_platform_wait(id);
     }
     Ok(VmStatus::Parked)
+}
+
+/// How long a worker waits for a pooled request before it parks its task.
+const WORKER_SPIN: Duration = Duration::from_micros(50);
+
+/// How often a finished request's answer is looked for before the task parks.
+const SETTLE_SPINS: usize = 1000;
+
+fn spin_until(done: &AtomicBool, limit: Duration) -> bool {
+    let end = Instant::now() + limit;
+    while !done.load(Ordering::Acquire) {
+        if Instant::now() >= end {
+            return false;
+        }
+        std::hint::spin_loop();
+    }
+    true
 }
 
 fn resume_platform(rt: &Runtime, task: &mut TaskContext, dest: usize, fallible: bool) -> Result<VmStatus, String> {
@@ -158,7 +213,10 @@ fn resume_platform(rt: &Runtime, task: &mut TaskContext, dest: usize, fallible: 
     let (output, continuation) = {
         let mut st = rt.sched.lock().unwrap();
         match st.offload_done.remove(&id) {
-            Some(out) => (out, st.offload_pending.remove(&id)),
+            Some(out) => {
+                st.woken_early.remove(&id);
+                (out, st.offload_pending.remove(&id))
+            }
             None => return Ok(VmStatus::Parked),
         }
     };

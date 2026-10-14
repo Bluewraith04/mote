@@ -1,11 +1,11 @@
-# std.sys.gui
+# std.gui
 
-A window of boxes, text, images and buttons, laid out with flexbox and grid and drawn on the CPU. `import std.sys.gui as gui`.
+A window of boxes, text, images and buttons, laid out with flexbox and grid and drawn on the CPU. `import std.gui as gui`.
 
 `gui.open(title, width, height)` opens a window on the display; only a pinned task (`std.task.pin()`) may open, present and close it, and it is an `Err` with no display. `gui.headless(width, height)` makes a window with no screen, whose pixels read back with `pixel` and `png`.
 
 ```mote,skip
-import std.sys.gui as gui
+import std.gui as gui
 
 fn main() {
     let win = gui.headless(300, 100)!

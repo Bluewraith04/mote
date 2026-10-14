@@ -1,6 +1,0 @@
-/// std.data — the data formats and codecs as one group: `import std.data` gives `data.json`, `data.base64`, and so on.
-
-import std.data.json as json
-import std.data.base64 as base64
-import std.data.uuid as uuid
-import std.data.crypto as crypto

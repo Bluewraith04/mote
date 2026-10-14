@@ -59,7 +59,7 @@ impl Rect {
         Rect { x, y, w: self.right().max(other.right()) - x, h: self.bottom().max(other.bottom()) - y }
     }
 
-    /// Whether the rectangles overlap or share an edge, so their union wastes no area on a side.
+    /// Whether the rectangles overlap or share an edge.
     pub fn touches(&self, other: &Rect) -> bool {
         self.x <= other.right() && other.x <= self.right() && self.y <= other.bottom() && other.y <= self.bottom()
     }

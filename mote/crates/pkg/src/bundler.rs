@@ -23,10 +23,10 @@ impl StandaloneBundler {
         Self::bundle_program(&compiled, output_exe_path, tier_of)
     }
 
-    /// The runtime stubs, smallest first: a tier is an index into this list.
+    /// The runtime stubs, smallest first.
     const STUBS: [&'static str; 3] = ["mote-rt", "mote-rt-full", "mote-rt-gui"];
 
-    /// The binary a program is attached to: the stub of `tier`, else a larger one, beside the running executable, else the running executable.
+    /// The binary a program is attached to for a runtime `tier`.
     pub fn host_executable(tier: u8) -> Result<PathBuf, String> {
         let current_exe = std::env::current_exe()
             .map_err(|e| format!("Failed to locate current executable: {}", e))?;
@@ -39,7 +39,7 @@ impl StandaloneBundler {
         Ok(stub.unwrap_or(current_exe))
     }
 
-    /// Bundles an already-compiled program into a copy of `host_executable`; `tier_of` names the stub tier its native table needs.
+    /// Bundles an already-compiled program into a copy of `host_executable`.
     pub fn bundle_program(
         compiled: &CompiledProgram,
         output_exe_path: &Path,
@@ -75,8 +75,7 @@ impl StandaloneBundler {
         })
     }
 
-    /// `host` without its signature and old payload, then zero padding, `payload` and the trailer,
-    /// ending on an 8-byte boundary so a PE certificate table can follow.
+    /// `host` without its old payload, followed by `payload` and the trailer.
     pub fn assemble(mut host: Vec<u8>, payload: &[u8]) -> Vec<u8> {
         if let Some((entry, offset, _)) = pe_certificate_table(&host) {
             host.truncate(offset as usize);
@@ -142,7 +141,7 @@ fn find_payload(tail: &[u8], end: u64) -> Option<(u64, u64)> {
     Some((end.checked_sub(TRAILER_LEN + len).unwrap_or(u64::MAX), len))
 }
 
-/// For a PE image: the file offset of its certificate-table directory entry, and the table's offset and size.
+/// For a PE image: its certificate-table entry offset, and the table's offset and size.
 pub fn pe_certificate_table(bytes: &[u8]) -> Option<(usize, u32, u32)> {
     let u16_at = |at: usize| bytes.get(at..at + 2).map(|b| u16::from_le_bytes([b[0], b[1]]));
     let u32_at = |at: usize| bytes.get(at..at + 4).map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]));

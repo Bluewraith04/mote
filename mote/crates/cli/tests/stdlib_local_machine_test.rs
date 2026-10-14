@@ -1,4 +1,4 @@
-//! Builds a directory, writes a script, runs it as a child, streams its output back through a file handle and cleans up.
+//! Builds a directory, writes a script, runs it as a child and reads its output back.
 #![cfg(unix)]
 
 use std::process::Command;
@@ -9,11 +9,11 @@ fn a_program_drives_the_local_machine() {
     std::fs::create_dir_all(&dir).unwrap();
     let work = dir.join("work");
     let source = format!(
-        r#"import std.sys.fs
-import std.sys.io
-import std.sys.process as process
-import {{ File, Stat }} from std.sys.fs
-import {{ Output }} from std.sys.process
+        r#"import std.fs
+import std.io
+import std.process as process
+import {{ File, Stat }} from std.fs
+import {{ Output }} from std.process
 
 fn join(a: String, b: String) -> String {{ return a + "/" + b }}
 

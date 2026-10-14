@@ -1,0 +1,983 @@
+/// Serves HTTP requests through routes collected on a server.
+
+import std.http_server as std_server
+import std.json as jsonlib
+import std.io as io
+import std.string as strings
+import std.time as time
+import { Json, JsonCodec } from std.json
+import { Task } from std.task
+import { Stream } from std.stream
+import { parse_int } from std.string
+import .static_files
+import .ws as websocket
+import .client as client
+
+pub import { Message, Socket } from .ws
+pub import { Files } from .static_files
+pub import { Response as Reply } from std.http_server
+
+/// One `:name` or `*name` of a route, with what the request had there.
+class Param {
+    name: String
+    value: String
+    next: Param?
+}
+
+/// A live connection as the tracker holds it.
+class Entry {
+    id: Int
+    task: Task<Null>
+    conn: std_server.Connection
+    state: Shared<Int>
+}
+
+/// What the tracker is told about connections and shutdown.
+class Note {
+    kind: Int
+    id: Int
+    entry: Entry?
+}
+
+/// How a serving task answers `start`.
+class Started {
+    port: Int
+    closer: std_server.Closer?
+}
+
+/// Writes the reply for an error.
+pub type ErrorReply = Send (Int, Error) -> Reply
+
+/// What typed routes use of the application: how an error is written, and the largest JSON body.
+class Context {
+    reject: ErrorReply
+    max_json: Int
+}
+
+/// `{"detail": message}`, with a `"code"` when the error has one.
+fn json_error(status: Int, e: Error) -> Reply {
+    var members = [jsonlib.member("detail", Json.Str(e.message))]
+    if e.code != "" { members.push(jsonlib.member("code", Json.Str(e.code))) }
+    return Reply.json(status, Json.Object(members))
+}
+
+/// A request as a handler sees it.
+pub class Request<S> {
+    pub method: String
+    /// The target as sent, such as `/items?id=7`.
+    pub target: String
+    /// The target's path, percent-decoded.
+    pub path: String
+    pub body: Bytes
+    /// The application's state: the dependencies a handler uses.
+    pub state: S
+    inner: std_server.Request
+    params: Param?
+    ctx: Context
+
+    /// The reply for `e` with `status`, written the way the application writes errors.
+    pub fn reject(self, status: Int, e: Error) -> Reply {
+        return self.ctx.reject(status, e)
+    }
+
+    /// The part of the path that the route's `:name` or `*name` matched.
+    pub fn param(self, name: String) -> String {
+        var p = self.params
+        while true {
+            match p {
+                Some(x) => {
+                    if x.name == name { return x.value }
+                    p = x.next
+                }
+                None => { break }
+            }
+        }
+        return ""
+    }
+
+    /// The route parameter `name` as an `Int`.
+    pub fn param_int(self, name: String) -> Result<Int, Error> {
+        let text = self.param(name)
+        match parse_int(text) {
+            Ok(n) => { return Ok(n) }
+            Err(e) => { return Err(Error.new(ErrorKind.InvalidData, "${name} is not a number: ${text}")) }
+        }
+    }
+
+    /// The first header called `name` (any case), if there is one.
+    pub fn header(self, name: String) -> Option<String> {
+        return self.inner.header(name)
+    }
+
+    fn header_or(self, name: String, fallback: String) -> String {
+        return self.inner.header(name).unwrap_or(fallback)
+    }
+
+    /// The query parameters, percent-decoded; a repeated name keeps its last value.
+    pub fn query(self) -> Map<String, String> {
+        return self.inner.query()
+    }
+
+    /// The body as text; an `Err` if it is not UTF-8.
+    pub fn text(self) -> Result<String, Error> {
+        return self.inner.text()
+    }
+
+    /// The body parsed as JSON.
+    pub fn json(self) -> Result<Json, Error> {
+        return self.inner.json()
+    }
+
+    /// The body read as a form (`a=1&b=2`).
+    pub fn form(self) -> Result<Map<String, String>, Error> {
+        return self.inner.form()
+    }
+
+    fn into_std(self) -> std_server.Request {
+        return self.inner
+    }
+}
+
+fn wrap_request<S>(req: std_server.Request, state: S, params: Param?, ctx: Context) -> Request<S> {
+    return Request { method: req.method, target: req.target, path: req.path, body: req.body, state: state, inner: req, params: params, ctx: ctx }
+}
+
+/// What a route does with a request.
+pub type Handler<S> = Send (Request<S>) -> Result<Reply, Error>
+
+/// Runs `test` with `value` as its JSON body.
+pub fn test_json<S, B: JsonCodec>(test: TestClient<S>, value: B) -> TestClient<S> {
+    return test.json(jsonlib.encode(value))
+}
+
+/// Wraps a handler in another handler.
+pub type Middleware<S> = Send (Handler<S>) -> Handler<S>
+
+/// What a WebSocket route does with each connection; the connection ends when it returns.
+pub type SocketHandler = Send (Socket) -> Result<Null, Error>
+
+/// The sockets of one WebSocket route, kept so a stop can close them.
+class SocketHost {
+    handler: SocketHandler
+    members: Shared<Map<Int, Socket>>
+
+    fn add(self, socket: Socket) {
+        var m = self.members.clone()
+        m.update(|all| { all.set(socket.id, socket) })
+    }
+
+    fn remove(self, socket: Socket) {
+        var m = self.members.clone()
+        m.update(|all| { all.remove(socket.id) })
+    }
+
+    /// Starts the closing handshake on every socket.
+    pub fn close_all(self, code: Int, reason: String) {
+        let all = self.members.get()
+        for id in all.keys() {
+            match all.get(id) {
+                Some(s) => {
+                    let sock: Socket = s
+                    let sent = sock.close(code, reason)
+                }
+                None => { }
+            }
+        }
+    }
+}
+
+/// The socket hosts of a server, one after another.
+class Hosts {
+    host: SocketHost
+    next: Hosts?
+}
+
+fn header_is<S>(req: Request<S>, name: String, want: String) -> Bool {
+    match req.header(name) {
+        Some(value) => { return value.to_lower().contains(want) }
+        None => { return false }
+    }
+}
+
+/// Answers the handshake, runs the host's handler on the connection, and ends it.
+fn upgrade<S>(host: SocketHost, req: Request<S>) -> Result<Reply, Error> {
+    let bad = Error.new(ErrorKind.InvalidData, "not a WebSocket request")
+    if !header_is(req, "upgrade", "websocket") || !header_is(req, "sec-websocket-version", "13") { return Err(bad) }
+    let key = req.header("sec-websocket-key")
+    if key.is_none() { return Err(bad) }
+    let accept = websocket.accept_key(key.unwrap())?
+    let (up, early) = req.into_std().upgrade(["upgrade", "websocket", "connection", "Upgrade", "sec-websocket-accept", accept])?
+    let socket = websocket.open(up, early)?
+    host.add(socket)
+    let ended = host.handler(socket)
+    host.remove(socket)
+    socket.end()
+    match ended {
+        Ok(done) => { }
+        Err(e) => { io.stderr().write_line("wire: a WebSocket handler failed: ${e.message}") }
+    }
+    return Ok(Reply.empty(101))
+}
+
+/// A segment of a route's pattern.
+class Segment {
+    kind: Int
+    text: String
+    next: Segment?
+}
+
+/// The pattern with every parameter name dropped.
+class Route<S> {
+    method: String
+    pattern: Segment?
+    shape: String
+    handler: Handler<S>
+    next: Route<S>?
+}
+
+class Matched {
+    params: Param?
+}
+
+fn split_path(path: String) -> List<String> {
+    var out: List<String> = []
+    for part in path.split("/") {
+        if part != "" { out.push(part) }
+    }
+    return out
+}
+
+/// The pattern of `parts`, followed by `tail`.
+fn build_pattern(parts: List<String>, tail: Segment?) -> Segment? {
+    var chain: Segment? = tail
+    var i = parts.len() - 1
+    while i >= 0 {
+        let part: String = parts.get(i)
+        var kind = 0
+        var text = part
+        if part.starts_with(":") {
+            kind = 1
+            text = part.slice(1, part.len())
+        } else if part.starts_with("*") {
+            kind = 2
+            text = part.slice(1, part.len())
+        }
+        chain = Some(Segment { kind: kind, text: text, next: chain })
+        i = i - 1
+    }
+    return chain
+}
+
+/// What is wrong with `parts` as a route pattern, or `""`.
+fn pattern_problem(parts: List<String>) -> String {
+    var i = 0
+    while i < parts.len() {
+        let part: String = parts.get(i)
+        if part == ":" || part == "*" { return "a parameter needs a name" }
+        if part.starts_with("*") && i != parts.len() - 1 { return "`${part}` must be the last segment" }
+        i = i + 1
+    }
+    return ""
+}
+
+/// The `parts` with every parameter name dropped.
+fn shape_of(parts: List<String>) -> String {
+    var out = ""
+    for part in parts {
+        if part.starts_with(":") {
+            out = out + "/:"
+        } else if part.starts_with("*") {
+            out = out + "/*"
+        } else {
+            out = out + "/" + part
+        }
+    }
+    return out
+}
+
+fn match_segments(seg: Segment?, parts: List<String>, at: Int, found: Param?) -> Matched? {
+    match seg {
+        None => {
+            if at == parts.len() { return Some(Matched { params: found }) }
+            return None
+        }
+        Some(s) => {
+            if s.kind == 2 {
+                var rest: List<String> = []
+                var i = at
+                while i < parts.len() {
+                    rest.push(parts.get(i))
+                    i = i + 1
+                }
+                return Some(Matched { params: Some(Param { name: s.text, value: strings.join(rest, "/"), next: found }) })
+            }
+            if at >= parts.len() { return None }
+            let part: String = parts.get(at)
+            if s.kind == 0 {
+                if part != s.text { return None }
+                return match_segments(s.next, parts, at + 1, found)
+            }
+            return match_segments(s.next, parts, at + 1, Some(Param { name: s.text, value: part, next: found }))
+        }
+    }
+}
+
+/// The routes of a chain, in order.
+fn routes_of<S>(first: Route<S>?) -> List<Route<S>> {
+    var out: List<Route<S>> = []
+    var r = first
+    while true {
+        match r {
+            Some(x) => {
+                out.push(x)
+                r = x.next
+            }
+            None => { break }
+        }
+    }
+    return out
+}
+
+/// A chain of `routes`, in order; their own `next` is ignored.
+fn chain_of<S>(routes: List<Route<S>>) -> Route<S>? {
+    var chain: Route<S>? = None
+    var i = routes.len() - 1
+    while i >= 0 {
+        let x: Route<S> = routes.get(i)
+        chain = Some(Route { method: x.method, pattern: x.pattern, shape: x.shape, handler: x.handler, next: chain })
+        i = i - 1
+    }
+    return chain
+}
+
+fn not_found<S>(req: Request<S>) -> Result<Reply, Error> {
+    return Ok(Reply.text(404, "not found"))
+}
+
+/// The status an `Err` of this kind answers with.
+fn status_of(kind: ErrorKind) -> Int {
+    if kind == ErrorKind.NotFound { return 404 }
+    if kind == ErrorKind.InvalidData { return 400 }
+    if kind == ErrorKind.PermissionDenied { return 403 }
+    if kind == ErrorKind.AlreadyExists { return 409 }
+    if kind == ErrorKind.TimedOut { return 504 }
+    if kind == ErrorKind.Unauthenticated { return 401 }
+    if kind == ErrorKind.Conflict { return 409 }
+    if kind == ErrorKind.RateLimited { return 429 }
+    if kind == ErrorKind.Unavailable { return 503 }
+    return 500
+}
+
+/// The status an `Err` of this kind answers with on a typed route.
+fn typed_status(kind: ErrorKind) -> Int {
+    if kind == ErrorKind.InvalidData { return 422 }
+    return status_of(kind)
+}
+
+/// The reply for a typed route's result.
+fn answer_json(status: Int, value: Json) -> Reply {
+    if jsonlib.is_null(value) { return Reply.empty(204) }
+    return Reply.json(status, value)
+}
+
+/// Writes `value` as a JSON reply with `status`.
+pub fn json_reply<R: JsonCodec>(value: R, status: Int = 200) -> Reply {
+    return answer_json(status, jsonlib.encode(value))
+}
+
+/// Reads the JSON body a typed route takes from `req`.
+fn read_json<S>(req: Request<S>) -> Result<Json, Reply> {
+    let declared = parse_int(req.header_or("content-length", "0")).unwrap_or(0)
+    if req.body.len() > req.ctx.max_json || declared > req.ctx.max_json {
+        return Err(req.reject(413, Error.new(ErrorKind.InvalidData, "body is too large")))
+    }
+    let text = req.text().unwrap_or("")
+    match jsonlib.parse(text) {
+        Ok(j) => { return Ok(j) }
+        Err(e) => { return Err(req.reject(400, Error.new(ErrorKind.InvalidData, "body is not JSON"))) }
+    }
+}
+
+/// A handler from `h`, which answers a value that is sent as JSON.
+pub fn typed<S, R: JsonCodec>(h: Send (Request<S>) -> Result<R, Error>, status: Int = 200) -> Handler<S> {
+    return |req: Request<S>| -> Result<Reply, Error> {
+        match h(req) {
+            Ok(value) => { return Ok(answer_json(status, jsonlib.encode(value))) }
+            Err(e) => { return Ok(req.reject(typed_status(e.kind), e)) }
+        }
+    }
+}
+
+/// A handler from `h`, which takes the request body read as a `B` and answers a value.
+pub fn typed_body<S, B: JsonCodec, R: JsonCodec>(h: Send (Request<S>, B) -> Result<R, Error>, status: Int = 200) -> Handler<S> {
+    return |req: Request<S>| -> Result<Reply, Error> {
+        match read_json(req) {
+            Err(reply) => { return Ok(reply) }
+            Ok(j) => {
+                let decoded: Result<B, Error> = jsonlib.decode(j)
+                match decoded {
+                    Err(e) => { return Ok(req.reject(422, e)) }
+                    Ok(body) => {
+                        match h(req, body) {
+                            Ok(value) => { return Ok(answer_json(status, jsonlib.encode(value))) }
+                            Err(e) => { return Ok(req.reject(typed_status(e.kind), e)) }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn run_handler<S>(handler: Handler<S>, req: Request<S>) -> Reply {
+    match handler(req) {
+        Ok(reply) => { return reply }
+        Err(e) => { return Reply.text(status_of(e.kind), e.message) }
+    }
+}
+
+/// The std server's limits and the shutdown grace; `-1` leaves the std default.
+class Limits {
+    body: Int
+    idle: Int
+    grace: Int
+}
+
+/// The routes, fallback and socket hosts of a `Server` or a `Router`.
+class Table<S> {
+    first: Route<S>?
+    otherwise: Handler<S>
+    hosts: Hosts?
+
+    fn add(self, method: String, pattern: String, handler: Handler<S>) -> Table<S> {
+        let parts = split_path(pattern)
+        let problem = pattern_problem(parts)
+        if problem != "" { __panic("route ${pattern}: ${problem}") }
+        let upper = method.to_upper()
+        let shape = shape_of(parts)
+        var all = routes_of(self.first)
+        for r in all {
+            if r.method == upper && r.shape == shape { __panic("route ${upper} ${pattern} is already registered") }
+        }
+        all.push(Route { method: upper, pattern: build_pattern(parts, None), shape: shape, handler: handler, next: None })
+        return Table { first: chain_of(all), otherwise: self.otherwise, hosts: self.hosts }
+    }
+
+    fn fallback(self, handler: Handler<S>) -> Table<S> {
+        return Table { first: self.first, otherwise: handler, hosts: self.hosts }
+    }
+
+    fn wrap(self, middleware: Middleware<S>) -> Table<S> {
+        var routes: List<Route<S>> = []
+        for r in routes_of(self.first) {
+            routes.push(Route { method: r.method, pattern: r.pattern, shape: r.shape, handler: middleware(r.handler), next: None })
+        }
+        return Table { first: chain_of(routes), otherwise: middleware(self.otherwise), hosts: self.hosts }
+    }
+
+    fn include(self, prefix: String, other: Table<S>) -> Table<S> {
+        let parts = split_path(prefix)
+        let problem = pattern_problem(parts)
+        let lead = shape_of(parts)
+        if problem != "" { __panic("include ${prefix}: ${problem}") }
+        if lead.contains("/*") { __panic("include ${prefix}: a prefix cannot end in a `*name`") }
+        var routes = routes_of(self.first)
+        for r in routes_of(other.first) {
+            let shape = lead + r.shape
+            for mine in routes {
+                if mine.method == r.method && mine.shape == shape { __panic("route ${r.method} ${prefix} is already registered") }
+            }
+            routes.push(Route { method: r.method, pattern: build_pattern(parts, r.pattern), shape: shape, handler: r.handler, next: None })
+        }
+        var hosts = self.hosts
+        var theirs = other.hosts
+        while true {
+            match theirs {
+                Some(h) => {
+                    hosts = Some(Hosts { host: h.host, next: hosts })
+                    theirs = h.next
+                }
+                None => { break }
+            }
+        }
+        return Table { first: chain_of(routes), otherwise: self.otherwise, hosts: hosts }
+    }
+
+    fn files(self, prefix: String, files: Files) -> Table<S> {
+        let handler: Handler<S> = |req: Request<S>| -> Result<Reply, Error> {
+            let since = req.header_or("if-modified-since", "")
+            let ranged = req.header_or("if-range", "")
+            return static_files.reply(files, req.param("path"), req.header_or("range", ""), req.header_or("if-none-match", ""), since, ranged)
+        }
+        return self.add("GET", prefix + "/*path", handler)
+    }
+
+    fn socket(self, pattern: String, on_socket: SocketHandler) -> Table<S> {
+        let host = SocketHost { handler: on_socket, members: Shared(Map()) }
+        let handler: Handler<S> = |req: Request<S>| -> Result<Reply, Error> { return upgrade(host, req) }
+        let added = self.add("GET", pattern, handler)
+        return Table { first: added.first, otherwise: added.otherwise, hosts: Some(Hosts { host: host, next: self.hosts }) }
+    }
+}
+
+/// A frozen `Server` that the serving tasks and the test client hold.
+class App<S> {
+    state: Shared<S>
+    table: Table<S>
+    limits: Limits
+    ctx: Context
+}
+
+/// A set of routes mounted on a `Server` or another `Router`.
+pub class Router<S> {
+    var table: Table<S>
+
+    pub fn new() -> Router<S> {
+        return Router { table: Table { first: None, otherwise: not_found, hosts: None } }
+    }
+
+    /// Adds a route for `method` and `pattern`.
+    pub fn route(var self, method: String, pattern: String, handler: Handler<S>) {
+        self.table = self.table.add(method, pattern, handler)
+    }
+
+    pub fn get(var self, pattern: String, handler: Handler<S>) { self.route("GET", pattern, handler) }
+
+    pub fn post(var self, pattern: String, handler: Handler<S>) { self.route("POST", pattern, handler) }
+
+    pub fn put(var self, pattern: String, handler: Handler<S>) { self.route("PUT", pattern, handler) }
+
+    pub fn patch(var self, pattern: String, handler: Handler<S>) { self.route("PATCH", pattern, handler) }
+
+    pub fn delete(var self, pattern: String, handler: Handler<S>) { self.route("DELETE", pattern, handler) }
+
+    /// Wraps every route added so far in `middleware`.
+    pub fn wrap(var self, middleware: Middleware<S>) {
+        self.table = self.table.wrap(middleware)
+    }
+
+    /// Adds every route and socket host of `other` under `prefix`.
+    pub fn include(var self, prefix: String, other: Router<S>) {
+        self.table = self.table.include(prefix, other.table)
+    }
+
+    /// Serves `files` under `prefix` on `GET` and `HEAD`.
+    pub fn files(var self, prefix: String, files: Files) {
+        self.table = self.table.files(prefix, files)
+    }
+
+    /// Upgrades `GET pattern` to a WebSocket that `handler` runs on.
+    pub fn socket(var self, pattern: String, handler: SocketHandler) {
+        self.table = self.table.socket(pattern, handler)
+    }
+}
+
+/// An application of routes, middleware, files, sockets and limits.
+pub class Server<S> {
+    state: Shared<S>
+    var table: Table<S>
+    var limits: Limits
+    var ctx: Context
+
+    /// A server with no routes whose handlers read `state` as `req.state`.
+    pub fn new(state: S) -> Server<S> {
+        return Server { state: Shared(state), table: Table { first: None, otherwise: not_found, hosts: None }, limits: Limits { body: -1, idle: -1, grace: 10 }, ctx: Context { reject: json_error, max_json: 1048576 } }
+    }
+
+    fn frozen(self) -> App<S> {
+        return App { state: self.state, table: self.table, limits: self.limits, ctx: self.ctx }
+    }
+
+    /// Sets how typed routes write an error.
+    pub fn error_reply(var self, f: ErrorReply) {
+        self.ctx = Context { reject: f, max_json: self.ctx.max_json }
+    }
+
+    /// Sets the largest JSON body a typed route reads, in bytes.
+    pub fn max_json(var self, bytes: Int) {
+        self.ctx = Context { reject: self.ctx.reject, max_json: bytes }
+    }
+
+    /// Adds a route for `method` and `pattern`.
+    pub fn route(var self, method: String, pattern: String, handler: Handler<S>) {
+        self.table = self.table.add(method, pattern, handler)
+    }
+
+    pub fn get(var self, pattern: String, handler: Handler<S>) { self.route("GET", pattern, handler) }
+
+    pub fn post(var self, pattern: String, handler: Handler<S>) { self.route("POST", pattern, handler) }
+
+    pub fn put(var self, pattern: String, handler: Handler<S>) { self.route("PUT", pattern, handler) }
+
+    pub fn patch(var self, pattern: String, handler: Handler<S>) { self.route("PATCH", pattern, handler) }
+
+    pub fn delete(var self, pattern: String, handler: Handler<S>) { self.route("DELETE", pattern, handler) }
+
+    /// Sets the handler for a request that no route matches.
+    pub fn fallback(var self, handler: Handler<S>) {
+        self.table = self.table.fallback(handler)
+    }
+
+    /// Wraps every route added so far, and the fallback, in `middleware`.
+    pub fn wrap(var self, middleware: Middleware<S>) {
+        self.table = self.table.wrap(middleware)
+    }
+
+    /// Adds every route and socket host of `other` under `prefix`.
+    pub fn include(var self, prefix: String, other: Router<S>) {
+        self.table = self.table.include(prefix, other.table)
+    }
+
+    /// Serves `files` under `prefix` on `GET` and `HEAD`.
+    pub fn files(var self, prefix: String, files: Files) {
+        self.table = self.table.files(prefix, files)
+    }
+
+    /// Upgrades `GET pattern` to a WebSocket that `handler` runs on.
+    pub fn socket(var self, pattern: String, handler: SocketHandler) {
+        self.table = self.table.socket(pattern, handler)
+    }
+
+    /// The largest request body, in bytes; a bigger one is a 413.
+    pub fn max_body(var self, bytes: Int) {
+        let l = self.limits
+        self.limits = Limits { body: bytes, idle: l.idle, grace: l.grace }
+    }
+
+    /// How long a connection may wait for the next request, in seconds.
+    pub fn idle_timeout(var self, seconds: Int) {
+        let l = self.limits
+        self.limits = Limits { body: l.body, idle: seconds, grace: l.grace }
+    }
+
+    /// Sets how long `stop` lets requests in flight finish, in seconds.
+    pub fn grace(var self, seconds: Int) {
+        let l = self.limits
+        self.limits = Limits { body: l.body, idle: l.idle, grace: seconds }
+    }
+
+    /// Listens on `host` and `port` and serves on tasks of its own.
+    pub fn start(self, host: String, port: Int) -> Result<Running, Error> {
+        let (tx, rx) = Channel<Started>(1)
+        var stopped = Shared(0)
+        let mine = stopped.clone()
+        let app = self.frozen()
+        let t = spawn { serve_app(app, host, port, tx, mine) }
+        var failure = Error.new(ErrorKind.Other, "the server did not start")
+        match rx.recv() {
+            None => { }
+            Some(started) => {
+                match started.closer {
+                    Some(closer) => { return Ok(Running { number: started.port, closer: closer, stopped: stopped, task: t }) }
+                    None => { }
+                }
+            }
+        }
+        match t.join() {
+            Ok(ended) => {
+                match ended {
+                    Err(e) => { failure = e }
+                    Ok(done) => { }
+                }
+            }
+            Err(e) => { }
+        }
+        return Err(failure)
+    }
+
+    /// Serves until the task is cancelled or the listener fails.
+    pub fn run(self, host: String, port: Int) -> Result<Null, Error> {
+        let running = self.start(host, port)?
+        return running.wait()
+    }
+
+    /// A client that sends requests through this application with no socket.
+    pub fn test(self) -> TestClient<S> {
+        return TestClient { server: self.frozen(), req: client.request("GET", "/") }
+    }
+}
+
+/// The reply for `req` from the first matching route or the fallback.
+fn dispatch<S>(app: App<S>, req: std_server.Request) -> Reply {
+    let parts = split_path(req.path)
+    var method = req.method
+    if method == "HEAD" { method = "GET" }
+    var allowed: List<String> = []
+    var r = app.table.first
+    while true {
+        match r {
+            None => { break }
+            Some(route) => {
+                match match_segments(route.pattern, parts, 0, None) {
+                    Some(m) => {
+                        if route.method == method { return run_handler(route.handler, wrap_request(req, app.state.get(), m.params, app.ctx)) }
+                        if !allowed.contains(route.method) { allowed.push(route.method) }
+                    }
+                    None => { }
+                }
+                r = route.next
+            }
+        }
+    }
+    if allowed.len() > 0 {
+        return Reply.text(405, "method not allowed").header("allow", strings.join(allowed, ", "))
+    }
+    return run_handler(app.table.otherwise, wrap_request(req, app.state.get(), None, app.ctx))
+}
+
+/// A request to send through a `Server` with `test()`.
+pub class TestClient<S> {
+    server: App<S>
+    req: client.ClientRequest
+
+    fn aimed(self, method: String, path: String) -> TestClient<S> {
+        return TestClient { server: self.server, req: self.req.to(method, path) }
+    }
+
+    fn changed(self, req: client.ClientRequest) -> TestClient<S> {
+        return TestClient { server: self.server, req: req }
+    }
+
+    pub fn request(self, method: String, path: String) -> TestClient<S> { return self.aimed(method, path) }
+
+    pub fn get(self, path: String) -> TestClient<S> { return self.aimed("GET", path) }
+
+    pub fn head(self, path: String) -> TestClient<S> { return self.aimed("HEAD", path) }
+
+    pub fn post(self, path: String) -> TestClient<S> { return self.aimed("POST", path) }
+
+    pub fn put(self, path: String) -> TestClient<S> { return self.aimed("PUT", path) }
+
+    pub fn patch(self, path: String) -> TestClient<S> { return self.aimed("PATCH", path) }
+
+    pub fn delete(self, path: String) -> TestClient<S> { return self.aimed("DELETE", path) }
+
+    /// Sets a header, replacing one of the same name.
+    pub fn header(self, name: String, value: String) -> TestClient<S> {
+        return self.changed(self.req.header(name, value))
+    }
+
+    /// The body as given bytes.
+    pub fn body(self, data: Bytes) -> TestClient<S> { return self.changed(self.req.body(data)) }
+
+    /// The body as UTF-8 text.
+    pub fn text(self, content: String) -> TestClient<S> { return self.changed(self.req.text(content)) }
+
+    /// The body as JSON text with a JSON content type.
+    pub fn json(self, value: Json) -> TestClient<S> { return self.changed(self.req.json(value)) }
+
+    /// The body as a form (`a=1&b=2`).
+    pub fn form(self, fields: Map<String, String>) -> TestClient<S> { return self.changed(self.req.form(fields)) }
+
+    /// Runs the request through the routes and middleware and returns what a client would see.
+    pub fn send(self) -> Result<client.Response, Error> {
+        let r = self.req
+        if r.failure != "" { return Err(Error.new(ErrorKind.InvalidData, r.failure)) }
+        let req = std_server.Request.detached(r.method, r.url, r.headers, r.payload)
+        let reply = dispatch(self.server, req)
+        let body = reply.collect()?
+        var shown = body
+        if r.method == "HEAD" { shown = Bytes() }
+        return Ok(client.Response.of(reply.status, r.url, reply.header_list(), shown))
+    }
+}
+
+/// Answers the requests of one connection until the client is done.
+fn serve_connection<S>(app: App<S>, conn: std_server.Connection, var state: Shared<Int>) {
+    var requests = conn.requests()
+    while true {
+        match requests.next() {
+            Ok(next) => {
+                match next {
+                    Some(req) => {
+                        state.update(|v| { if v == 0 { v = 1 } })
+                        if state.get() != 1 { break }
+                        match req.respond(dispatch(app, req)) {
+                            Ok(sent) => { }
+                            Err(e) => { let r = req.respond(Reply.text(500, e.message)) }
+                        }
+                        state.update(|v| { if v == 1 { v = 0 } })
+                        if state.get() == 3 { break }
+                    }
+                    None => { break }
+                }
+            }
+            Err(e) => { break }
+        }
+    }
+    let closed = conn.close()
+}
+
+/// Runs a connection's task and survives its failure.
+fn guard(conn: std_server.Connection, t: Task<Null>, id: Int, notes: Sender<Note>) {
+    match t.join() {
+        Ok(done) => { }
+        Err(e) => {
+            if e.contains("cancel") {
+                let closed = conn.close()
+            } else {
+                io.stderr().write_line("wire: a handler failed: ${e}")
+                let sent = conn.reject(500, "internal error")
+            }
+        }
+    }
+    notes.send(Note { kind: 1, id: id, entry: None })
+}
+
+/// Ends a connection's keep-alive.
+fn retire(entry: Entry) {
+    entry.state.update(|v| {
+        if v == 0 { v = 2 }
+        else if v == 1 { v = 3 }
+    })
+    if entry.state.get() == 2 { let closed = entry.conn.close() }
+}
+
+/// Owns the live connections and retires them at a stop.
+fn track(inbox: Receiver<Note>, notes: Sender<Note>, grace: Int) {
+    var live: Map<Int, Entry> = {}
+    var stopping = false
+    var timer: Task<Null>? = None
+    while true {
+        match inbox.recv() {
+            None => { break }
+            Some(ev) => {
+                if ev.kind == 0 {
+                    match ev.entry {
+                        Some(e) => {
+                            live.set(e.id, e)
+                            if stopping { retire(e) }
+                        }
+                        None => { }
+                    }
+                } else if ev.kind == 1 {
+                    live.remove(ev.id)
+                } else if ev.kind == 2 {
+                    if !stopping {
+                        stopping = true
+                        for e in live.values() { retire(e) }
+                        let again = notes.clone()
+                        timer = Some(spawn {
+                            time.sleep(time.Duration.from_secs(grace))
+                            again.send(Note { kind: 3, id: 0, entry: None })
+                        })
+                    }
+                } else {
+                    for e in live.values() { e.task.cancel() }
+                }
+                if stopping && live.len() == 0 { break }
+            }
+        }
+    }
+    match timer {
+        Some(t) => {
+            t.cancel()
+            let r = t.join()
+        }
+        None => { }
+    }
+}
+
+fn close_hosts(hosts: Hosts?) {
+    var h = hosts
+    while true {
+        match h {
+            Some(x) => {
+                x.host.close_all(1001, "going away")
+                h = x.next
+            }
+            None => { break }
+        }
+    }
+}
+
+/// Listens, tells `start` how it went, and serves until the listener is closed.
+fn serve_app<S>(app: App<S>, host: String, port: Int, tx: Sender<Started>, stopped: Shared<Int>) -> Result<Null, Error> {
+    match open(host, port, app.limits) {
+        Err(e) => {
+            tx.send(Started { port: -1, closer: None })
+            tx.close()
+            return Err(e)
+        }
+        Ok(listener) => {
+            let bound = listener.local_port()?
+            tx.send(Started { port: bound, closer: Some(listener.closer()) })
+            tx.close()
+            return serve_loop(app, listener, stopped)
+        }
+    }
+}
+
+/// A listener with the limits applied.
+fn open(host: String, port: Int, l: Limits) -> Result<std_server.Server, Error> {
+    var listener = std_server.listen(host, port)?
+    if l.body >= 0 { listener.set_max_body(l.body) }
+    if l.idle >= 0 { listener.set_idle_timeout(l.idle) }
+    return Ok(listener)
+}
+
+/// Answers every connection on a task of its own until the listener is closed.
+fn serve_loop<S>(app: App<S>, listener: std_server.Server, stopped: Shared<Int>) -> Result<Null, Error> {
+    let (notes, inbox) = Channel<Note>(256)
+    let to_tracker = notes.clone()
+    let grace = app.limits.grace
+    let tracker = spawn { track(inbox, to_tracker, grace) }
+    var count = 0
+    var failure: Error? = None
+    while true {
+        match listener.accept() {
+            Ok(conn) => {
+                count = count + 1
+                let id = count
+                var state = Shared(0)
+                var mine = state.clone()
+                let t = spawn { serve_connection(app, conn, mine) }
+                notes.send(Note { kind: 0, id: id, entry: Some(Entry { id: id, task: t, conn: conn, state: state }) })
+                let to_guard = notes.clone()
+                spawn { guard(conn, t, id, to_guard) }
+            }
+            Err(e) => {
+                if stopped.get() == 0 { failure = Some(e) }
+                break
+            }
+        }
+    }
+    close_hosts(app.table.hosts)
+    notes.send(Note { kind: 2, id: 0, entry: None })
+    let done = tracker.join()
+    match failure {
+        Some(e) => { return Err(e) }
+        None => { return Ok(null) }
+    }
+}
+
+/// A server that is listening: safe to hand to any task.
+pub class Running {
+    number: Int
+    closer: std_server.Closer
+    stopped: Shared<Int>
+    task: Task<Result<Null, Error>>
+
+    /// The port it listens on.
+    pub fn port(self) -> Int {
+        return self.number
+    }
+
+    /// Stops it gracefully.
+    pub fn stop(self) {
+        var flag = self.stopped.clone()
+        flag.update(|v| { if v == 0 { v = 1 } })
+        let closed = self.closer.close()
+    }
+
+    /// Waits until it has stopped; an `Err` if it ended on a failure.
+    pub fn wait(self) -> Result<Null, Error> {
+        match self.task.join() {
+            Ok(ended) => { return ended }
+            Err(e) => {
+                if e.contains("cancel") { return Ok(null) }
+                return Err(Error.new(ErrorKind.Other, e))
+            }
+        }
+    }
+}

@@ -14,7 +14,7 @@ pub fn register_source_text(id: u32, text: &str) {
     SOURCES.lock().unwrap().push((id, String::new(), text.to_string()));
 }
 
-/// Offsets from this up belong to code a `@derive` wrote; each generated node has a unique offset and the attribute's line and column.
+/// Offsets from this up belong to code a modifier wrote.
 pub(crate) const DERIVED_BASE: usize = 1 << 40;
 
 /// Names source `id` (its file path); a source already registered by the lexer gains the name.

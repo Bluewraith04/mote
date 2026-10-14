@@ -2,12 +2,24 @@
 
 use super::*;
 
+/// The import that brings a std name that is not in the prelude into scope.
+pub(super) fn missing_import(name: &str) -> Option<String> {
+    let module = match name {
+        "Any" => "std.experimental.types",
+        "Display" | "Debug" | "Eq" | "Ord" | "Closeable" => "std.traits",
+        _ => return None,
+    };
+    Some(format!("`{name}` is not in scope; `import {{ {name} }} from {module}`"))
+}
+
 pub(super) fn unknown_type(name: &str) -> String {
+    if let Some(msg) = missing_import(name) {
+        return msg;
+    }
     match name {
         "Mutex" => "there is no `Mutex`; use `Shared(x)` and `.update()`".into(),
         "Atomic" => "there is no `Atomic`; use `Shared(0)` and `.update()`".into(),
         "Channel" => "`Channel` is not a type; write `Sender<T>` or `Receiver<T>`".into(),
-        "Any" =>"`Any` is not in scope; `import { Any } from std.experimental.types`".into(),
         _ => format!("unknown type `{name}`"),
     }
 }

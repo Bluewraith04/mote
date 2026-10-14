@@ -1,6 +1,4 @@
 //! Windows on a display: winit owns the window and its events, softbuffer shows what the painter drew.
-//!
-//! Everything here runs on the home thread, which waits in winit's loop through [`contracts::HomeLoop`] whenever it has no task to run.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -105,18 +103,17 @@ fn display_lost() {
     for id in ids {
         super::window::feed(id, &Input::Close);
     }
-    // Dropping them would talk to the dead connection.
     std::mem::forget(app);
     std::mem::forget(event_loop);
 }
 
-/// Whether this process runs under WSL, whose Wayland compositor has no window frame and crashes on winit's own.
+/// Whether this process runs under WSL.
 #[cfg(all(unix, not(any(target_os = "macos", target_os = "android", target_os = "ios"))))]
 fn under_wsl() -> bool {
     std::env::var_os("WSL_DISTRO_NAME").is_some() || std::env::var_os("WSL_INTEROP").is_some()
 }
 
-/// Builds the event loop; under WSL it goes through X11, whose windows Windows frames.
+/// Builds the event loop; under WSL it goes through X11.
 #[cfg(all(unix, not(any(target_os = "macos", target_os = "android", target_os = "ios"))))]
 fn build_event_loop() -> Result<EventLoop<()>, String> {
     use winit::platform::x11::EventLoopBuilderExtX11;
@@ -326,7 +323,7 @@ fn resize_direction(code: i64) -> Result<ResizeDirection, String> {
     })
 }
 
-/// Runs a frame operation on the display window: 0 drag, 1 resize from edge `arg`, 2 minimize, 3 toggle maximize, 4 ask whether maximized, 5 show the system frame when `arg` is not 0, 6 maximize when `arg` is not 0 and restore otherwise, 7 fullscreen on or off, 8 ask whether fullscreen.
+/// Runs a frame operation on the display window.
 pub(super) fn chrome(gui_id: i64, op: i64, arg: i64) -> Result<i64, String> {
     SHELL.with(|cell| {
         let shell = cell.borrow();

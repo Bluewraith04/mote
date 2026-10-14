@@ -2,10 +2,12 @@
 
 use std::process::Command;
 
+const TRAITS: &str = "import { Display, Debug, Eq, Ord } from std.traits\n";
+
 fn run(source: &str, tag: &str) -> (bool, String) {
     let dir = std::env::temp_dir().join(format!("mote_stdtraits_{}_{}", tag, std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    std::fs::write(dir.join("main.mote"), source).unwrap();
+    std::fs::write(dir.join("main.mote"), format!("{TRAITS}{source}")).unwrap();
     let out = Command::new(env!("CARGO_BIN_EXE_mote")).arg("run").arg(dir.join("main.mote")).output().unwrap();
     std::fs::remove_dir_all(&dir).ok();
     (out.status.success(), format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)))
@@ -14,7 +16,7 @@ fn run(source: &str, tag: &str) -> (bool, String) {
 fn check(source: &str, tag: &str) -> (bool, String) {
     let dir = std::env::temp_dir().join(format!("mote_stdtraits_chk_{}_{}", tag, std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    std::fs::write(dir.join("main.mote"), source).unwrap();
+    std::fs::write(dir.join("main.mote"), format!("{TRAITS}{source}")).unwrap();
     let out = Command::new(env!("CARGO_BIN_EXE_mote")).arg("check").arg(dir.join("main.mote")).output().unwrap();
     std::fs::remove_dir_all(&dir).ok();
     (out.status.success(), format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)))
@@ -73,7 +75,7 @@ fn a_class_with_hand_written_methods_satisfies_ord_and_display() {
 
 #[test]
 fn derived_display_and_debug_satisfy_the_bounds() {
-    let src = "@derive(Display, Debug)\nclass Point {\n    x: Int\n    y: Int\n}\nfn show<T: Display>(a: T) -> String { return a.to_string() }\npub fn main() {\n    let p = Point { x: 1, y: 2 }\n    println(show(p))\n    println(p.debug())\n}\n";
+    let src = "class Point: (Display, Debug) {\n    x: Int\n    y: Int\n}\nfn show<T: Display>(a: T) -> String { return a.to_string() }\npub fn main() {\n    let p = Point { x: 1, y: 2 }\n    println(show(p))\n    println(p.debug())\n}\n";
     let (ok, text) = run(src, "derived_bound");
     assert!(ok && text == "Point(x: 1, y: 2)\nPoint { x: 1, y: 2 }\n", "{text}");
 }
@@ -117,7 +119,19 @@ fn describe_is_refused_on_a_type_without_display() {
 }
 
 #[test]
-fn deriving_over_an_existing_method_is_refused() {
-    let src = "@derive(Display)\nclass Point {\n    x: Int\n    pub fn to_string(self) -> String { return \"x\" }\n}\nfn main() { }\n";
-    rejected(src, "derive_clash", "already has a method named `to_string`");
+fn listing_a_trait_over_an_existing_method_leaves_it_alone() {
+    let src = "class Point: (Display) {\n    x: Int\n    pub fn to_string(self) -> String { return \"x\" }\n}\nfn main() { println(Point { x: 1 }.to_string()) }\n";
+    let (ok, text) = run(src, "list_own");
+    assert!(ok && text == "x\n", "{text}");
+}
+
+#[test]
+fn a_trait_must_be_imported() {
+    let dir = std::env::temp_dir().join(format!("mote_stdtraits_scope_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("main.mote"), "fn cmp<T: Ord>(a: T, b: T) -> Int { return a.compare(b) }\nfn main() { }\n").unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_mote")).arg("check").arg(dir.join("main.mote")).output().unwrap();
+    std::fs::remove_dir_all(&dir).ok();
+    let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    assert!(!out.status.success() && text.contains("`Ord` is not in scope; `import { Ord } from std.traits`"), "{text}");
 }

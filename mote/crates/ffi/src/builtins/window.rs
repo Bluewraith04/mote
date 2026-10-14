@@ -12,11 +12,11 @@ use super::*;
 /// The `ErrorKind` code for "unsupported".
 const UNSUPPORTED: i32 = 7;
 
-/// A surface and its event sink behind the global lock; taffy lengths hold a tagged `*const ()` that is never a real pointer here (no calc values).
+/// A surface and its event sink behind the global lock.
 struct Locked {
     surface: Surface,
     sink: Option<EventSink>,
-    /// Whether a window on a display shows this surface; those are shown and closed from the home thread.
+    /// Whether a window on a display shows this surface.
     on_display: bool,
 }
 
@@ -154,7 +154,7 @@ pub(super) fn ui_open(ctx: &mut NativeCallContext<'_>) -> Result<Value, NativeEr
     }
 }
 
-/// A frame operation on a window on a display (see `os::chrome`); a headless window has no frame and answers 0.
+/// A frame operation on a window on a display.
 pub(super) fn ui_chrome(ctx: &mut NativeCallContext<'_>) -> Result<Value, NativeError> {
     let (id, op, arg) = (arg_int(ctx, 0), arg_int(ctx, 1), arg_int(ctx, 2));
     let home = on_home_thread(ctx);
@@ -335,7 +335,7 @@ pub(super) fn ui_set_text(ctx: &mut NativeCallContext<'_>) -> Result<Value, Nati
     with_window(ctx, |s| s.tree.set_text(node, &text).map(|()| Value::null()))
 }
 
-/// `set_runs(win, node, texts, spec)`: the node's text is the texts joined, and `spec` holds `[weight, flags, color, link]` for each (flags: 1 italic, 2 mono, 4 underline, 8 strike).
+/// `set_runs(win, node, texts, spec)`: sets the node's text to the joined `texts` styled by `spec`.
 pub(super) fn ui_set_runs(ctx: &mut NativeCallContext<'_>) -> Result<Value, NativeError> {
     let node = node_arg(ctx, 1)?;
     let texts = super::system::string_list_arg(ctx, 2, "set_runs")?;

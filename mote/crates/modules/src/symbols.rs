@@ -1,21 +1,30 @@
 //! Per-module symbol tables and name mangling.
-//! Every module has a mangle `prefix`, empty for the entry module. Top-level `fn`, `struct` and `class` definitions are renamed `<prefix><name>`, and a cross-module reference resolves through an explicit import to the mangled name. A symbol with no binding in a module's scope is unreachable from it.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use compiler::ast::Program;
 
 use crate::path::CanonicalModuleId;
 use crate::visibility::ModuleExports;
 
-/// The implicit prelude's module id; any other glob or definition of a name beats it.
+/// The implicit prelude's module id.
 const PRELUDE: &str = "<std>/prelude";
+
+/// The std module a builtin type must have imported, if it needs one.
+pub(crate) fn gated_module(type_name: &str) -> Option<&'static str> {
+    match type_name {
+        "Set" => Some("collections"),
+        "Stream" => Some("stream"),
+        "Task" => Some("task"),
+        _ => None,
+    }
+}
 
 fn fnv1a(s: &str) -> u64 {
     s.bytes().fold(0xcbf2_9ce4_8422_2325, |h, b| (h ^ b as u64).wrapping_mul(0x0100_0000_01b3))
 }
 
-/// `_m{hash}_{name}_`, a pure function of the module's canonical id; `wide` uses 16 hex digits instead of 8.
+/// The mangle prefix of a module, a pure function of its canonical id.
 pub(crate) fn mangle_prefix(module_id: &CanonicalModuleId, wide: bool) -> String {
     let sanitized: String = module_id
         .display_name()
@@ -30,7 +39,7 @@ pub(crate) fn mangle_prefix(module_id: &CanonicalModuleId, wide: bool) -> String
     }
 }
 
-/// Every module's prefix (empty for `entry`); ids whose short prefixes collide get the wide one.
+/// Every module's mangle prefix.
 pub fn module_prefixes(ids: &[CanonicalModuleId], entry: &CanonicalModuleId) -> Result<HashMap<CanonicalModuleId, String>, String> {
     let short: Vec<String> = ids.iter().map(|id| mangle_prefix(id, false)).collect();
     let mut out = HashMap::new();
@@ -56,23 +65,23 @@ pub fn module_prefixes(ids: &[CanonicalModuleId], entry: &CanonicalModuleId) -> 
     Ok(out)
 }
 
-/// `message` with every module prefix removed, so a diagnostic names `add`, not `_m1a2b3c4d_math_add`.
+/// `message` with every module prefix removed.
 pub(crate) fn demangle(message: &str, prefixes: &std::collections::HashMap<CanonicalModuleId, String>) -> String {
     prefixes.values().filter(|p| !p.is_empty()).fold(message.to_string(), |m, p| m.replace(p.as_str(), ""))
 }
 
-/// A module imported under an alias (`import m as x`), for resolving qualified calls `x.f()`.
+/// A module imported under an alias, for resolving qualified calls.
 #[derive(Clone, Debug)]
 pub struct AliasTarget {
     pub module: CanonicalModuleId,
     pub prefix: String,
     pub exports: ModuleExports,
-    /// `member -> mangled name` for `exports.re_exports`, which are defined in another module than `prefix` names.
+    /// Member to mangled name for re-exports defined in another module.
     pub reexport_mangled: HashMap<String, String>,
 }
 
 impl AliasTarget {
-    /// The mangled name of `member` if this module exports it with `pub`, defined here or re-exported.
+    /// The mangled name of `member` if this module exports it with `pub`.
     pub fn resolve(&self, member: &str) -> Option<String> {
         if self.exports.functions.contains(member)
             || self.exports.globals.contains(member)
@@ -102,6 +111,7 @@ pub struct ModuleScope {
     type_bindings: HashMap<String, String>,
     aliases: HashMap<String, AliasTarget>,
     glob_from: HashMap<String, CanonicalModuleId>,
+    imported: HashSet<String>,
 }
 
 impl ModuleScope {
@@ -113,6 +123,7 @@ impl ModuleScope {
             type_bindings: HashMap::new(),
             aliases: HashMap::new(),
             glob_from: HashMap::new(),
+            imported: HashSet::new(),
         }
     }
 
@@ -127,20 +138,20 @@ impl ModuleScope {
             .insert(bare.to_string(), self.mangled(bare));
     }
 
-    /// Registers one of this module's top-level `let` / `var` globals, mangled like a `fn`.
+    /// Registers one of this module's top-level globals.
     pub(crate) fn define_global(&mut self, bare: &str) {
         self.value_bindings
             .insert(bare.to_string(), self.mangled(bare));
     }
 
-    /// Registers one of this module's top-level struct or class definitions; a type name is also a value binding.
+    /// Registers one of this module's top-level struct or class definitions.
     pub(crate) fn define_type(&mut self, bare: &str) {
         let m = self.mangled(bare);
         self.type_bindings.insert(bare.to_string(), m.clone());
         self.value_bindings.insert(bare.to_string(), m);
     }
 
-    /// Binds a name from a selective import, optionally aliased; `is_type` picks the namespace, and a name that is both lands in both.
+    /// Binds a name from a selective import, optionally aliased.
     pub(crate) fn bind_import(
         &mut self,
         local: &str,
@@ -205,7 +216,18 @@ impl ModuleScope {
         Ok(())
     }
 
-    /// Register `import.m as alias`.
+    /// Records that this module imports `id` in some form.
+    pub(crate) fn note_import(&mut self, id: &CanonicalModuleId) {
+        self.imported.insert(id.as_str().to_string());
+    }
+
+    /// Whether this module is, or imports, the embedded `std` module `name`.
+    pub(crate) fn has_std_module(&self, name: &str) -> bool {
+        let id = crate::embedded::embedded_id(name);
+        self.module.as_str() == id || self.imported.contains(&id)
+    }
+
+    /// Registers a module alias import.
     pub(crate) fn bind_alias(&mut self, alias: &str, target: AliasTarget) {
         self.aliases.insert(alias.to_string(), target);
     }

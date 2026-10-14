@@ -1,6 +1,6 @@
-//! How much memory this process may use: physical RAM, or the container limit when that is smaller.
+//! How much memory this process may use.
 
-/// The smaller of physical memory and the container limit, in bytes; `None` when neither can be read.
+/// The smaller of physical memory and the container limit, in bytes.
 pub fn available_bytes() -> Option<u64> {
     [physical_bytes(), container_bytes()].into_iter().flatten().min()
 }
@@ -41,7 +41,7 @@ pub(crate) fn parse_meminfo(text: &str) -> Option<u64> {
     kib.checked_mul(1024)
 }
 
-/// A cgroup limit file's text, in bytes; `max` and the huge "no limit" values of cgroup v1 are `None`.
+/// A cgroup limit file's text, in bytes.
 pub(crate) fn parse_cgroup_limit(text: &str) -> Option<u64> {
     let bytes: u64 = text.trim().parse().ok()?;
     (bytes < (1 << 60)).then_some(bytes)

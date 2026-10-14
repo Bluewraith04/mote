@@ -86,7 +86,7 @@ fn a_redeclared_name_is_heap() {
 
 #[test]
 fn a_generator_struct_is_placed_in_a_region() {
-    let source = format!("{POINT}fn gen() -> Stream<Int> {{\n    let a = Point {{ x: 1, y: 2 }}\n    let b = a\n    yield b.x\n}}\n\nfn main() {{\n    println(1)\n}}\n");
+    let source = format!("import {{ Stream }} from std.stream\n\n{POINT}fn gen() -> Stream<Int> {{\n    let a = Point {{ x: 1, y: 2 }}\n    let b = a\n    yield b.x\n}}\n\nfn main() {{\n    println(1)\n}}\n");
     let (ok, text) = check(&source, "yield", true);
     assert!(ok, "{text}");
     assert!(text.contains("region, freed when its block ends"), "{text}");

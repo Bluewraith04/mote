@@ -1,11 +1,11 @@
-# std.sys.tls
+# std.tls
 
-TLS for sockets and the HTTP server, over rustls. `import std.sys.tls as tls`. A TLS stream is an ordinary `TcpStream` ([net](net.md)).
+TLS for sockets and the HTTP server, over rustls. `import std.tls as tls`. A TLS stream is an ordinary `TcpStream` ([net](net.md)).
 
 `net.connect_tls(host, port)` finishes the handshake before it answers, so a bad certificate is an `Err` there. The server is checked against the bundled root certificates and the host name.
 
 ```mote,skip
-import std.sys.net as net
+import std.socket as net
 
 fn main() {
     let c = net.connect_tls("example.com", 443)!
@@ -24,8 +24,8 @@ fn main() {
 | `identity.cert_pem()`, `identity.key_pem()` | the PEM text |
 
 ```mote,skip
-import std.sys.http_server as server
-import std.sys.tls as tls
+import std.http_server as server
+import std.tls as tls
 
 fn main() {
     let id = tls.identity_from_files("cert.pem", "key.pem")!

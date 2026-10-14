@@ -1,0 +1,209 @@
+import std.fs as fs
+import std.process as process
+import std.json as json
+import { JsonCodec } from std.json
+import { lines, join } from std.string
+import { sort } from std.iter
+import ..src.lib as log
+
+/// Points the log's output at an empty file for a test.
+fn open_log(name: String) -> String {
+    let path = "/tmp/mote_log_test_${name}.log"
+    fs.remove_file(path)
+    log.set_output(log.Output.File(path))
+    return path
+}
+
+fn written(path: String) -> List<String> {
+    var out: List<String> = []
+    for l in lines(fs.read_text(path).unwrap()) {
+        if l != "" { out.push(l) }
+    }
+    return out
+}
+
+/// The records without their timestamps.
+fn bare(path: String) -> List<String> {
+    var out: List<String> = []
+    for l in written(path) {
+        let parts = l.split(" ")
+        var rest: List<String> = []
+        var i = 1
+        while i < parts.len() {
+            rest.push(parts.get(i))
+            i = i + 1
+        }
+        out.push(join(rest, " "))
+    }
+    return out
+}
+
+/// Puts the log back to its defaults, except the output.
+fn defaults() {
+    log.set_level(log.Level.Info)
+    log.set_format(log.Format.Text)
+    log.set_fields({})
+}
+
+struct User: (JsonCodec) {
+    name: String
+    id: Int
+}
+
+struct Job: (JsonCodec) {
+    id: Int
+    name: String
+}
+
+test "the default threshold is info and the default format is text" {
+    let path = open_log("default")
+    log.debug("hidden")
+    log.info("started")
+    log.warn("slow")
+    log.error("boom")
+    assert_eq(bare(path), ["INFO started", "WARN slow", "ERROR boom"])
+}
+
+test "a record starts with a utc millisecond timestamp" {
+    defaults()
+    let path = open_log("time")
+    log.info("x")
+    let stamp = written(path).get(0).split(" ").get(0)
+    assert_eq(stamp.len(), 24)
+    assert(stamp.ends_with("Z"))
+    assert(stamp.contains("T"))
+    assert_eq(stamp.slice(19, 20), ".")
+}
+
+test "set_level moves the threshold" {
+    defaults()
+    let path = open_log("levels")
+    log.set_level(log.Level.Debug)
+    log.debug("d")
+    log.set_level(log.Level.Error)
+    log.warn("w")
+    log.error("e")
+    log.set_level(log.Level.Off)
+    log.error("never")
+    assert_eq(bare(path), ["DEBUG d", "ERROR e"])
+}
+
+test "fields are written in order and strings are quoted when needed" {
+    defaults()
+    let path = open_log("fields")
+    log.info("login", {"user": "ann smith", "n": 3, "ok": true, "ratio": 0.5, "plain": "x", "empty": "", "eq": "a=b"})
+    assert_eq(bare(path), ["INFO login user=\"ann smith\" n=3 ok=true ratio=0.5 plain=x empty=\"\" eq=\"a=b\""])
+}
+
+test "base fields come first and a call replaces one" {
+    defaults()
+    let path = open_log("base")
+    log.set_fields({"service": "api", "v": 1})
+    log.info("a", {"v": 2, "x": 3})
+    log.set_fields({})
+    log.info("b")
+    assert_eq(bare(path), ["INFO a service=api v=2 x=3", "INFO b"])
+}
+
+test "a struct is logged through its json" {
+    defaults()
+    let path = open_log("struct")
+    log.info("login", {"user": User { name: "ann", id: 7 }.to_json()})
+    assert_eq(bare(path), ["INFO login user={\"name\":\"ann\",\"id\":7}"])
+}
+
+test "the json format is one flat object per line" {
+    defaults()
+    let path = open_log("json")
+    log.set_format(log.Format.Json)
+    log.set_fields({"service": "api"})
+    log.warn("slow", {"ms": 1200, "ok": false, "time": "x", "level": "y", "msg": "z"})
+    let line = written(path).get(0)
+    assert(line.starts_with("{\"time\":\"20"))
+    let at = line.split("\",\"level\"")
+    assert_eq(at.get(1), ":\"warn\",\"msg\":\"slow\",\"service\":\"api\",\"ms\":1200,\"ok\":false,\"time_\":\"x\",\"level_\":\"y\",\"msg_\":\"z\"}")
+}
+
+test "a non-finite float is written as text in json" {
+    defaults()
+    let path = open_log("nan")
+    log.set_format(log.Format.Json)
+    log.info("x", {"f": 1.0 / 0.0})
+    let line = written(path).get(0)
+    assert(line.contains("\"f\":\""))
+    assert(line.ends_with("\"}"))
+}
+
+test "a file output appends one line per record from every task" {
+    defaults()
+    let path = open_log("tasks")
+    log.set_format(log.Format.Json)
+    scope {
+        spawn { log.info("a", {"t": 1}) }
+        spawn { log.info("b", {"t": 2}) }
+        spawn { log.warn("c", {"t": 3}) }
+    }
+    var msgs: List<String> = []
+    for l in written(path) {
+        let doc = json.parse(l).unwrap()
+        msgs.push(json.as_str(json.get(doc, "msg").unwrap()).unwrap())
+    }
+    assert_eq(sort(msgs), ["a", "b", "c"])
+}
+
+test "a file that cannot be written loses the record without a fault" {
+    defaults()
+    log.set_output(log.Output.File("/no/such/dir/x.log"))
+    log.info("lost")
+    assert(!fs.exists("/no/such/dir/x.log"))
+}
+
+test "tasks log json to a file that reads back" {
+    defaults()
+    let path = open_log("done_bar")
+    log.set_format(log.Format.Json)
+    log.set_fields({"service": "worker"})
+    log.set_level(log.Level.Debug)
+    log.debug("starting", {"jobs": 2})
+    scope {
+        spawn { log.info("job done", {"job": Job { id: 1, name: "a" }.to_json()}) }
+        spawn { log.warn("job slow", {"job": Job { id: 2, name: "b" }.to_json(), "ms": 900}) }
+    }
+    log.set_level(log.Level.Error)
+    log.info("hidden")
+    log.error("finished")
+    var seen: List<String> = []
+    for l in written(path) {
+        let doc = json.parse(l).unwrap()
+        let level = json.as_str(json.get(doc, "level").unwrap()).unwrap()
+        let msg = json.as_str(json.get(doc, "msg").unwrap()).unwrap()
+        let service = json.as_str(json.get(doc, "service").unwrap()).unwrap()
+        seen.push("${level} ${msg} ${service}")
+    }
+    assert_eq(sort(seen), ["debug starting worker", "error finished worker", "info job done worker", "warn job slow worker"])
+}
+
+/// Runs a small program under a given `MOTE_LOG` and returns the levels written.
+fn with_env(value: String) -> String {
+    let program = ".build/log_env_probe.mote"
+    let source = "import ..src.lib as log\n\nfn main() {\n    log.set_level(log.Level.Debug)\n    log.debug(\"d\")\n    log.info(\"i\")\n    log.error(\"e\")\n}\n"
+    fs.create_dir_all(".build").unwrap()
+    fs.write_text(program, source).unwrap()
+    let out = process.run_with("mote", ["run", program], ["MOTE_LOG=${value}"], Bytes(0), ".").unwrap()
+    var levels: List<String> = []
+    for l in lines(out.stderr_text().unwrap()) {
+        if l != "" { levels.push(l.split(" ").get(1)) }
+    }
+    return join(levels, ",")
+}
+
+test "MOTE_LOG sets the threshold and wins over set_level" {
+    assert_eq(with_env("error"), "ERROR")
+    assert_eq(with_env(" WARN "), "ERROR")
+    assert_eq(with_env("debug"), "DEBUG,INFO,ERROR")
+    assert_eq(with_env("off"), "")
+}
+
+test "an unknown MOTE_LOG is ignored" {
+    assert_eq(with_env("loud"), "DEBUG,INFO,ERROR")
+}

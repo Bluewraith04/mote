@@ -4,7 +4,7 @@ use compiler::ast::{Item, Program, Stmt};
 use crate::path::CanonicalModuleId;
 use crate::resolver::ModuleResolver;
 
-/// Where a re-exported name is really defined; re-exports of re-exports are followed to the source when registered.
+/// Where a re-exported name is really defined.
 #[derive(Clone, Debug)]
 pub struct ReExportSource {
     pub defining_module: CanonicalModuleId,
@@ -22,9 +22,9 @@ pub struct ModuleExports {
     pub traits: HashSet<String>,
     /// `pub type` aliases.
     pub aliases: HashSet<String>,
-    /// `pub` top-level `let` / `var` globals another module may import by name.
+    /// `pub` top-level globals another module may import by name.
     pub globals: HashSet<String>,
-    /// Exported name -> where it is defined; only selective `pub import { a, b as c } from <path>` populates it.
+    /// Exported name to where it is defined.
     pub re_exports: HashMap<String, ReExportSource>,
 }
 
@@ -46,7 +46,7 @@ impl VisibilityChecker {
         }
     }
 
-    /// Collects all `pub` exports from a module AST, following `pub import` re-exports to their source. Call in topological order, so a re-export's target is already registered.
+    /// Collects all `pub` exports from a module AST, following `pub import` re-exports.
     pub fn register_module_exports(
         &mut self,
         id: &CanonicalModuleId,

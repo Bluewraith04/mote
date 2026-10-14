@@ -19,6 +19,12 @@ pub struct PackageMeta {
     /// The oldest `mote` that builds this package.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mote: Option<Version>,
+    /// One line on what the package is; a registry requires it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// An SPDX license id such as `MIT`; a registry requires it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub license: Option<String>,
 }
 
 /// The version of this toolchain.
@@ -46,13 +52,13 @@ pub enum DependencySpec {
         tag: Option<String>,
         branch: Option<String>,
         rev: Option<String>,
-        /// Grants the package's native libraries to the run.
-        native: Option<bool>,
+        /// The registry a version requirement resolves through.
+        registry: Option<String>,
     },
 }
 
 impl DependencySpec {
-    pub(crate) fn version_req_str(&self) -> &str {
+    pub fn version_req_str(&self) -> &str {
         match self {
             DependencySpec::Simple(v) => v.as_str(),
             DependencySpec::Detailed { version, .. } => version.as_deref().unwrap_or("*"),
@@ -64,11 +70,6 @@ impl DependencySpec {
             DependencySpec::Simple(_) => None,
             DependencySpec::Detailed { path, .. } => path.as_deref(),
         }
-    }
-
-    /// Whether `native = true` grants the package its native libraries.
-    pub fn native(&self) -> bool {
-        matches!(self, DependencySpec::Detailed { native: Some(true), .. })
     }
 
     /// The git repository and ref of a `git` dependency; `None` for any other.
@@ -87,7 +88,55 @@ impl DependencySpec {
             GitRef::Branch(b) => branch = Some(b.clone()),
             GitRef::Rev(c) => rev = Some(c.clone()),
         }
-        DependencySpec::Detailed { version: None, path: None, git: Some(repo.spec()), tag, branch, rev, native: None }
+        DependencySpec::Detailed { version: None, path: None, git: Some(repo.spec()), tag, branch, rev, registry: None }
+    }
+
+    /// A version requirement with no path or git source: it resolves through a registry.
+    pub fn is_registry(&self) -> bool {
+        match self {
+            DependencySpec::Simple(_) => true,
+            DependencySpec::Detailed { path, git, .. } => path.is_none() && git.is_none(),
+        }
+    }
+
+    /// The registry a registry dependency names; `None` for the default one.
+    pub fn registry(&self) -> Option<&str> {
+        match self {
+            DependencySpec::Simple(_) => None,
+            DependencySpec::Detailed { registry, .. } => registry.as_deref(),
+        }
+    }
+
+    /// A registry dependency on versions matching `req`, through `registry` or the default one.
+    pub fn from_registry(req: &str, registry: Option<&str>) -> Self {
+        match registry {
+            None => DependencySpec::Simple(req.to_string()),
+            Some(name) => DependencySpec::Detailed {
+                version: Some(req.to_string()),
+                path: None,
+                git: None,
+                tag: None,
+                branch: None,
+                rev: None,
+                registry: Some(name.to_string()),
+            },
+        }
+    }
+}
+
+/// A registry named in `mote.toml`: its URL, and a token that is rejected there.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum RegistryEntry {
+    Url(String),
+    Table { url: String, token: Option<String> },
+}
+
+impl RegistryEntry {
+    pub fn url(&self) -> &str {
+        match self {
+            RegistryEntry::Url(url) | RegistryEntry::Table { url, .. } => url,
+        }
     }
 }
 
@@ -99,6 +148,9 @@ pub struct PackageManifest {
     pub dependencies: BTreeMap<String, DependencySpec>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub run: Option<RunConfig>,
+    /// Registries by name; tokens live in `~/.mote/mote_config.toml`.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub registries: BTreeMap<String, RegistryEntry>,
 }
 
 /// `[run]`: limits `mote run` applies to the package's program.
@@ -115,7 +167,7 @@ impl PackageManifest {
         Self::from_toml_str(&text)
     }
 
-    /// Walks up from `start` looking for a `mote.toml`; returns the directory it was found in and the parsed manifest.
+    /// Walks up from `start` to the nearest `mote.toml` and parses it.
     pub fn discover(start: &Path) -> Result<(std::path::PathBuf, Self), String> {
         let mut dir = if start.is_dir() {
             start.to_path_buf()
@@ -143,6 +195,11 @@ impl PackageManifest {
 
     pub fn from_toml_str(toml_str: &str) -> Result<Self, String> {
         let manifest: Self = toml::from_str(toml_str).map_err(|e| format!("Failed to parse mote.toml: {}", e))?;
+        for (name, entry) in &manifest.registries {
+            if matches!(entry, RegistryEntry::Table { token: Some(_), .. }) {
+                return Err(format!("registry `{name}`: a token belongs in ~/.mote/mote_config.toml, not mote.toml"));
+            }
+        }
         match &manifest.package.mote {
             Some(needed) if *needed > toolchain_version() => Err(format!(
                 "package `{}` needs mote {needed} or newer; this is mote {}",

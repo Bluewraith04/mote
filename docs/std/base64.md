@@ -1,9 +1,9 @@
-# std.data.base64
+# std.base64
 
-Base64 and base64url (RFC 4648), by the Rust `base64` crate. `import std.data.base64 as base64`.
+Base64 and base64url (RFC 4648), by the Rust `base64` crate. `import std.base64 as base64`.
 
 ```mote
-import std.data.base64 as base64
+import std.base64 as base64
 
 let packed = base64.encode("foobar".bytes())
 println(packed)

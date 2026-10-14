@@ -18,7 +18,7 @@ thread_local! {
 }
 
 impl Runtime {
-    /// Runs `f` with this thread's mutator for the installed heap, creating it on first use; `f` must not allocate through the runtime again.
+    /// Runs `f` with this thread's mutator for the installed heap.
     pub(crate) fn with_mutator<R>(&self, f: impl FnOnce(&mut dyn Mutator) -> R) -> R {
         CURRENT.with(|cell| {
             let mut slot = cell.borrow_mut();

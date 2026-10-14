@@ -8,7 +8,7 @@ use crate::util::decode_ri;
 use crate::machine::{ObjectStore, TypeTable};
 use crate::{TaskContext, VmStatus};
 
-/// Open a region. The operand (once a capacity hint) is ignored: segments grow on demand.
+/// Opens a region.
 pub fn enter(task: &mut TaskContext, _operands: u32) -> Result<VmStatus, String> {
     if task.call_stack.last().is_some_and(|f| f.generator.is_some()) && !super::generator::is_swapped(task) {
         super::generator::swap_in(task, Box::default());
@@ -18,14 +18,14 @@ pub fn enter(task: &mut TaskContext, _operands: u32) -> Result<VmStatus, String>
     Ok(VmStatus::Running)
 }
 
-/// Close the innermost region and free what it holds.
+/// Closes the innermost region and frees what it holds.
 pub fn exit(task: &mut TaskContext) -> Result<VmStatus, String> {
     task.arenas.exit_arena()?;
     task.pc += 1;
     Ok(VmStatus::Running)
 }
 
-/// Allocate an object of `type_descriptors[bx]` in the current arena.
+/// Allocates an object of `type_descriptors[bx]` in the current arena.
 pub fn alloc<M: TypeTable + ObjectStore>(rt: &M, task: &mut TaskContext, operands: u32) -> Result<VmStatus, String> {
     let (dest_reg, type_idx) = decode_ri(operands);
     let type_idx = type_idx as usize;

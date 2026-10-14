@@ -6,7 +6,7 @@ fn compile(name: &str, source: &str) -> Result<runtime::Runtime, String> {
     let dir = std::env::temp_dir().join(format!("mote_stream_{name}_{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let main_file = dir.join("main.mote");
-    std::fs::write(&main_file, source).unwrap();
+    std::fs::write(&main_file, format!("import {{ Stream }} from std.stream\n{source}")).unwrap();
     let compiled = MultiFileCompiler::new(dir.clone()).compile_program(&main_file);
     std::fs::remove_dir_all(dir).ok();
     let compiled = compiled?;

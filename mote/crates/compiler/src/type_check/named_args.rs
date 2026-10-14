@@ -1,4 +1,4 @@
-//! Named arguments: a call written `f(a, y = 2)` is reordered to positional form, calling the hidden default function for each skipped default.
+//! Named arguments: a call written `f(a, y = 2)` is reordered to positional form.
 
 use super::*;
 
@@ -50,7 +50,7 @@ impl TypeChecker {
         Some(Params { callee: format!("{type_name}::{member}"), names, required: sig.required, variadic: sig.variadic.is_some(), generic })
     }
 
-    /// Records a zero-argument function answering `params[i]` for each default parameter, the call a skipped default becomes.
+    /// Records a zero-argument function answering `params[i]` for each default parameter.
     pub(super) fn register_default_sigs(&mut self, callee: &str, params: &[Type], required: usize) {
         for (i, ty) in params.iter().enumerate().skip(required) {
             let sig = FnSig { type_params: Vec::new(), bounds: Vec::new(), params: Vec::new(), required: 0, ret: ty.clone(), variadic: None, modes: Vec::new() };

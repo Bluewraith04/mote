@@ -1,7 +1,6 @@
-/// A window with a click counter, a text field, a scrolling list and a clock that a second task keeps ticking.
-/// Run it on a machine with a display: `mote run examples/gui_demo.mote`.
+/// A window with a click counter, a text field, a scrolling list and a clock.
 
-import std.sys.gui as gui
+import std.gui as gui
 import std.task as task
 import std.time as time
 

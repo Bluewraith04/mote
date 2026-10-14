@@ -1,0 +1,9 @@
+[package]
+name = "wire"
+version = "0.1.0"
+mote = "0.1.3"
+authors = ["Mote"]
+edition = "2026"
+entry = "src/lib.mote"
+
+[dependencies]

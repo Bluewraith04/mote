@@ -1,4 +1,4 @@
-//! Finding the package `mote install` builds: the current one, a directory, or a repository checked out under the mote home.
+//! Finding the package `mote install` builds.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -24,7 +24,7 @@ impl Drop for Source {
     }
 }
 
-/// The package `target` names: a directory, `<repository>[@ref]`, or with no target the package around `cwd`.
+/// The package `target` names, or the package around `cwd`.
 pub fn locate(target: Option<&str>, cwd: &Path) -> Result<Source, String> {
     let from_disk = |dir: &Path| PackageManifest::discover(dir).map(|(root, manifest)| Source { root, manifest, scratch: None });
     match target {
@@ -84,7 +84,7 @@ mod tests {
 
     #[test]
     fn a_program_is_an_entry_with_main() {
-        let (root, manifest) = package("prog", "src/main.mote", "import std.sys.env as env\n\nfn main() {\n}\n");
+        let (root, manifest) = package("prog", "src/main.mote", "import std.env as env\n\nfn main() {\n}\n");
         assert!(has_main(&root, &manifest));
         fs::remove_dir_all(&root).ok();
     }

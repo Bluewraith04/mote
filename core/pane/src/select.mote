@@ -1,0 +1,27 @@
+/// Draws a closed choice that opens in place to a list of options.
+
+import std.gui as gui
+import .element
+import .theme
+
+/// Shows `options[selected]` and lists the options when clicked.
+pub fn select<S>(id: String, options: List<String>, selected: Int, on_change: (var S, Int) -> Null) -> element.Element<S> {
+    return element.with_locals(|l| {
+        let open = l.get(id) == 1
+        var mark = "v"
+        if open { mark = "^" }
+        let head: element.Element<S> = element.element(gui.Kind.Button, theme.Role.Item, "${options.get(selected)}  ${mark}", []).on_local(|var held| { held.set(id, 1 - held.get(id)) })
+        var kids: List<element.Element<S>> = [head]
+        if open {
+            var i = 0
+            while i < options.len() {
+                let at = i
+                var role = theme.Role.Item
+                if at == selected { role = theme.Role.Chosen }
+                kids.push(element.element(gui.Kind.Button, role, options.get(at), []).on_click(|var s| { on_change(s, at) }).on_local(|var held| { held.set(id, 0) }))
+                i = i + 1
+            }
+        }
+        return element.element(gui.Kind.Box, theme.Role.Plain, "", kids).style(|s| s.direction(gui.Direction.Column).gap(4.0))
+    })
+}

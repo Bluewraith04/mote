@@ -238,7 +238,7 @@ impl VersionReq {
         })
     }
 
-    /// A pre-release matches only when a comparator names a pre-release of its `major.minor.patch`.
+    /// A pre-release matches only when a comparator names a pre-release.
     pub fn matches(&self, ver: &Version) -> bool {
         self.constraints.iter().all(|c| c.matches(ver))
             && (!ver.is_prerelease()

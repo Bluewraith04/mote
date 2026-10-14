@@ -23,7 +23,7 @@ pub use natives::{
     PlatformResult, SourceDecode,
 };
 pub use platform::{
-    CArg, FileKind, FileMode,FileStat, Platform, PlatformError, ProcessOutput, PlatformErrorKind, PlatformRequest, PlatformResponse, StdStream, Wake, Whence, Woken,
+    CArg, FileKind, FileMode,FileStat, Platform, PlatformError, ProcessOutput, PlatformErrorKind, PlatformRequest, PlatformResponse, StdStream, WaitCancel, Wake, Whence, Woken,
 };
 pub use roots::RootSource;
 pub use safepoint::{PausedRoot, SafepointCoordinator};

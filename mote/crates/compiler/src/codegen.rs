@@ -1,4 +1,6 @@
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::rc::Rc;
 use isa::code::CodeObject;
 use isa::encoding::*;
 use isa::opcode::Opcode;
@@ -102,7 +104,7 @@ pub(crate) enum IterFlag {
     Reg(u8),
 }
 
-/// What a function does when a `scope` closes over a child's fault that nobody observed: answer an `Err`, or panic.
+/// What a function does when a `scope` closes over an unobserved child fault: answer an `Err`, or panic.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ScopeFault {
     ErrText,
@@ -129,11 +131,17 @@ struct PendingLambda {
     returns_param: bool,
     prebuilt: Option<CodeObject>,
     module: String,
+    /// The type table of the bounded-generic instance the lambda was written in, if any.
+    table: Option<InstanceTable>,
 }
+
+/// An instance's type table, parked here while its lambdas wait to be compiled.
+type InstanceTable = Rc<RefCell<Option<crate::stage::TypeTable>>>;
 
 impl PendingLambda {
     fn prebuilt(code_idx: usize, code: CodeObject) -> Self {
         Self {
+            table: None,
             code_idx,
             params: Vec::new(),
             captures: Vec::new(),
@@ -221,6 +229,7 @@ pub struct CodeGenerator {
     ret_param: Option<String>,
     next_lambda_returns_param: bool,
     pending_lambdas: VecDeque<PendingLambda>,
+    instance_table: Option<InstanceTable>,
     next_code_idx: usize,
     current_fn_fallible: bool,
     current_scope_fault: ScopeFault,
@@ -298,6 +307,7 @@ impl CodeGenerator {
             ret_param: None,
             next_lambda_returns_param: false,
             pending_lambdas: VecDeque::new(),
+            instance_table: None,
             next_code_idx: 0,
             current_fn_fallible: false,
             current_scope_fault: ScopeFault::Panic,
@@ -414,6 +424,7 @@ impl CodeGenerator {
             returns_param: false,
             prebuilt: None,
             module: self.module.clone(),
+            table: self.instance_table.clone(),
         });
         let closure = self.emit_function_value(code_idx, &capture_regs, span)?;
         for tmp in loaded {
@@ -728,14 +739,14 @@ impl CodeGenerator {
         }
     }
 
-    /// Codegen for a checked single-file program (one module): see [`Self::compile`].
+    /// Codegen for a checked single-file program (one module).
     pub(crate) fn compile_single(mut self, mut checked: crate::stage::Checked) -> Result<CompiledProgram, (String, Span)> {
         self.types = std::mem::take(&mut checked.types);
         let program = checked.modules.pop().expect("a checked single-file program has one module");
         self.compile(&program)
     }
 
-    /// Codegen for checked linked modules in dependency order: see [`Self::compile_modules`].
+    /// Codegen for checked linked modules in dependency order.
     pub fn compile_linked(mut self, mut checked: crate::stage::Checked) -> Result<CompiledProgram, (String, Span)> {
         self.types = std::mem::take(&mut checked.types);
         let modules = checked
@@ -774,7 +785,7 @@ impl CodeGenerator {
         })
     }
 
-    /// Multi-file entry point: `modules` in dependency order, entry module last. Each non-entry module with top-level statements gets an init code object that `code_objects[0]` calls first.
+    /// Multi-file entry point: `modules` in dependency order, entry module last.
     pub(crate) fn compile_modules(
         mut self,
         mut modules: Vec<Vec<Item>>,
@@ -1011,7 +1022,17 @@ impl CodeGenerator {
     fn drain_pending_lambdas(&mut self) -> Result<(), (String, Span)> {
         while let Some(pl) = self.pending_lambdas.pop_front() {
             self.module = pl.module.clone();
-            self.compile_lambda(pl)?;
+            let Some(parked) = pl.table.clone() else {
+                self.compile_lambda(pl)?;
+                continue;
+            };
+            let own = parked.borrow_mut().take().expect("an instance table is parked while its lambdas wait");
+            let outer = std::mem::replace(&mut self.types, own);
+            let prev = self.instance_table.replace(parked.clone());
+            let result = self.compile_lambda(pl);
+            self.instance_table = prev;
+            *parked.borrow_mut() = Some(std::mem::replace(&mut self.types, outer));
+            result?;
         }
         Ok(())
     }
@@ -1186,8 +1207,11 @@ impl CodeGenerator {
     fn compile_function(&mut self, f: &FunctionDecl) -> Result<(), (String, Span)> {
         let Some(table) = self.types.take_instance(&f.name) else { return self.compile_function_body(f) };
         let outer = std::mem::replace(&mut self.types, table);
+        let parked: InstanceTable = Rc::new(RefCell::new(None));
+        let prev = self.instance_table.replace(parked.clone());
         let result = self.compile_function_body(f);
-        self.types = outer;
+        self.instance_table = prev;
+        *parked.borrow_mut() = Some(std::mem::replace(&mut self.types, outer));
         result
     }
 

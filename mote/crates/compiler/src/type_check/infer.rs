@@ -195,6 +195,9 @@ impl TypeChecker {
                     }
                     None => {}
                 }
+                if let Some(ty) = self.check_bound_static_call(callee, &arg_tys, *span) {
+                    return ty;
+                }
                 if let Some(ty) = self.check_static_call(callee, &arg_tys, *span) {
                     return ty;
                 }
@@ -471,6 +474,16 @@ impl TypeChecker {
                 Type::Any
             }
             Expr::Try { expr, span } => {
+                if let Some(want) = expected.as_ref().filter(|t| !t.has_hole() && **t != Type::Any) {
+                    self.expected = match self.current_fn_ret.clone() {
+                        Some(ret) => match Self::failure_variant(&ret) {
+                            Some("None") => Some(Type::Nullable(Box::new(want.clone()))),
+                            Some(_) => Self::err_payload(&ret).map(|e| self.result_of(want.clone(), e)),
+                            None => None,
+                        },
+                        None => None,
+                    };
+                }
                 let inner = self.check_expr(expr);
                 if Self::failure_variant(&inner).is_none() && inner != Type::Any {
                     self.errors.push((
@@ -494,6 +507,10 @@ impl TypeChecker {
                             "`?` on a `Result` returns its `Err`, but this function returns an optional".into(),
                             *span,
                         )),
+                        (Some("Err"), Some("Err")) => {
+                            let ret = ret.clone();
+                            self.check_failure_flow(&inner, &ret, *span);
+                        }
                         _ => {}
                     },
                     None => {}

@@ -1,6 +1,4 @@
 //! Generators: `MKGEN`, `RESUME`, `YIELD`, and the generator half of `RET`.
-//! A generator body runs as an ordinary frame on the resuming task; its register window is copied in on
-//! `RESUME` and back out on `YIELD`.
 
 use std::ptr::NonNull;
 
@@ -55,7 +53,7 @@ pub(crate) fn mkgen(rt: &Runtime, task: &mut TaskContext) -> Result<VmStatus, St
     Ok(VmStatus::Running)
 }
 
-/// `RESUME rA, rB, rC` — run generator `rB` until it yields (`rA` = value, `rC` = 1) or ends (`rA` = null, `rC` = 0).
+/// `RESUME rA, rB, rC` runs generator `rB` until it yields or ends.
 pub(crate) fn resume(rt: &Runtime, task: &mut TaskContext, operands: u32) -> Result<VmStatus, String> {
     rt.safepoint_poll(task)?;
     let (a, b, c) = decode_r3(operands);
@@ -119,7 +117,7 @@ pub(crate) fn is_swapped(task: &TaskContext) -> bool {
     task.arena_saves.last().is_some_and(|(depth, _)| *depth == task.call_stack.len())
 }
 
-/// Runs the generator frame on top on `stack`, setting the task's own region stack aside until the generator yields or ends.
+/// Runs the generator frame on top on `stack`, setting the task's own region stack aside.
 pub(crate) fn swap_in(task: &mut TaskContext, stack: Box<ArenaStack>) {
     let own = std::mem::replace(&mut task.arenas, *stack);
     task.saved_arena_bytes += own.segment_bytes();
@@ -134,7 +132,7 @@ fn swap_out(task: &mut TaskContext) -> ArenaStack {
     generator_stack
 }
 
-/// `YIELD rA` — save the window and `pc`, then hand `rA` to the `RESUME` that started this run.
+/// `YIELD rA` saves the window and hands `rA` to the `RESUME` that started this run.
 pub(crate) fn yield_(rt: &Runtime, task: &mut TaskContext, operands: u32) -> Result<VmStatus, String> {
     let (a, _) = decode_r2(operands);
     let frame = task.call_stack.last().cloned().unwrap();
@@ -184,7 +182,7 @@ fn keep_regions(rt: &Runtime, task: &mut TaskContext, mut obj: NonNull<ObjectHea
     rt.gen_regions.put(key, Box::new(stack));
 }
 
-/// `RET` inside a generator body: mark it done, drop its window, and end the `RESUME` with status 0.
+/// `RET` inside a generator body marks it done and ends the `RESUME`.
 pub fn finish(rt: &Runtime, task: &mut TaskContext, link: GenLink) -> Result<VmStatus, String> {
     if is_swapped(task) {
         drop(swap_out(task));

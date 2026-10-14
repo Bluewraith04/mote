@@ -1,5 +1,4 @@
-//! Rewrites one module's AST against its [`ModuleScope`]: mangles top-level definitions and resolves every cross-module reference to a mangled name.
-//! Locals shadow global symbols of the same name and are never rewritten.
+//! Rewrites one module's AST against its scope, mangling definitions and resolving cross-module references.
 
 use std::collections::HashSet;
 
@@ -323,6 +322,7 @@ impl Rewriter<'_> {
         match expr {
             Expr::Ident(name, span) => {
                 if !self.is_local(name) {
+                    self.gate(name, span.line)?;
                     if let Some(m) = self
                         .scope
                         .resolve_value(name)
@@ -523,7 +523,22 @@ impl Rewriter<'_> {
         }
     }
 
+    /// Errors when `name` is a builtin type whose std module is not imported.
+    fn gate(&self, name: &str, line: usize) -> Result<(), String> {
+        match crate::symbols::gated_module(name) {
+            Some(module)
+                if self.scope.resolve_type(name).is_none()
+                    && self.scope.resolve_value(name).is_none()
+                    && !self.scope.has_std_module(module) =>
+            {
+                Err(format!("`{name}` is not in scope; `import {{ {name} }} from std.{module}` (line {line})"))
+            }
+            _ => Ok(()),
+        }
+    }
+
     fn type_name(&self, name: &str, line: usize) -> Result<Option<String>, String> {
+        self.gate(name, line)?;
         let Some((first_alias, first_member)) = name.split_once('.') else {
             return Ok(self.scope.resolve_type(name).map(str::to_string));
         };

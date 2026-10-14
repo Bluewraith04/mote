@@ -6,7 +6,7 @@ fn run(source: &str, tag: &str, extra: &[&str]) -> (bool, String) {
     let dir = std::env::temp_dir().join(format!("mote_genregions_{tag}_{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let file = dir.join("main.mote");
-    std::fs::write(&file, source).unwrap();
+    std::fs::write(&file, format!("import {{ Stream }} from std.stream\n\n{source}")).unwrap();
     let out = Command::new(env!("CARGO_BIN_EXE_mote")).arg("run").arg(&file).args(extra).output().unwrap();
     std::fs::remove_dir_all(&dir).ok();
     (out.status.success(), format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)))

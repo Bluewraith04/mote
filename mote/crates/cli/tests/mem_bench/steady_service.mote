@@ -1,0 +1,38 @@
+/// A live set of {N} nodes and 3 M short-lived replies: a service with some state and many requests.
+struct Node {
+    id: Int
+    label: String
+}
+
+class Reply {
+    id: Int
+    body: String
+    tags: List<Int>
+}
+
+fn handle(i: Int) -> Int {
+    var tags: List<Int> = []
+    var k = 0
+    while k < 8 {
+        tags.push(k + i)
+        k += 1
+    }
+    let r = Reply { id: i, body: "reply ${i}", tags: tags }
+    return r.body.len() + r.tags.len()
+}
+
+fn main() {
+    var live: List<Node> = []
+    var i = 0
+    while i < {N} {
+        live.push(Node { id: i, label: "n" })
+        i += 1
+    }
+    var total = 0
+    var j = 0
+    while j < 3000000 {
+        total += handle(j)
+        j += 1
+    }
+    println(live.len() + total)
+}

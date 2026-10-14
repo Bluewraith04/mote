@@ -71,7 +71,7 @@ fn a_stdlib_type_satisfies_closeable_with_no_impl_block() {
     let path = std::env::temp_dir().join(format!("mote_with_stdlib_file_{}.tmp", std::process::id()));
     let path_str = path.to_string_lossy().replace('\\', "\\\\");
     let src = format!(
-        "import std.sys.fs\npub fn main() {{\n    with f = fs.create(\"{path_str}\")! {{\n        f.write_text(\"hi\")!\n    }}\n    with f2 = fs.open(\"{path_str}\")! {{\n        println(f2.read(2)!.to_string())\n    }}\n    fs.remove_file(\"{path_str}\")!\n}}\n"
+        "import std.fs\npub fn main() {{\n    with f = fs.create(\"{path_str}\")! {{\n        f.write_text(\"hi\")!\n    }}\n    with f2 = fs.open(\"{path_str}\")! {{\n        println(f2.read(2)!.to_string())\n    }}\n    fs.remove_file(\"{path_str}\")!\n}}\n"
     );
     let (ok, text) = run(&src, "stdlib_file");
     std::fs::remove_file(&path).ok();

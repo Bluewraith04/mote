@@ -63,9 +63,17 @@ impl TypeChecker {
             }
             Expr::Index { object, .. } => self.immutable_reason(object),
             Expr::Unwrap { expr, .. } => self.immutable_reason(expr),
+            Expr::Call { .. } if self.is_slice_copy(place) => Some("a slice is a copy; to change the list write `xs[a..b] = values`".into()),
             Expr::Call { .. } if self.is_snapshot(place) => Some("a snapshot is read-only; `.clone()` it to change it".into()),
             _ => None,
         }
+    }
+
+    /// Whether `place` is `.slice(..)` of a List or Bytes, which answers a copy.
+    fn is_slice_copy(&self, place: &Expr) -> bool {
+        let Expr::Call { callee, .. } = place else { return false };
+        let Expr::MemberAccess { object, member, .. } = &**callee else { return false };
+        member == "slice" && matches!(self.expr_types.get(&object.span()), Some(Type::List(_) | Type::Bytes))
     }
 
     pub(super) fn check_writable(&mut self, place: &Expr, span: Span) {

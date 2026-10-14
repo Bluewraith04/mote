@@ -125,6 +125,29 @@ impl CodeGenerator {
         }
     }
 
+    /// `Err(T.into_error(payload))` for the `Err` in `r`, whose payload is a `Failure` of type `failure`.
+    pub(crate) fn emit_failure_conversion(&mut self, r: u8, failure: &Type) -> Result<u8, (String, Span)> {
+        let (Type::Struct { name, .. } | Type::Class { name, .. } | Type::Enum { name, .. }) = failure else {
+            return Err(("`?` converts only a struct, class or enum".into(), Span::default()));
+        };
+        let at = Span::default();
+        let payload = self.reg_alloc.alloc_temp();
+        self.current_insts.push(encode_r3(Opcode::GETFIELD, payload, r, 0));
+        self.reg_alloc.enter_scope();
+        self.reg_alloc.alias_var("__failure", payload);
+        let convert = Expr::Call {
+            callee: Box::new(Expr::MemberAccess { object: Box::new(Expr::Ident(name.clone(), at)), member: "into_error".into(), span: at }),
+            args: vec![Expr::Ident("__failure".into(), at)],
+            names: Vec::new(),
+            span: at,
+        };
+        let wrapped = Expr::Call { callee: Box::new(Expr::Ident("Err".into(), at)), args: vec![convert], names: Vec::new(), span: at };
+        let out = self.compile_expr(&wrapped);
+        self.reg_alloc.exit_scope();
+        self.reg_alloc.free_temp(payload);
+        out
+    }
+
     pub(crate) fn emit_payload(&mut self, dest: u8, r: u8, kind: &Fallible) {
         match kind {
             Fallible::Option => self.current_insts.push(encode_r2(Opcode::UNSOME, dest, r)),

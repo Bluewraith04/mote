@@ -41,11 +41,12 @@ fn main() {
 | The `mote` command | `mote/crates/cli` |
 | Standard library, written in Mote | `mote/crates/modules/std` |
 | Window and drawing library | `mote/crates/gui` |
+| Core libraries: pane, tile, wire, sqlite, compress, archive, log, path | `core/` |
 | Tree-sitter grammar and Zed extension | `editors/` |
 
 The language has structs, classes, enums, generics with trait bounds, optionals and `Result`, closures, generators, modules, and tasks with channels. Types are checked at compile time; `Any` exists as an explicit escape hatch. Memory is managed by the compiler and a tracing collector.
 
-The standard library covers collections, strings, regex, dates, JSON, hashing, files, sockets, TLS, an HTTP server, argument parsing and a window with flexbox layout (`std.sys.gui`). TOML, YAML, compression, archives, SQLite and an HTTP client are packages that wrap Rust crates and carry their own native library; `pane` is a package for describing a window as a function of your state. See [CHANGELOG.md](CHANGELOG.md) for what changed in each release.
+The standard library covers collections, strings, regex, dates, JSON, hashing, files, sockets, TLS, an HTTP server, argument parsing, signals, the terminal and a window with flexbox layout (`std.gui`). The core libraries in `core/` are imported by name: `pane` (windows as a function of your state), `tile` (terminal screens), `wire` (HTTP and WebSocket), `sqlite`, `compress`, `archive`, `log` and `path`; those with a native part are fetched with `mote core fetch`. Linux on x86_64 and aarch64 is the supported platform. See [CHANGELOG.md](CHANGELOG.md) for what changed in each release.
 
 ## Building
 
@@ -72,7 +73,7 @@ mote test
 
 - It is a learning project, not a production language. Expect rough edges and no stability promise.
 - There is no debugger and no language server.
-- Development and testing happen on Linux; other platforms are untested.
+- Linux only: x86_64 and aarch64 are tested on every release. Windows and macOS are not supported.
 - `if` and `match` are statements, not expressions.
 - The collector stops the world and has no generations.
 

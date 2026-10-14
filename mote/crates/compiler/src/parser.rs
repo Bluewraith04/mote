@@ -5,22 +5,74 @@ use crate::token::{HolePos, StrPart, Token, TokenKind};
 mod expr;
 mod stmt;
 
+/// An attribute before a field is an error that names what replaces it.
+fn reject_field_attrs(attrs: &[Attribute]) -> Result<(), (String, Span)> {
+    match attrs.first() {
+        Some(a) => Err((
+            format!(
+                "`@{}` cannot go on a field: write help as a `///` comment, a default as `= value` and a short flag as `@arg(x = field)` before the type or variant",
+                a.name
+            ),
+            a.span,
+        )),
+        None => Ok(()),
+    }
+}
+
+/// A default needs a type with no parameters: the hidden function that holds it has none.
+fn reject_generic_defaults(generics: &[GenericParam], fields: &[FieldDecl]) -> Result<(), (String, Span)> {
+    match fields.iter().find(|f| f.default.is_some()) {
+        Some(f) if !generics.is_empty() => Err(("a field default is not supported on a generic type".to_string(), f.span)),
+        _ => Ok(()),
+    }
+}
+
+/// Tokens written back as source text, spaced only where two words would run together.
+fn render_tokens(tokens: &[Token]) -> String {
+    let mut out = String::new();
+    let mut prev_word = false;
+    for t in tokens {
+        let text = t.kind.source_text();
+        let word = text.chars().next().is_some_and(|c| c.is_alphanumeric() || c == '_');
+        if prev_word && word {
+            out.push(' ');
+        }
+        out.push_str(&text);
+        prev_word = text.chars().last().is_some_and(|c| c.is_alphanumeric() || c == '_');
+    }
+    out
+}
+
 /// Turns tokens into a [`Program`].
 pub struct Parser {
     tokens: Vec<Token>,
     pos: usize,
     stable_marks: Vec<StableMark>,
     test_marks: Vec<TestMark>,
+    modifier_marks: Vec<ModifierMark>,
     test_counter: usize,
     operand_type: bool,
     match_subject: bool,
-    json_derive: Option<Span>,
-    args_derive: Option<Span>,
+    /// Set while a slice bound is parsed, so `..` ends the bound instead of binding tighter than `+`.
+    no_range: bool,
+    /// Spans of the `.slice(..)` calls that `x[a..b]` wrote, so `x[a..b] = v` can become `.set_slice(..)`.
+    slice_sites: std::collections::HashSet<Span>,
 }
 
 impl Parser {
     pub fn new(tokens: Vec<Token>) -> Self {
-        Self { tokens, pos: 0, stable_marks: Vec::new(), test_marks: Vec::new(), test_counter: 0, operand_type: false, match_subject: false, json_derive: None, args_derive: None }
+        Self {
+            tokens,
+            pos: 0,
+            stable_marks: Vec::new(),
+            test_marks: Vec::new(),
+            modifier_marks: Vec::new(),
+            test_counter: 0,
+            operand_type: false,
+            match_subject: false,
+            no_range: false,
+            slice_sites: std::collections::HashSet::new(),
+        }
     }
 
     pub fn parse(&mut self) -> Result<Program, (String, Span)> {
@@ -31,15 +83,6 @@ impl Parser {
             let item = self.parse_item()?;
             items.push(item);
             self.skip_newlines();
-        }
-
-        if let Some(span) = self.json_derive.take() {
-            let path = ModulePath::new(vec!["std".into(), "data".into(), "json".into()], false, 0, span);
-            items.push(Item::Import(ImportDecl { path, from_path: None, alias: Some("__json".into()), symbols: Vec::new(), glob: false, is_pub: false, span }));
-        }
-        if let Some(span) = self.args_derive.take() {
-            let path = ModulePath::new(vec!["std".into(), "dev".into(), "args".into()], false, 0, span);
-            items.push(Item::Import(ImportDecl { path, from_path: None, alias: Some("__args".into()), symbols: Vec::new(), glob: false, is_pub: false, span }));
         }
 
         let span = if let Some(first) = items.first() {
@@ -54,6 +97,8 @@ impl Parser {
             span,
             stable_marks: std::mem::take(&mut self.stable_marks),
             test_marks: std::mem::take(&mut self.test_marks),
+            applied: Vec::new(),
+            modifier_marks: std::mem::take(&mut self.modifier_marks),
         })
     }
 
@@ -82,7 +127,15 @@ impl Parser {
                     depth -= 1;
                 }
                 TokenKind::Colon if depth == 0 => return true,
-                TokenKind::Newline | TokenKind::Semicolon | TokenKind::Eof | TokenKind::Comma
+                TokenKind::Newline
+                | TokenKind::Semicolon
+                | TokenKind::Eof
+                | TokenKind::Comma
+                | TokenKind::Let
+                | TokenKind::Var
+                | TokenKind::Return
+                | TokenKind::For
+                | TokenKind::While
                     if depth == 0 =>
                 {
                     return false
@@ -191,6 +244,7 @@ impl Parser {
     }
 
     fn parse_item(&mut self) -> Result<Item, (String, Span)> {
+        let doc = self.doc_here();
         let attrs = self.parse_attributes()?;
         let is_pub = self.match_token(&TokenKind::Pub);
 
@@ -272,15 +326,23 @@ impl Parser {
             let span = attrs.iter().find(|a| a.name == "ignore").unwrap().span;
             return Err(("`@ignore` needs a `test` block or `@test` to skip".to_string(), span));
         }
-        if self.json_derive.is_none() && crate::derive::uses(&attrs, "Json") {
-            self.json_derive = attrs.iter().find(|a| a.name == "derive").map(|a| a.span);
+        crate::modifiers::attributes::check(&attrs, &item)?;
+        if attrs.iter().any(|a| a.name == "modifier")
+            && let Item::Function(f) = &item {
+                crate::modifiers::attributes::check_modifier_signature(f)?;
+                let reads = crate::modifiers::attributes::reads_of(&attrs);
+                self.modifier_marks.push(ModifierMark { fn_name: f.name.clone(), reads, span: f.span });
+            }
+        let mut item = crate::modifiers::attributes::attach(attrs, item);
+        match &mut item {
+            Item::Struct(s) => s.doc = doc,
+            Item::Class(c) => c.doc = doc,
+            Item::Enum(e) => e.doc = doc,
+            _ => {}
         }
-        if self.args_derive.is_none() && crate::derive::uses(&attrs, "Args") {
-            self.args_derive = attrs.iter().find(|a| a.name == "derive").map(|a| a.span);
-        }
-        let item = crate::derive::apply_attributes(attrs, item)?;
         if has_stable
             && let Some((kind, _, name, signature)) = crate::stable::describe(&item) {
+                let kind = if kind == "fn" && self.modifier_marks.iter().any(|m| m.fn_name == name) { "modifier" } else { kind };
                 self.stable_marks.push(StableMark { name, kind: kind.to_string(), signature, span: stable_span.unwrap() });
             }
         if (is_test_decl || has_test_attr)
@@ -305,7 +367,10 @@ impl Parser {
             if self.match_token(&TokenKind::OpenParen) {
                 if !self.check(&TokenKind::CloseParen) {
                     loop {
-                        let (arg, _) = self.expect_ident()?;
+                        let (mut arg, _) = self.expect_ident()?;
+                        while self.match_token(&TokenKind::Dot) {
+                            arg = format!("{arg}.{}", self.expect_ident()?.0);
+                        }
                         if self.match_token(&TokenKind::Eq) {
                             values.push((arg, self.parse_attribute_text()?));
                         } else {
@@ -331,8 +396,33 @@ impl Parser {
             TokenKind::String(parts) if parts.iter().all(|p| matches!(p, StrPart::Lit(_))) => {
                 Ok(parts.iter().map(|p| if let StrPart::Lit(s) = p { s.as_str() } else { "" }).collect())
             }
-            _ => Err(("an attribute value is a plain string, as in `key = \"text\"`".to_string(), tok.span)),
+            TokenKind::Ident(name) => Ok(name.clone()),
+            _ => Err(("an attribute value is a name or a plain string, as in `key = name` or `key = \"text\"`".to_string(), tok.span)),
         }
+    }
+
+    /// The `///` lines before the next token.
+    fn doc_here(&self) -> String {
+        self.peek().doc.as_deref().unwrap_or("").to_string()
+    }
+
+    /// A field after its modifiers: `name: Type` and an optional `= default`.
+    fn parse_field(&mut self, is_pub: bool, doc: String) -> Result<FieldDecl, (String, Span)> {
+        let is_mutable = self.match_token(&TokenKind::Var);
+        if !is_mutable {
+            self.match_token(&TokenKind::Let);
+        }
+        let (name, span) = self.expect_ident()?;
+        self.expect(TokenKind::Colon)?;
+        let ty = self.parse_type()?;
+        let mut default = None;
+        let mut default_text = String::new();
+        if self.match_token(&TokenKind::Eq) {
+            let start = self.pos;
+            default = Some(self.parse_expr(0)?);
+            default_text = render_tokens(&self.tokens[start..self.pos]);
+        }
+        Ok(FieldDecl { name, ty, is_mutable, is_pub, doc, default, default_text, span })
     }
 
     fn parse_generic_params(&mut self) -> Result<Vec<GenericParam>, (String, Span)> {
@@ -586,6 +676,7 @@ impl Parser {
         let mut fields = Vec::new();
         let mut methods = Vec::new();
         while !self.check(&TokenKind::CloseBrace) && !self.is_at_end() {
+            let doc = self.doc_here();
             let attrs = self.parse_attributes()?;
             let is_member_pub = self.match_token(&TokenKind::Pub);
             if self.check(&TokenKind::Fn) {
@@ -596,29 +687,18 @@ impl Parser {
                 self.skip_newlines();
                 continue;
             }
-            let is_mut = self.match_token(&TokenKind::Var);
-            if !is_mut {
-                self.match_token(&TokenKind::Let);
-            }
-            let f_name_tok = self.expect_ident()?;
-            self.expect(TokenKind::Colon)?;
-            let f_ty = self.parse_type()?;
+            reject_field_attrs(&attrs)?;
+            fields.push(self.parse_field(is_member_pub, doc)?);
             self.skip_newlines();
-
-            fields.push(FieldDecl {
-                name: f_name_tok.0,
-                ty: f_ty,
-                is_mutable: is_mut,
-                is_pub: is_member_pub,
-                attrs,
-                span: f_name_tok.1,
-            });
         }
+        reject_generic_defaults(&generic_params, &fields)?;
         let close_brace = self.expect(TokenKind::CloseBrace)?;
 
         Ok(StructDecl {
             name: name_tok.0,
             generic_params,
+            attrs: Vec::new(),
+            doc: String::new(),
             traits,
             fields,
             methods,
@@ -641,6 +721,7 @@ impl Parser {
         let mut variants = Vec::new();
         let mut methods = Vec::new();
         while !self.check(&TokenKind::CloseBrace) && !self.is_at_end() {
+            let variant_doc = self.doc_here();
             let variant_attrs = self.parse_attributes()?;
             if self.check(&TokenKind::Fn) || (self.check(&TokenKind::Pub) && self.check_at(1, &TokenKind::Fn)) {
                 if let Some(a) = variant_attrs.first() {
@@ -672,26 +753,15 @@ impl Parser {
                 self.advance();
                 let mut struct_fields = Vec::new();
                 while !self.check(&TokenKind::CloseBrace) && !self.is_at_end() {
+                    let doc = self.doc_here();
                     let attrs = self.parse_attributes()?;
-                    let is_mut = self.match_token(&TokenKind::Var);
-                    if !is_mut {
-                        self.match_token(&TokenKind::Let);
-                    }
-                    let f_name_tok = self.expect_ident()?;
-                    self.expect(TokenKind::Colon)?;
-                    let f_ty = self.parse_type()?;
+                    reject_field_attrs(&attrs)?;
+                    struct_fields.push(self.parse_field(true, doc)?);
                     self.match_token(&TokenKind::Comma);
                     self.skip_newlines();
-                    struct_fields.push(FieldDecl {
-                        name: f_name_tok.0,
-                        ty: f_ty,
-                        is_mutable: is_mut,
-                        is_pub: true,
-                        attrs,
-                        span: f_name_tok.1,
-                    });
                 }
                 self.expect(TokenKind::CloseBrace)?;
+                reject_generic_defaults(&generic_params, &struct_fields)?;
                 EnumVariantKind::Struct(struct_fields)
             } else if self.match_token(&TokenKind::Eq) {
                 let disc = self.parse_expr(0)?;
@@ -704,6 +774,7 @@ impl Parser {
                 name: v_name,
                 kind,
                 attrs: variant_attrs,
+                doc: variant_doc,
                 span: v_span,
             });
 
@@ -719,6 +790,8 @@ impl Parser {
         Ok(EnumDecl {
             name: name_tok.0,
             generic_params,
+            attrs: Vec::new(),
+            doc: String::new(),
             traits,
             variants,
             methods,
@@ -743,6 +816,7 @@ impl Parser {
         let mut methods = Vec::new();
 
         while !self.check(&TokenKind::CloseBrace) && !self.is_at_end() {
+            let doc = self.doc_here();
             let attrs = self.parse_attributes()?;
             let is_method_pub = self.match_token(&TokenKind::Pub);
             if self.check(&TokenKind::Fn) {
@@ -752,31 +826,19 @@ impl Parser {
                 let method = self.parse_function_decl(is_method_pub)?;
                 methods.push(method);
             } else {
-                let is_mut = self.match_token(&TokenKind::Var);
-                if !is_mut {
-                    self.match_token(&TokenKind::Let);
-                }
-                let f_name_tok = self.expect_ident()?;
-                self.expect(TokenKind::Colon)?;
-                let f_ty = self.parse_type()?;
-                self.skip_newlines();
-
-                fields.push(FieldDecl {
-                    name: f_name_tok.0,
-                    ty: f_ty,
-                    is_mutable: is_mut,
-                    is_pub: is_method_pub,
-                    attrs,
-                    span: f_name_tok.1,
-                });
+                reject_field_attrs(&attrs)?;
+                fields.push(self.parse_field(is_method_pub, doc)?);
             }
             self.skip_newlines();
         }
+        reject_generic_defaults(&generic_params, &fields)?;
         let close_brace = self.expect(TokenKind::CloseBrace)?;
 
         Ok(ClassDecl {
             name: name_tok.0,
             generic_params,
+            attrs: Vec::new(),
+            doc: String::new(),
             traits,
             fields,
             methods,
@@ -831,6 +893,7 @@ impl Parser {
         Ok(TraitDecl {
             name: name_tok.0,
             generic_params,
+            attrs: Vec::new(),
             members,
             is_pub,
             span: trait_tok.span.merge(&close_brace.span),

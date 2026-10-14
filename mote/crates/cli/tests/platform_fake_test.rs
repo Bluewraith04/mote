@@ -39,7 +39,7 @@ fn run(name: &str, source: &str, fake: FakePlatform, workers: usize) -> Ran {
 fn test_program_runs_on_the_fake_platform_with_virtual_time_and_files() {
     let source = "\
 import { Duration, now, sleep } from std.time
-import std.sys.io as io
+import std.io as io
 
 fn main() -> Int {
     let a = now()
@@ -68,7 +68,7 @@ return main()
 #[test]
 fn test_exit_stops_the_run_and_reports_the_code() {
     let source = "\
-import std.sys.env as env
+import std.env as env
 
 fn main() {
     println(\"before\")
@@ -85,7 +85,7 @@ main()
 #[test]
 fn test_exit_from_a_task_stops_a_spinning_sibling_on_every_worker() {
     let source = "\
-import std.sys.env as env
+import std.env as env
 
 fn main() {
     scope {
@@ -112,7 +112,7 @@ main()
 #[test]
 fn test_file_ops_round_trip_and_not_found() {
     let source = "\
-import std.sys.io as io
+import std.io as io
 
 fn kind_of(e: Error) -> ErrorKind {
     return e.kind
@@ -191,7 +191,7 @@ return main()
 #[test]
 fn test_stdout_and_stderr_write_line_are_captured_per_stream() {
     let source = "\
-import std.sys.io as io
+import std.io as io
 
 fn main() -> Int {
     let out = io.stdout()
@@ -210,7 +210,7 @@ return main()
 }
 
 const READ_LINE_PROGRAM: &str = "\
-import std.sys.io as io
+import std.io as io
 
 fn main() -> Int {
     let sin = io.stdin()
@@ -379,7 +379,7 @@ return main()
 
 #[test]
 fn test_program_runs_scripted_processes_and_the_fake_logs_them() {
-    let source = "import std.sys.process as process\nimport { Output } from std.sys.process\n\nfn main() {\n    let o: Output = process.run(\"git\", [\"status\"]).unwrap()\n    println(o.status)\n    println(process.run(\"hg\", []).is_err())\n}\n";
+    let source = "import std.process as process\nimport { Output } from std.process\n\nfn main() {\n    let o: Output = process.run(\"git\", [\"status\"]).unwrap()\n    println(o.status)\n    println(process.run(\"hg\", []).is_err())\n}\n";
     let fake = FakePlatform::new(1).with_process("git", 0, b"clean\n", b"");
     let ran = run("process", source, fake, 1);
     assert_eq!(ran.fake.stdout(), "0\ntrue\n");
