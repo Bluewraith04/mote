@@ -1,7 +1,0 @@
-[package]
-name = "isa"
-version = "0.1.3"
-edition = "2024"
-license = "MIT"
-
-[dependencies]

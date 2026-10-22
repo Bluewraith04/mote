@@ -1,4 +1,0 @@
-/// std.experimental.types: types that switch off checking.
-
-/// A value of any type, checked only at run time.
-pub type Any = __Any

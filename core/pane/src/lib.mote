@@ -1,8 +1,0 @@
-/// Describes a window as a function of your state.
-
-pub import { Element, Locals, Drag, Phase, with_locals, memo } from .element
-pub import { text, rich, h1, h2, h3, h4, h5, h6, button, input, input_multi } from .controls
-pub import { vstack, hstack, box, scroll, spacer } from .layout
-pub import { Theme, space, type_size } from .theme
-pub import { Chrome } from .chrome
-pub import { App, Running, Handle } from .app

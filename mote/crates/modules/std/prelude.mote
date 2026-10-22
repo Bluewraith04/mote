@@ -1,4 +1,0 @@
-/// The prelude, imported into every non-`std` module.
-
-pub import { Result } from std.result
-pub import { Error, ErrorKind } from std.error
