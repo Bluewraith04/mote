@@ -8,5 +8,5 @@ repository = "https://github.com/Bluewraith04/mote"
 
 [grammars.mote]
 repository = "https://github.com/Bluewraith04/mote"
-rev = "5a35ca99af55ffd19f83f41081e12cb11a820254"
+rev = "cb08262cd4815872b18260928eb1210c2e50f1e5"
 path = "editors/tree-sitter-mote"
