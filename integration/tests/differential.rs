@@ -269,7 +269,7 @@ fn differential_channels_a_channel_of_optional_messages() {
     assert!(failure.contains("a channel cannot carry optional messages"), "{failure}");
 }
 
-/// The program as the package `app` with the library `demo` built from `integration/natives/demo.c`, run compiled.
+/// The program as the package `app` with the library `demo` built from `integration/libs/demo.c`, run compiled.
 fn native_run(source: &str) -> Result<MainRun, String> {
     native_run_with(source, &Settings::default())
 }
@@ -278,10 +278,7 @@ fn native_run(source: &str) -> Result<MainRun, String> {
 fn native_run_with(source: &str, settings: &Settings) -> Result<MainRun, String> {
     let scratch = Scratch::new();
     let dir = scratch.package("app", "app", &[], &[("main.mote", source)]);
-    let natives = dir.join("native").join(mote_packages::host_triple());
-    std::fs::create_dir_all(&natives).expect("a directory for the library");
-    let built = std::process::Command::new("cc").args(["-shared", "-fPIC", "-O1", "-o"]).arg(natives.join("libdemo.so")).arg(common::root().join("integration/natives/demo.c")).arg("-lpthread").status().expect("cc runs");
-    assert!(built.success(), "cc builds the library");
+    common::build_demo_library(&dir, false);
     let mut pipeline = Pipeline::build(&dir, Target::Run, &Options::default()).map_err(|failure| failure.to_string())?;
     run_main_with(&mut pipeline, settings).map(|finished| finished.run).map_err(|failure| failure.to_string())
 }
@@ -294,40 +291,25 @@ fn native_output(source: &str) -> String {
 }
 
 const NUMBERS: &str = r#"
-@link("demo")
-native fn add_i64(a: Int, b: Int) -> Int
-@link("demo")
-native fn add_i32(a: Int32, b: Int32) -> Int32
-@link("demo")
-native fn neg_i16(a: Int16) -> Int16
-@link("demo")
-native fn neg_i8(a: Int8) -> Int8
-@link("demo")
-native fn inc_u8(a: UInt8) -> UInt8
-@link("demo")
-native fn inc_u16(a: UInt16) -> UInt16
-@link("demo")
-native fn inc_u32(a: UInt32) -> UInt32
-@link("demo")
-native fn half_u64(a: UInt64) -> UInt64
-@link("demo")
-native fn widen_i8(a: Int8) -> Int
-@link("demo")
-native fn widen_u8(a: UInt8) -> Int
-@link("demo")
-native fn widen_i16(a: Int16) -> Int
-@link("demo")
-native fn widen_u16(a: UInt16) -> Int
-@link("demo")
-native fn widen_i32(a: Int32) -> Int
-@link("demo")
-native fn widen_u32(a: UInt32) -> Int
-@link("demo")
-native fn squares(a: Float, b: Float) -> Float
-@link("demo")
-native fn halve(a: Float32) -> Float32
-@link("demo")
-native fn is_even(n: Int) -> Bool
+extern "demo" {
+    fn add_i64(a: Int, b: Int) -> Int
+    fn add_i32(a: Int32, b: Int32) -> Int32
+    fn neg_i16(a: Int16) -> Int16
+    fn neg_i8(a: Int8) -> Int8
+    fn inc_u8(a: UInt8) -> UInt8
+    fn inc_u16(a: UInt16) -> UInt16
+    fn inc_u32(a: UInt32) -> UInt32
+    fn half_u64(a: UInt64) -> UInt64
+    fn widen_i8(a: Int8) -> Int
+    fn widen_u8(a: UInt8) -> Int
+    fn widen_i16(a: Int16) -> Int
+    fn widen_u16(a: UInt16) -> Int
+    fn widen_i32(a: Int32) -> Int
+    fn widen_u32(a: UInt32) -> Int
+    fn squares(a: Float, b: Float) -> Float
+    fn halve(a: Float32) -> Float32
+    fn is_even(n: Int) -> Bool
+}
 
 fn main() {
     println(add_i64(40, 2))
@@ -360,25 +342,20 @@ fn differential_natives_numbers_cross_with_their_width_and_sign() {
 
 #[test]
 fn differential_natives_numbers_cross_the_same_on_a_helper_thread() {
-    let blocking = NUMBERS.replace("@link(\"demo\")\n", "@link(\"demo\")\n@blocking\n");
+    let blocking = NUMBERS.replace("    fn ", "    @blocking\n    fn ");
     assert_eq!(native_output(&blocking), native_output(NUMBERS));
 }
 
 const TEXT: &str = r#"
-@link("demo")
-native fn length_of(text: String) -> Int
-@link("demo")
-native fn first_byte(text: String) -> Int
-@link("demo")
-native fn greeting() -> String
-@link("demo")
-native fn nothing() -> String
-@link("demo")
-native fn sum_ints(items: [Int]) -> Int
-@link("demo")
-native fn sum_floats(items: [Float]) -> Float
-@link("demo")
-native fn count_set(items: [Bool]) -> Int
+extern "demo" {
+    fn length_of(text: String) -> Int
+    fn first_byte(text: String) -> Int
+    fn greeting() -> String
+    fn nothing() -> String
+    fn sum_ints(items: [Int]) -> Int
+    fn sum_floats(items: [Float]) -> Float
+    fn count_set(items: [Bool]) -> Int
+}
 
 fn main() {
     println(length_of("héllo"))
@@ -400,24 +377,17 @@ fn differential_natives_strings_and_arrays_cross_by_copy_and_by_pointer() {
 }
 
 const POINTERS: &str = r#"
-import { Pointer } from std.types
-
 struct Cell {}
 
-@link("demo")
-native fn cell_new(value: Int) -> Pointer<Cell>
-@link("demo")
-native fn cell_get(cell: Pointer<Cell>) -> Int
-@link("demo")
-native fn cell_none() -> Pointer<Cell>
-@link("demo")
-native fn cell_find(key: Int) -> Pointer<Cell>?
-@link("demo")
-native fn cell_or(cell: Pointer<Cell>?, otherwise: Int) -> Int
-@link("demo")
-native fn fresh_cell(var cell: Pointer<Cell>?)
-@link("demo")
-native fn clear_cell(var cell: Pointer<Cell>?)
+extern "demo" {
+    fn cell_new(value: Int) -> Pointer<Cell>
+    fn cell_get(cell: Pointer<Cell>) -> Int
+    fn cell_none() -> Pointer<Cell>
+    fn cell_find(key: Int) -> Pointer<Cell>?
+    fn cell_or(cell: Pointer<Cell>?, otherwise: Int) -> Int
+    fn fresh_cell(var cell: Pointer<Cell>?)
+    fn clear_cell(var cell: Pointer<Cell>?)
+}
 "#;
 
 #[test]
@@ -435,19 +405,18 @@ fn differential_natives_a_null_pointer_result_is_a_fault() {
     assert_eq!(run.output, "before\n");
     let Ended::Fault { text, kind } = run.ended else { panic!("{:?}", run.ended) };
     assert_eq!(kind, "NullPointer");
-    assert!(text.starts_with("fault: native returned a null pointer\n  at "), "{text}");
+    assert!(text.starts_with("fault: external library returned a null pointer\n  at "), "{text}");
 }
 
 #[test]
 fn differential_natives_a_var_parameter_is_passed_by_pointer_and_copied_back() {
     let source = format!(
         r#"{POINTERS}
-@link("demo")
-native fn bump_i32(var x: Int32)
-@link("demo")
-native fn swap_f64(var a: Float, var b: Float)
-@link("demo")
-native fn set_flag(var flag: Bool, on: Int)
+extern "demo" {{
+    fn bump_i32(var x: Int32)
+    fn swap_f64(var a: Float, var b: Float)
+    fn set_flag(var flag: Bool, on: Int)
+}}
 
 fn main() {{
     var n: Int32 = 41
@@ -475,83 +444,82 @@ fn main() {{
 
 #[test]
 fn differential_natives_a_blocking_call_runs_on_another_thread() {
-    let source = r#"
-@link("demo", symbol = "thread_tag")
-native fn here() -> Int
-@link("demo", symbol = "thread_tag")
-@blocking
-native fn elsewhere() -> Int
-
-fn main() {
-    println(here() == here())
-    println(here() == elsewhere())
-}
-"#;
-    assert_eq!(native_output(source), "true\nfalse\n");
+    let scratch = Scratch::new();
+    let files = [
+        ("here.mote", "extern \"demo\" {\n    pub fn thread_tag() -> Int\n}\n"),
+        ("elsewhere.mote", "extern \"demo\" {\n    @blocking\n    pub fn thread_tag() -> Int\n}\n"),
+        ("main.mote", "import thread_tag as here from .here\nimport thread_tag as elsewhere from .elsewhere\n\nfn main() {\n    println(here() == here())\n    println(here() == elsewhere())\n}\n"),
+    ];
+    let dir = scratch.package("app", "app", &[], &files);
+    common::build_demo_library(&dir, false);
+    let mut pipeline = Pipeline::build(&dir, Target::Run, &Options::default()).unwrap_or_else(|failure| panic!("{failure}"));
+    let run = run_main_with(&mut pipeline, &Settings::default()).unwrap_or_else(|failure| panic!("{failure}")).run;
+    assert_eq!(run.ended, Ended::Returned, "{}", run.output);
+    assert_eq!(run.output, "true\nfalse\n");
 }
 
 #[test]
 fn differential_natives_a_native_is_a_function_value() {
-    let source = "@link(\"demo\")\nnative fn add_i64(a: Int, b: Int) -> Int\n\nfn main() {\n    let add = add_i64\n    println(add(40, 2))\n}\n";
+    let source = "extern \"demo\" {\n    fn add_i64(a: Int, b: Int) -> Int\n}\n\nfn main() {\n    let add = add_i64\n    println(add(40, 2))\n}\n";
     assert_eq!(native_output(source), "42\n");
 }
 
 #[test]
 fn differential_natives_the_library_is_given_the_host_table_before_main() {
-    let source = "@link(\"demo\")\nnative fn host_size() -> UInt64\n\nfn main() {\n    println(host_size())\n}\n";
+    let source = "extern \"demo\" {\n    fn host_size() -> UInt64\n}\n\nfn main() {\n    println(host_size())\n}\n";
     assert_eq!(native_output(source), "32\n");
 }
 
 #[test]
 fn differential_natives_a_missing_library_is_an_error_at_its_native_fn() {
-    let source = "@link(\"absent\")\nnative fn gone() -> Int\n\nfn main() {\n    println(gone())\n}\n";
+    let source = "extern \"absent\" {\n    fn gone() -> Int\n}\n\nfn main() {\n    println(gone())\n}\n";
     let text = native_run(source).unwrap_err();
     assert!(text.starts_with("error: library `absent` not found\n"), "{text}");
-    assert!(text.contains("2 | native fn gone() -> Int"), "{text}");
+    assert!(text.contains("2 |     fn gone() -> Int"), "{text}");
 }
 
 #[test]
 fn differential_natives_a_missing_symbol_is_an_error_at_its_native_fn() {
-    let source = "@link(\"demo\")\nnative fn nope() -> Int\n\nfn main() {\n    println(nope())\n}\n";
+    let source = "extern \"demo\" {\n    fn nope() -> Int\n}\n\nfn main() {\n    println(nope())\n}\n";
     let text = native_run(source).unwrap_err();
     assert!(text.starts_with("error: symbol `nope` not found in `demo`\n"), "{text}");
-    assert!(text.contains("2 | native fn nope() -> Int"), "{text}");
+    assert!(text.contains("2 |     fn nope() -> Int"), "{text}");
 }
 
 #[test]
 fn differential_natives_a_native_the_program_never_calls_is_not_loaded() {
-    let source = "@link(\"absent\")\nnative fn gone() -> Int\n\nfn main() {\n    println(1)\n}\n";
+    let source = "extern \"absent\" {\n    fn gone() -> Int\n}\n\nfn main() {\n    println(1)\n}\n";
     assert_eq!(native_output(source), "1\n");
 }
 
 #[test]
 fn differential_ports_a_library_thread_pushes_to_the_port_it_was_given() {
-    let source = "import { Port, PortMode, PortEnd } from std.port\n\n@link(\"demo\")\nnative fn feed_port(port: PortEnd, count: Int)\n\nfn main() {\n    let (end, rx) = Port.open(PortMode.Queue(8))\n    feed_port(end, 5)\n    var total = 0\n    for message in rx {\n        println(message.len())\n        total += message[0] as Int\n    }\n    println(total)\n}\n";
+    let source = "import { Port, PortMode } from std.port\n\nextern \"demo\" {\n    fn feed_port(port: PortEnd, count: Int)\n}\n\nfn main() {\n    let (end, rx) = Port.open(PortMode.Queue(8))\n    feed_port(end, 5)\n    var total = 0\n    for message in rx {\n        println(message.len())\n        total += message[0] as Int\n    }\n    println(total)\n}\n";
     assert_eq!(native_output(source), "1\n2\n3\n4\n5\n10\n");
 }
 
 #[test]
 fn differential_ports_a_seeded_run_without_feeds_waits_for_a_library_thread() {
-    let source = "import { Port, PortMode, PortEnd } from std.port\n\n@link(\"demo\")\nnative fn feed_port(port: PortEnd, count: Int)\n\nfn main() {\n    let (end, rx) = Port.open(PortMode.Queue(8))\n    feed_port(end, 3)\n    var total = 0\n    for message in rx {\n        total += message[0] as Int\n    }\n    println(total)\n}\n";
+    let source = "import { Port, PortMode } from std.port\n\nextern \"demo\" {\n    fn feed_port(port: PortEnd, count: Int)\n}\n\nfn main() {\n    let (end, rx) = Port.open(PortMode.Queue(8))\n    feed_port(end, 3)\n    var total = 0\n    for message in rx {\n        total += message[0] as Int\n    }\n    println(total)\n}\n";
     let run = native_run_with(source, &Settings { seed: Some(3), ..Settings::default() }).unwrap_or_else(|failure| panic!("{failure}"));
     assert_eq!((run.ended, run.output), (Ended::Returned, "3\n".to_string()));
 }
 
 #[test]
 fn differential_ports_a_push_is_queued_or_refused_when_full_and_a_released_port_closes() {
-    let source = "import { Port, PortMode, PortEnd } from std.port\n\n@link(\"demo\")\nnative fn push_status(port: PortEnd, length: Int) -> Int\n\n@link(\"demo\")\nnative fn release_port(port: PortEnd)\n\nfn main() {\n    let (end, rx) = Port.open(PortMode.Queue(1))\n    println(push_status(end, 1))\n    println(push_status(end, 2))\n    println(rx.recv()!.len())\n    release_port(end)\n    println(rx.recv() == null)\n    println(rx.is_closed())\n}\n";
+    let source = "import { Port, PortMode } from std.port\n\nextern \"demo\" {\n    fn push_status(port: PortEnd, length: Int) -> Int\n    fn release_port(port: PortEnd)\n}\n\nfn main() {\n    let (end, rx) = Port.open(PortMode.Queue(1))\n    println(push_status(end, 1))\n    println(push_status(end, 2))\n    println(rx.recv()!.len())\n    release_port(end)\n    println(rx.recv() == null)\n    println(rx.is_closed())\n}\n";
     assert_eq!(native_output(source), "0\n1\n1\ntrue\ntrue\n");
 }
 
 #[test]
 fn differential_ports_a_latest_port_keeps_the_newest_push() {
-    let source = "import { Port, PortMode, PortEnd } from std.port\n\n@link(\"demo\")\nnative fn push_status(port: PortEnd, length: Int) -> Int\n\nfn main() {\n    let (end, rx) = Port.open(PortMode.Latest)\n    println(push_status(end, 1))\n    println(push_status(end, 2))\n    println(rx.recv()!.len())\n    println(rx.try_recv() == null)\n}\n";
+    let source = "import { Port, PortMode } from std.port\n\nextern \"demo\" {\n    fn push_status(port: PortEnd, length: Int) -> Int\n}\n\nfn main() {\n    let (end, rx) = Port.open(PortMode.Latest)\n    println(push_status(end, 1))\n    println(push_status(end, 2))\n    println(rx.recv()!.len())\n    println(rx.try_recv() == null)\n}\n";
     assert_eq!(native_output(source), "0\n0\n2\ntrue\n");
 }
 
 /// The problems of every `test` block of `std/tests` run compiled, optimized or not, against the file beside its source.
 fn std_tests(optimize: bool) -> Vec<String> {
-    let dir = common::root().join("std/tests");
+    let dir = common::root().join("mote_std/std/tests");
     let mut files: Vec<_> = std::fs::read_dir(&dir).expect("the std/tests directory").map(|entry| entry.expect("a directory entry").path()).filter(|path| path.extension().is_some_and(|ext| ext == "mote")).collect();
     files.sort();
     let found = common::blocks::in_parallel(&files, |_, path| {
@@ -583,7 +551,7 @@ fn differential_optimized_every_block_of_std_tests_gives_the_recorded_verdict_an
 
 #[test]
 fn differential_every_block_of_std_tests_passes() {
-    let dir = common::root().join("std/tests");
+    let dir = common::root().join("mote_std/std/tests");
     let mut problems = Vec::new();
     for path in std::fs::read_dir(&dir).expect("the std/tests directory").map(|entry| entry.expect("a directory entry").path()).filter(|path| path.extension().is_some_and(|ext| ext == "expect")) {
         for (header, body) in sections(&std::fs::read_to_string(&path).expect("a readable file")).iter().skip(1).filter(|(_, body)| !body.starts_with("passed")) {

@@ -16,13 +16,13 @@ Dense language reference. Each page is sections of statements and snippets. Load
 | [structs-classes.md](structs-classes.md) | `struct`, `class`, literals, methods, construction, field defaults |
 | [enums.md](enums.md) | variants, payloads, methods, enum or union |
 | [generics-traits.md](generics-traits.md) | type parameters, bounds, traits, derived methods |
-| [derive.md](derive.md) | `std.meta`, `describe`, `Dyn`, writing a derived trait, `require` |
+| [derive.md](derive.md) | `std.reflect`, `@type_info`, `comptime`, writing a derived trait |
 | [optionals-errors.md](optionals-errors.md) | `T?`, `Result`, narrowing, `Error`, methods |
 | [collections.md](collections.md) | `List`, `Map`, `Set`, arrays, strings, `std.iter` |
-| [modules.md](modules.md) | `import`, `pub`, visibility, packages, globals |
+| [modules.md](modules.md) | `import`, `pub`, visibility, packages, globals, `extern` |
 | [concurrency.md](concurrency.md) | `spawn`, `scope`, channels, `Mutex`, `Once`, atomics, Sendable |
 | [attributes-tests.md](attributes-tests.md) | `@` attributes, doc comments, `test` blocks |
-| [contract.md](contract.md) | lang items, intrinsics and fault kinds between the compiler, `std` and the runtime |
+| [contract.md](contract.md) | universal builtins, compiler intrinsics and fault kinds |
 | [command.md](command.md) | the `mote` command |
 
 ## Conventions
@@ -170,8 +170,6 @@ main
 * A `spawn` that start-up runs cannot read a `var` global. <!-- block -->
 
 ```mote
-import { Task } from std.task
-
 var counter = 0
 
 fn read() -> Int {

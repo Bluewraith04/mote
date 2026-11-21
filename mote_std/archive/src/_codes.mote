@@ -1,0 +1,45 @@
+// The numbers and buffers that pass between the archive types and the Rust library.
+import archive_field from ._lib
+import { EntryKind, Format } from .entry
+
+pub fn format_code(format: Format) -> Int {
+    return match format {
+        Format.Tar => 0
+        Format.TarGz => 0
+        Format.Zip => 1
+    }
+}
+
+pub fn kind_code(kind: EntryKind) -> Int {
+    return match kind {
+        EntryKind.File => 0
+        EntryKind.Directory => 1
+        EntryKind.Symlink => 2
+        EntryKind.Hardlink => 3
+    }
+}
+
+pub fn failed(code: Int, error: [UInt8]) -> Error {
+    let size = if -code - 1 < error.len() { -code - 1 } else { error.len() }
+    let message = String.from_bytes(error.slice(0, size))
+    return Error.new(ErrorKind.InvalidData, "archive: " + (if message == null { "bad archive" } else { message }))
+}
+
+pub fn kind_of(code: Int) -> EntryKind {
+    if code == 1 { return EntryKind.Directory }
+    if code == 2 { return EntryKind.Symlink }
+    if code == 3 { return EntryKind.Hardlink }
+    return EntryKind.File
+}
+
+// The bytes of one field of an entry.
+pub fn field(handle: Int, index: Int, what: Int, size: Int) -> [UInt8] {
+    var out: [UInt8] = [0; size]
+    archive_field(handle, index, what, out)
+    return out
+}
+
+pub fn text_of(bytes: [UInt8]) -> String {
+    let text = String.from_bytes(bytes)
+    return if text == null { "" } else { text }
+}

@@ -1,0 +1,488 @@
+import { assert, assert_eq } from std.test
+import parse_int from std.string
+import { TcpListener, TcpStream } from net.socket
+import TlsAcceptor from net.tls
+import { Headers, Options, Request, Response, Server, connect_websocket, get, parse_url, post, send, url_decode, url_encode } from net.http
+import { Message, WebSocket } from net.websocket
+import accept_key from net._handshake
+import { authority, certificate, private_key } from .keys
+
+fn text_of(bytes: [UInt8]) -> String {
+    return String.from_bytes(bytes)!
+}
+
+fn app(state: Mutex<Int>, request: Request) -> Response {
+    let user = request.route("GET", "/users/:id")
+    if user != null { return Response.text(200, "user ${user[0]}") }
+    if request.route("GET", "/count") != null {
+        let hits = state.lock(|n| {
+            n += 1
+            return n
+        })
+        return Response.text(200, "${hits}")
+    }
+    if request.route("POST", "/echo") != null {
+        return match request.body_json() {
+            Ok(value) => Response.json(200, value)
+            Err(error) => Response.text(400, error.message)
+        }
+    }
+    if request.route("GET", "/search") != null {
+        let q = request.query_param("q")
+        return Response.text(200, if q == null { "none" } else { q })
+    }
+    if request.route("GET", "/token") != null {
+        let token = request.header("X-Token")
+        return Response.text(200, if token == null { "none" } else { token })
+    }
+    if request.route("GET", "/redirect") != null { return Response.redirect("/target") }
+    if request.route("GET", "/target") != null { return Response.text(200, "target") }
+    if request.route("GET", "/ws") != null { return Response.upgrade_to_websocket() }
+    return Response.text(404, "no such path")
+}
+
+fn echo(state: Mutex<Int>, request: Request, var socket: WebSocket) -> Null {
+    while true {
+        let message = socket.recv()
+        if message.is_err() { break }
+        let got = message!
+        if got == null { break }
+        match got {
+            Message.Text(text) => socket.send_text("echo:" + text)
+            Message.Binary(bytes) => socket.send_binary(bytes)
+        }
+    }
+    return null
+}
+
+fn raw(port: Int, text: String) -> String {
+    let stream = TcpStream.connect("127.0.0.1", port)!
+    stream.write_string(text)!
+    let reply = text_of(stream.read_all()!)
+    stream.close()!
+    return reply
+}
+
+fn settings(timeout_ms: Int, redirects: Int, roots: String) -> Options {
+    return Options { timeout_ms: timeout_ms, max_redirects: redirects, roots: roots, max_body: 1000000 }
+}
+
+test "options default to thirty seconds, no redirects, the bundled roots and 64 MiB" {
+    let defaults = Options()
+    assert_eq(defaults.timeout_ms, 30000)
+    assert_eq(defaults.max_redirects, 0)
+    assert_eq(defaults.roots, "")
+    assert_eq(defaults.max_body, 67108864)
+    assert_eq(Options { max_redirects: 3 }.timeout_ms, 30000)
+}
+
+test "headers are name and value pairs, names in lower case" {
+    var reply = Response.text(200, "hi").with_header("X-Token", "abc")
+    assert_eq(reply.headers.len(), 2)
+    assert_eq(reply.headers.at(0).0, "content-type")
+    assert_eq(reply.headers.at(1).0, "x-token")
+    assert_eq(reply.headers.at(1).1, "abc")
+    assert_eq(reply.headers["X-Token"]!, "abc")
+    assert_eq(reply.header("x-token")!, "abc")
+
+    var headers = Headers.empty()
+    headers = headers.set("X-Custom", "one")
+    headers = headers.set("x-custom", "two")
+    assert_eq(headers.len(), 1)
+    assert_eq(headers["X-CUSTOM"]!, "two")
+}
+
+test "the address of a request is split into its parts" {
+    let url = parse_url("https://example.com:8443/a/b?x=1#top")!
+    assert(url.secure, "secure")
+    assert_eq(url.host, "example.com")
+    assert_eq(url.port, 8443)
+    assert_eq(url.target, "/a/b?x=1")
+    let plain = parse_url("http://example.com")!
+    assert_eq(plain.port, 80)
+    assert_eq(plain.target, "/")
+    assert_eq(parse_url("wss://example.com?x=1")!.target, "/?x=1")
+    let v6 = parse_url("http://[::1]:9000/x")!
+    assert_eq(v6.host, "::1")
+    assert_eq(v6.port, 9000)
+    assert(parse_url("ftp://example.com/").is_err(), "scheme")
+    assert(parse_url("example.com/").is_err(), "no scheme")
+    assert(parse_url("http://example.com:99999/").is_err(), "port")
+}
+
+test "escapes are encoded and decoded" {
+    assert_eq(url_encode("a b/é"), "a%20b%2F%C3%A9")
+    assert_eq(url_decode("a%20b%2F%C3%A9"), "a b/é")
+    assert_eq(url_decode("100%"), "100%")
+}
+
+test "a server answers a client" {
+    let listener = TcpListener.bind("127.0.0.1", 0)!
+    let port = listener.port()!
+    let server = Server.with_state(0, app)
+    let running = spawn {
+        server.serve(listener)!
+        return 0
+    }
+    let reply = get("http://127.0.0.1:${port}/users/7")!
+    assert_eq(reply.status, 200)
+    assert_eq(reply.body_text()!, "user 7")
+    assert(reply.header("Content-Type")!.starts_with("text/plain"), "type")
+    assert_eq(reply.header("content-length")!, "6")
+    assert_eq(get("http://127.0.0.1:${port}/nothing")!.status, 404)
+    server.stop()
+    running.await()!
+}
+
+test "paths, queries and headers reach the handler" {
+    let listener = TcpListener.bind("127.0.0.1", 0)!
+    let port = listener.port()!
+    let server = Server.with_state(0, app)
+    let running = spawn {
+        server.serve(listener)!
+        return 0
+    }
+    assert_eq(get("http://127.0.0.1:${port}/search?q=a+b%21&n=")!.body_text()!, "a b!")
+    assert_eq(get("http://127.0.0.1:${port}/search")!.body_text()!, "none")
+    let sent = send("GET", "http://127.0.0.1:${port}/token", [("x-token", "abc")])!
+    assert_eq(sent.body_text()!, "abc")
+    assert_eq(get("http://127.0.0.1:${port}/users/a%20b")!.body_text()!, "user a b")
+    server.stop()
+    running.await()!
+}
+
+test "a json body goes to the handler and back" {
+    let listener = TcpListener.bind("127.0.0.1", 0)!
+    let port = listener.port()!
+    let server = Server.with_state(0, app)
+    let running = spawn {
+        server.serve(listener)!
+        return 0
+    }
+    let reply = post("http://127.0.0.1:${port}/echo", "{\"a\":[1,2]}".bytes(), "application/json")!
+    assert_eq(reply.status, 200)
+    assert_eq(reply.header("content-type")!, "application/json")
+    assert_eq(reply.body_text()!, "{\"a\":[1,2]}")
+    let bad = post("http://127.0.0.1:${port}/echo", "{".bytes(), "application/json")!
+    assert_eq(bad.status, 400)
+    server.stop()
+    running.await()!
+}
+
+test "state is shared by connections served at once" {
+    let listener = TcpListener.bind("127.0.0.1", 0)!
+    let port = listener.port()!
+    let server = Server.with_state(0, app)
+    let running = spawn {
+        server.serve(listener)!
+        return 0
+    }
+    var tasks: List<Task<Int>> = []
+    for _ in 0..8 {
+        tasks.push(spawn {
+            let reply = get("http://127.0.0.1:${port}/count")!
+            return parse_int(reply.body_text()!)!
+        })
+    }
+    var total = 0
+    for task in tasks {
+        total += task.await()!
+    }
+    assert_eq(total, 36)
+    server.stop()
+    running.await()!
+}
+
+test "a connection stays open for the next request" {
+    let listener = TcpListener.bind("127.0.0.1", 0)!
+    let port = listener.port()!
+    let server = Server.with_state(0, app)
+    let running = spawn {
+        server.serve(listener)!
+        return 0
+    }
+    let reply = raw(port, "GET /count HTTP/1.1\r\nhost: x\r\n\r\nGET /count HTTP/1.1\r\nhost: x\r\nconnection: close\r\n\r\n")
+    assert(reply.contains("connection: keep-alive"), "kept")
+    assert(reply.contains("connection: close"), "closed")
+    assert(reply.ends_with("\r\n\r\n2"), reply)
+    server.stop()
+    running.await()!
+}
+
+test "a request body can be chunked and can wait for a continue" {
+    let listener = TcpListener.bind("127.0.0.1", 0)!
+    let port = listener.port()!
+    let server = Server.with_state(0, app)
+    let running = spawn {
+        server.serve(listener)!
+        return 0
+    }
+    let chunked = raw(port, "POST /echo HTTP/1.1\r\nhost: x\r\nconnection: close\r\ntransfer-encoding: chunked\r\n\r\n3\r\n{\"a\r\n4\r\n\":1}\r\n0\r\n\r\n")
+    assert(chunked.starts_with("HTTP/1.1 200 OK"), chunked)
+    assert(chunked.ends_with("{\"a\":1}"), chunked)
+    let expecting = raw(port, "POST /echo HTTP/1.1\r\nhost: x\r\nconnection: close\r\nexpect: 100-continue\r\ncontent-length: 7\r\n\r\n{\"a\":1}")
+    assert(expecting.starts_with("HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 200 OK"), expecting)
+    server.stop()
+    running.await()!
+}
+
+test "a HEAD request gets the headers and no body" {
+    let listener = TcpListener.bind("127.0.0.1", 0)!
+    let port = listener.port()!
+    let server = Server.with_state(0, app)
+    let running = spawn {
+        server.serve(listener)!
+        return 0
+    }
+    let reply = raw(port, "HEAD /users/12345 HTTP/1.1\r\nhost: x\r\nconnection: close\r\n\r\n")
+    assert(reply.contains("content-length: 10"), reply)
+    assert(reply.ends_with("\r\n\r\n"), reply)
+    server.stop()
+    running.await()!
+}
+
+test "a bad, too large or too long request is refused" {
+    let listener = TcpListener.bind("127.0.0.1", 0)!
+    let port = listener.port()!
+    let server = Server.with_state(0, app).with_limits(5000, 10)
+    let running = spawn {
+        server.serve(listener)!
+        return 0
+    }
+    assert(raw(port, "nonsense\r\n\r\n").starts_with("HTTP/1.1 400"), "request line")
+    assert(raw(port, "POST /echo HTTP/1.1\r\nhost: x\r\ncontent-length: 100\r\n\r\n").starts_with("HTTP/1.1 413"), "body")
+    assert(raw(port, "POST /echo HTTP/1.1\r\nhost: x\r\ncontent-length: abc\r\n\r\n").starts_with("HTTP/1.1 400"), "length")
+    assert(raw(port, "GET /" + "a".repeat(9000) + " HTTP/1.1\r\n\r\n").starts_with("HTTP/1.1 431"), "line")
+    server.stop()
+    running.await()!
+}
+
+test "redirects are followed only when asked" {
+    let listener = TcpListener.bind("127.0.0.1", 0)!
+    let port = listener.port()!
+    let server = Server.with_state(0, app)
+    let running = spawn {
+        server.serve(listener)!
+        return 0
+    }
+    let stopped = get("http://127.0.0.1:${port}/redirect")!
+    assert_eq(stopped.status, 302)
+    assert_eq(stopped.header("location")!, "/target")
+    let followed = send("GET", "http://127.0.0.1:${port}/redirect", options=settings(5000, 2, ""))!
+    assert_eq(followed.status, 200)
+    assert_eq(followed.body_text()!, "target")
+    server.stop()
+    running.await()!
+}
+
+test "a client reads a chunked answer and an answer that ends with the connection" {
+    let listener = TcpListener.bind("127.0.0.1", 0)!
+    let port = listener.port()!
+    let fake = spawn {
+        let first = listener.accept()!
+        first.read(4096)!
+        first.write_string("HTTP/1.1 200 OK\r\ntransfer-encoding: chunked\r\n\r\n5\r\nhello\r\n6;ext=1\r\n world\r\n0\r\nx-end: 1\r\n\r\n")!
+        first.close()!
+        let second = listener.accept()!
+        second.read(4096)!
+        second.write_string("HTTP/1.0 200 OK\r\n\r\nuntil the end")!
+        second.close()!
+        return 0
+    }
+    assert_eq(get("http://127.0.0.1:${port}/")!.body_text()!, "hello world")
+    assert_eq(get("http://127.0.0.1:${port}/")!.body_text()!, "until the end")
+    fake.await()!
+    listener.close()!
+}
+
+test "a client gives up on a server that does not answer" {
+    let listener = TcpListener.bind("127.0.0.1", 0)!
+    let port = listener.port()!
+    let result = send("GET", "http://127.0.0.1:${port}/", options=settings(100, 0, ""))
+    assert(result.is_err(), "timed out")
+    let kind = match result {
+        Ok(_) => ErrorKind.Other
+        Err(error) => error.kind
+    }
+    assert(kind == ErrorKind.TimedOut, "kind")
+    listener.close()!
+}
+
+test "a server and a client speak HTTP over TLS" {
+    let listener = TcpListener.bind("127.0.0.1", 0)!
+    let port = listener.port()!
+    let server = Server.with_state(0, app).with_tls(TlsAcceptor.new(certificate(), private_key())!)
+    let running = spawn {
+        server.serve(listener)!
+        return 0
+    }
+    let reply = send("GET", "https://localhost:${port}/users/9", options=settings(5000, 0, authority()))!
+    assert_eq(reply.body_text()!, "user 9")
+    assert(get("https://localhost:${port}/users/9").is_err(), "the test authority is not a public root")
+    server.stop()
+    running.await()!
+}
+
+test "the handshake answer is computed from the key" {
+    assert_eq(accept_key("dGhlIHNhbXBsZSBub25jZQ=="), "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=")
+}
+
+test "a WebSocket carries text, bytes and pings both ways" {
+    let listener = TcpListener.bind("127.0.0.1", 0)!
+    let port = listener.port()!
+    let server = Server.with_state(0, app, echo)
+    let running = spawn {
+        server.serve(listener)!
+        return 0
+    }
+    var socket = connect_websocket("ws://127.0.0.1:${port}/ws")!
+    socket.send_text("hi")!
+    let first = socket.recv()!
+    assert(first != null, "a message")
+    assert_eq(match first! {
+        Message.Text(text) => text
+        Message.Binary(_) => "binary"
+    }, "echo:hi")
+    let big: [UInt8] = [9; 70000]
+    socket.send_binary(big)!
+    let second = socket.recv()!
+    assert_eq(match second! {
+        Message.Text(_) => 0
+        Message.Binary(bytes) => bytes.len()
+    }, 70000)
+    socket.ping([1, 2])!
+    socket.send_text("after")!
+    let third = socket.recv()!
+    assert_eq(match third! {
+        Message.Text(text) => text
+        Message.Binary(_) => "binary"
+    }, "echo:after")
+    socket.close(1000, "bye")!
+    server.stop()
+    running.await()!
+}
+
+test "a WebSocket works over TLS" {
+    let listener = TcpListener.bind("127.0.0.1", 0)!
+    let port = listener.port()!
+    let server = Server.with_state(0, app, echo).with_tls(TlsAcceptor.new(certificate(), private_key())!)
+    let running = spawn {
+        server.serve(listener)!
+        return 0
+    }
+    var socket = connect_websocket("wss://localhost:${port}/ws", settings(5000, 0, authority()))!
+    socket.send_text("secure")!
+    let reply = socket.recv()!
+    assert_eq(match reply! {
+        Message.Text(text) => text
+        Message.Binary(_) => "binary"
+    }, "echo:secure")
+    socket.close(1000, "")!
+    server.stop()
+    running.await()!
+}
+
+test "an upgrade nobody asked for is refused" {
+    let listener = TcpListener.bind("127.0.0.1", 0)!
+    let port = listener.port()!
+    let server = Server.with_state(0, app, echo)
+    let running = spawn {
+        server.serve(listener)!
+        return 0
+    }
+    assert(raw(port, "GET /ws HTTP/1.1\r\nhost: x\r\nconnection: close\r\n\r\n").starts_with("HTTP/1.1 400"), "plain request")
+    assert(connect_websocket("ws://127.0.0.1:${port}/users/1").is_err(), "not an upgrade path")
+    server.stop()
+    running.await()!
+}
+
+// A stream past the handshake of a WebSocket, for frames the client library would not send.
+fn upgraded(port: Int) -> TcpStream {
+    let stream = TcpStream.connect("127.0.0.1", port)!
+    stream.write_string("GET /ws HTTP/1.1\r\nhost: x\r\nupgrade: websocket\r\nconnection: Upgrade\r\nsec-websocket-key: dGhlIHNhbXBsZSBub25jZQ==\r\nsec-websocket-version: 13\r\n\r\n")!
+    let head = text_of(stream.read(1024)!)
+    assert(head.starts_with("HTTP/1.1 101"), head)
+    assert(head.contains("sec-websocket-accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo="), head)
+    return stream
+}
+
+test "fragments of a message are joined" {
+    let listener = TcpListener.bind("127.0.0.1", 0)!
+    let port = listener.port()!
+    let server = Server.with_state(0, app, echo)
+    let running = spawn {
+        server.serve(listener)!
+        return 0
+    }
+    let stream = upgraded(port)
+    stream.write([1, 130, 0, 0, 0, 0, 104, 101])!
+    stream.write([128, 131, 0, 0, 0, 0, 108, 108, 111])!
+    stream.write([136, 128, 0, 0, 0, 0])!
+    let reply = stream.read_all()!
+    assert_eq(reply[0], 129)
+    assert_eq(reply[1], 10)
+    assert_eq(text_of(reply.slice(2, 12).to_array()), "echo:hello")
+    assert_eq(reply[12], 136)
+    stream.close()!
+    server.stop()
+    running.await()!
+}
+
+test "a frame that breaks the rules closes the socket" {
+    let listener = TcpListener.bind("127.0.0.1", 0)!
+    let port = listener.port()!
+    let server = Server.with_state(0, app, echo)
+    let running = spawn {
+        server.serve(listener)!
+        return 0
+    }
+    let reserved = upgraded(port)
+    reserved.write([193, 128, 0, 0, 0, 0])!
+    let first = reserved.read_all()!
+    assert_eq(first[0], 136)
+    assert_eq(first[2], 3)
+    assert_eq(first[3], 234)
+    reserved.close()!
+    let unmasked = upgraded(port)
+    unmasked.write([129, 0])!
+    let second = unmasked.read_all()!
+    assert_eq(second[0], 136)
+    assert_eq(second[3], 234)
+    unmasked.close()!
+    let invalid = upgraded(port)
+    invalid.write([129, 130, 0, 0, 0, 0, 255, 254])!
+    let third = invalid.read_all()!
+    assert_eq(third[0], 136)
+    assert_eq(third[2], 3)
+    assert_eq(third[3], 239)
+    invalid.close()!
+    server.stop()
+    running.await()!
+}
+
+struct HttpPayload {
+    msg: String
+    count: Int
+}
+
+test "stateless server handles JSON decode and typed response" {
+    let server = Server.new(|request: Request| {
+        if request.path == "/echo" {
+            let item = request.body_as<HttpPayload>()!
+            return Response.from_json<HttpPayload>(200, HttpPayload { msg: item.msg + "!", count: item.count + 1 })!
+        }
+        return Response.empty(404)
+    })
+    let listener = TcpListener.bind("127.0.0.1", 0)!
+    let port = listener.port()!
+    let task = spawn { server.serve(listener) }
+    let reply = post("http://127.0.0.1:${port}/echo", "{\"msg\":\"hi\",\"count\":4}".bytes(), "application/json")!
+    assert_eq(reply.status, 200)
+    assert_eq(reply.headers["content-type"]!, "application/json")
+    let out = reply.body_as<HttpPayload>()!
+    assert_eq(out.msg, "hi!")
+    assert_eq(out.count, 5)
+    server.stop()
+    task.await()
+    listener.close()
+}

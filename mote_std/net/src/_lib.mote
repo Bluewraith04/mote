@@ -1,0 +1,47 @@
+// The functions of the external library `net`.
+
+extern "net" {
+    @blocking
+    pub fn net_connect(host: String, port: Int, timeout_ms: Int) -> Int
+
+    @blocking
+    pub fn net_listen(host: String, port: Int, backlog: Int) -> Int
+
+    @blocking
+    pub fn net_udp_bind(host: String, port: Int) -> Int
+
+    @blocking
+    pub fn net_accept(fd: Int, timeout_ms: Int) -> Int
+
+    @blocking
+    pub fn net_read(fd: Int, buffer: [UInt8], timeout_ms: Int) -> Int
+
+    @blocking
+    pub fn net_write(fd: Int, buffer: [UInt8], count: Int, timeout_ms: Int) -> Int
+
+    @blocking
+    pub fn net_udp_send(fd: Int, host: String, port: Int, buffer: [UInt8], count: Int) -> Int
+
+    @blocking
+    pub fn net_udp_recv(fd: Int, buffer: [UInt8], timeout_ms: Int, peer: [UInt8], sender: [Int]) -> Int
+
+    pub fn net_shutdown(fd: Int, how: Int) -> Int
+    pub fn net_close(fd: Int) -> Int
+    pub fn net_address(fd: Int, peer: Int, buffer: [UInt8]) -> Int
+    pub fn net_port(fd: Int) -> Int
+}
+
+extern "nettls" {
+    pub fn tls_client(host: String, roots: [UInt8]) -> Int
+    pub fn tls_server(chain: [UInt8], key: [UInt8]) -> Int
+    pub fn tls_incoming(session: Int, data: [UInt8]) -> Int
+    pub fn tls_outgoing(session: Int, buffer: [UInt8]) -> Int
+    pub fn tls_wants_read(session: Int) -> Int
+    pub fn tls_wants_write(session: Int) -> Int
+    pub fn tls_handshaking(session: Int) -> Int
+    pub fn tls_plain_read(session: Int, buffer: [UInt8]) -> Int
+    pub fn tls_plain_write(session: Int, data: [UInt8]) -> Int
+    pub fn tls_send_close(session: Int) -> Int
+    pub fn tls_message(session: Int, buffer: [UInt8]) -> Int
+    pub fn tls_free(session: Int) -> Int
+}

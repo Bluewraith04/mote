@@ -1,0 +1,439 @@
+// A document tree of nodes: composable directly without an arena object, or wrapped in `Doc`.
+import NodeKind from .kind
+import { Table, WireNode, decode_table, encode_table } from ._codec
+import { escape_html, is_void_tag, open_tag } from ._render
+
+fn as_node(item: Node | String) -> Node {
+    if item is String { return Node.text_node(item) }
+    return item
+}
+
+fn can_hold_children(kind: NodeKind) -> Bool {
+    return kind == NodeKind.Document || kind == NodeKind.Element
+}
+
+fn has_text_field(kind: NodeKind) -> Bool {
+    return kind == NodeKind.Text || kind == NodeKind.Comment || kind == NodeKind.Raw
+}
+
+fn find_child(kids: List<Node>, needle: Node) -> Int {
+    for i in 0..kids.len() {
+        if kids[i] == needle { return i }
+    }
+    return -1
+}
+
+fn is_within(node: Node, ancestor: Node) -> Bool {
+    var at: Node? = node
+    while at != null {
+        let cur = at!
+        if cur == ancestor { return true }
+        at = cur.parent_ref
+    }
+    return false
+}
+
+fn detach_child(var child: Node) {
+    if child.parent_ref != null {
+        var old = child.parent_ref!
+        var kept: List<Node> = []
+        for item in old.kid_list {
+            if item != child { kept.push(item) }
+        }
+        old.kid_list = kept
+        child.parent_ref = null
+    }
+}
+
+fn encode_walk(node: Node, var table: Table) -> Int {
+    let id = table.add_node(node.kind_val, node.tag, node.content, node.attr_list)
+    var child_ids: List<Int> = []
+    for kid in node.kid_list {
+        child_ids.push(encode_walk(kid, table))
+    }
+    table.set_children(id, child_ids)
+    return id
+}
+
+fn clone_node(node: Node) -> Node {
+    var attrs: List<(String, String)> = []
+    for pair in node.attr_list { attrs.push((pair.0, pair.1)) }
+    var made = Node {
+        kind_val: node.kind_val,
+        tag: node.tag,
+        content: node.content,
+        attr_list: attrs,
+        kid_list: [],
+        parent_ref: null
+    }
+    for kid in node.kid_list {
+        var copied = clone_node(kid)
+        copied.parent_ref = made
+        made.kid_list.push(copied)
+    }
+    return made
+}
+
+/// A node of a tree (`Document`, `Element`, `Text`, `Comment`, or `Raw`). Compose nodes directly with `doc.el`, `doc.div`, `doc.text`, etc., or mutate in place via `var Node`.
+pub class Node {
+    kind_val: NodeKind
+    var tag: String
+    var content: String
+    var attr_list: List<(String, String)>
+    var kid_list: List<Node>
+    var parent_ref: Node?
+
+    /// A new document container node.
+    pub fn document() -> Node {
+        return Node { kind_val: NodeKind.Document, tag: "", content: "", attr_list: [], kid_list: [], parent_ref: null }
+    }
+
+    /// A new element node with tag name `name`.
+    pub fn element(name: String) -> Node {
+        return Node { kind_val: NodeKind.Element, tag: name, content: "", attr_list: [], kid_list: [], parent_ref: null }
+    }
+
+    /// A new text node.
+    pub fn text_node(text: String) -> Node {
+        return Node { kind_val: NodeKind.Text, tag: "", content: text, attr_list: [], kid_list: [], parent_ref: null }
+    }
+
+    /// A new comment node.
+    pub fn comment_node(text: String) -> Node {
+        return Node { kind_val: NodeKind.Comment, tag: "", content: text, attr_list: [], kid_list: [], parent_ref: null }
+    }
+
+    /// A new raw HTML node.
+    pub fn raw_node(html: String) -> Node {
+        return Node { kind_val: NodeKind.Raw, tag: "", content: html, attr_list: [], kid_list: [], parent_ref: null }
+    }
+
+    /// Decodes a document tree from its `MDOC` byte form, returning the `Document` root node.
+    pub fn from_bytes(bytes: [UInt8]) -> Result<Node, Error> {
+        let wire = decode_table(bytes)?
+        var built: List<Node> = []
+        for entry in wire {
+            var attrs: List<(String, String)> = []
+            for pair in entry.attrs { attrs.push((pair.0, pair.1)) }
+            built.push(Node {
+                kind_val: entry.kind,
+                tag: entry.name,
+                content: entry.text,
+                attr_list: attrs,
+                kid_list: [],
+                parent_ref: null
+            })
+        }
+        for id in 0..wire.len() {
+            var parent = built[id]
+            for cid in wire[id].child_ids {
+                var child = built[cid]
+                child.parent_ref = parent
+                parent.kid_list.push(child)
+            }
+        }
+        return Ok(built[0])
+    }
+
+    pub fn kind(self) -> NodeKind { return self.kind_val }
+
+    /// Whether `other` is the same node instance as `self`.
+    pub fn same(self, other: Node) -> Bool { return self == other }
+
+    /// The name of an element; "" for the others.
+    pub fn name(self) -> String {
+        if self.kind_val != NodeKind.Element { return "" }
+        return self.tag
+    }
+
+    /// The text of a text, comment, or raw node; "" for the others.
+    pub fn text(self) -> String {
+        if !has_text_field(self.kind_val) { return "" }
+        return self.content
+    }
+
+    /// The text of every text node under this node, in order.
+    pub fn text_content(self) -> String {
+        if self.kind_val == NodeKind.Text { return self.content }
+        var out = ""
+        for node in self.descendants() {
+            if node.kind_val == NodeKind.Text { out = out + node.content }
+        }
+        return out
+    }
+
+    pub fn parent(self) -> Node? { return self.parent_ref }
+
+    pub fn child_count(self) -> Int { return self.kid_list.len() }
+
+    /// The child at an index, or null.
+    pub fn child(self, index: Int) -> Node? {
+        if index < 0 || index >= self.kid_list.len() { return null }
+        return self.kid_list[index]
+    }
+
+    pub fn children(self) -> List<Node> {
+        return self.kid_list.slice(0, self.kid_list.len()).to_list()
+    }
+
+    /// Where this node is among its parent's children, or -1 outside the tree.
+    pub fn index(self) -> Int {
+        let parent = self.parent_ref
+        if parent == null { return -1 }
+        for i in 0..parent.kid_list.len() {
+            if parent.kid_list[i] == self { return i }
+        }
+        return -1
+    }
+
+    /// The sibling after this node, or null.
+    pub fn next(self) -> Node? {
+        let parent = self.parent_ref
+        if parent == null { return null }
+        let idx = self.index()
+        if idx < 0 { return null }
+        return parent.child(idx + 1)
+    }
+
+    /// The sibling before this node, or null.
+    pub fn previous(self) -> Node? {
+        let parent = self.parent_ref
+        if parent == null { return null }
+        let idx = self.index()
+        if idx <= 0 { return null }
+        return parent.child(idx - 1)
+    }
+
+    /// Every node under this one, parents before children.
+    pub fn descendants(self) -> List<Node> {
+        var out: List<Node> = []
+        for child in self.kid_list {
+            out.push(child)
+            for inner in child.descendants() {
+                out.push(inner)
+            }
+        }
+        return out
+    }
+
+    /// The elements under this node with a name, in order.
+    pub fn find_all(self, name: String) -> List<Node> {
+        var out: List<Node> = []
+        for node in self.descendants() {
+            if node.kind_val == NodeKind.Element && node.tag == name { out.push(node) }
+        }
+        return out
+    }
+
+    /// The first element under this node with a name.
+    pub fn find(self, name: String) -> Node? {
+        for node in self.descendants() {
+            if node.kind_val == NodeKind.Element && node.tag == name { return node }
+        }
+        return null
+    }
+
+    /// The value of an attribute, or null.
+    pub fn attr(self, name: String) -> String? {
+        for pair in self.attr_list {
+            if pair.0 == name { return pair.1 }
+        }
+        return null
+    }
+
+    /// The attributes in the order they were set.
+    pub fn attrs(self) -> List<(String, String)> {
+        return self.attr_list.slice(0, self.attr_list.len()).to_list()
+    }
+
+    /// Returns a copy with an attribute set (replacing any earlier value of `name`).
+    pub fn with_attr(self, name: String, value: String) -> Node {
+        var made = clone_node(self)
+        var _ = made.set_attr(name, value)
+        return made
+    }
+
+    /// Returns a copy with all `(name, value)` pairs applied in order.
+    pub fn with_attrs(self, pairs: List<(String, String)>) -> Node {
+        var made = clone_node(self)
+        if made.kind_val != NodeKind.Element { return made }
+        for pair in pairs {
+            var _ = made.set_attr(pair.0, pair.1)
+        }
+        return made
+    }
+
+    /// Returns a copy with `id` attribute set.
+    pub fn id(self, value: String) -> Node { return self.with_attr("id", value) }
+
+    /// Returns a copy with `class` attribute set.
+    pub fn with_class(self, value: String) -> Node { return self.with_attr("class", value) }
+
+    /// Returns a copy with `child` appended (`String` becomes a text node).
+    pub fn add(self, child: Node | String) -> Node {
+        return self.add_all([child])
+    }
+
+    /// Returns a copy with all `children` appended in order.
+    pub fn add_all(self, children: List<Node | String>) -> Node {
+        var made = clone_node(self)
+        if !can_hold_children(made.kind_val) { return made }
+        for item in children {
+            var kid = clone_node(as_node(item))
+            if kid.kind_val == NodeKind.Document {
+                for inner in kid.kid_list {
+                    var cloned = clone_node(inner)
+                    cloned.parent_ref = made
+                    made.kid_list.push(cloned)
+                }
+            } else {
+                kid.parent_ref = made
+                made.kid_list.push(kid)
+            }
+        }
+        return made
+    }
+
+    /// Sets an attribute of an element in place, replacing a value of the name.
+    pub fn set_attr(var self, name: String, value: String) -> Result<Null, Error> {
+        if self.kind_val != NodeKind.Element {
+            return Err(Error.new(ErrorKind.InvalidData, "doc: only an element has attributes"))
+        }
+        for i in 0..self.attr_list.len() {
+            if self.attr_list[i].0 == name {
+                self.attr_list[i] = (name, value)
+                return Ok(null)
+            }
+        }
+        self.attr_list.push((name, value))
+        return Ok(null)
+    }
+
+    /// Removes an attribute in place; false when there was none.
+    pub fn remove_attr(var self, name: String) -> Bool {
+        var removed = false
+        var out: List<(String, String)> = []
+        for pair in self.attr_list {
+            if pair.0 == name {
+                removed = true
+            } else {
+                out.push(pair)
+            }
+        }
+        self.attr_list = out
+        return removed
+    }
+
+    /// Renames an element in place.
+    pub fn rename(var self, name: String) -> Result<Null, Error> {
+        if self.kind_val != NodeKind.Element {
+            return Err(Error.new(ErrorKind.InvalidData, "doc: only an element has a name"))
+        }
+        self.tag = name
+        return Ok(null)
+    }
+
+    /// Replaces the text of a text, comment, or raw node in place.
+    pub fn set_text(var self, text: String) -> Result<Null, Error> {
+        if !has_text_field(self.kind_val) {
+            return Err(Error.new(ErrorKind.InvalidData, "doc: only a text or comment node has text"))
+        }
+        self.content = text
+        return Ok(null)
+    }
+
+    /// Puts a node last among the children in place, moving it out of its old place.
+    pub fn append(var self, var child: Node) -> Result<Null, Error> {
+        return self.insert_at(child, null)
+    }
+
+    /// Puts a node before a child of this node in place.
+    pub fn insert_before(var self, var child: Node, before: Node) -> Result<Null, Error> {
+        return self.insert_at(child, before)
+    }
+
+    fn insert_at(var self, var child: Node, before: Node?) -> Result<Null, Error> {
+        if !can_hold_children(self.kind_val) || child.kind_val == NodeKind.Document {
+            return Err(Error.new(ErrorKind.InvalidData, "doc: that node cannot go there"))
+        }
+        if is_within(self, child) {
+            return Err(Error.new(ErrorKind.InvalidData, "doc: that node cannot go there"))
+        }
+        var target_idx = self.kid_list.len()
+        if before != null {
+            if before.parent_ref != self || before == child {
+                return Err(Error.new(ErrorKind.InvalidData, "doc: that node cannot go there"))
+            }
+            let found = find_child(self.kid_list, before)
+            if found < 0 {
+                return Err(Error.new(ErrorKind.InvalidData, "doc: that node cannot go there"))
+            }
+            target_idx = found
+        }
+        detach_child(child)
+        // Recompute target index if child was earlier in `self.kid_list`.
+        if before != null {
+            let refreshed = find_child(self.kid_list, before)
+            target_idx = if refreshed >= 0 { refreshed } else { self.kid_list.len() }
+        }
+        var next_kids: List<Node> = []
+        for i in 0..target_idx { next_kids.push(self.kid_list[i]) }
+        next_kids.push(child)
+        for i in target_idx..self.kid_list.len() { next_kids.push(self.kid_list[i]) }
+        self.kid_list = next_kids
+        child.parent_ref = self
+        return Ok(null)
+    }
+
+    /// Takes the node out of its parent.
+    pub fn detach(var self) {
+        detach_child(self)
+    }
+
+    /// A deep copy of this node and everything under it, outside any parent.
+    pub fn copy(self) -> Node {
+        if self.kind_val == NodeKind.Document {
+            var copy_root = Node.element("document")
+            for kid in self.kid_list {
+                var cloned = clone_node(kid)
+                cloned.parent_ref = copy_root
+                copy_root.kid_list.push(cloned)
+            }
+            return copy_root
+        }
+        return clone_node(self)
+    }
+
+    /// The `MDOC` byte form of this node (or document).
+    pub fn bytes(self) -> [UInt8] {
+        var table = Table.new()
+        var root = self
+        if self.kind_val != NodeKind.Document {
+            root = Node.document().add(self)
+        }
+        encode_walk(root, table)
+        return encode_table(table)
+    }
+
+    /// The HTML text of this node: the node itself, or for a document node its children. Void elements are written `<br />`.
+    pub fn to_html(self) -> String {
+        let kind = self.kind_val
+        if kind == NodeKind.Text { return escape_html(self.content, false) }
+        if kind == NodeKind.Comment { return "<!--" + self.content + "-->" }
+        if kind == NodeKind.Raw { return self.content }
+        var out = ""
+        if kind == NodeKind.Element {
+            let name = self.tag
+            let void_el = is_void_tag(name)
+            out = open_tag(name, self.attr_list, void_el)
+            if void_el { return out }
+            let raw = name == "script" || name == "style"
+            for child in self.kid_list {
+                out = out + (if raw && child.kind_val == NodeKind.Text { child.content } else { child.to_html() })
+            }
+            return out + "</" + name + ">"
+        }
+        for child in self.kid_list { out = out + child.to_html() }
+        return out
+    }
+}

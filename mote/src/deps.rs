@@ -69,7 +69,7 @@ pub fn add(project: &Path, cwd: &Path, what: &str, home: Option<&Path>) -> Resul
     let (manifest, entry, said) = if given.is_dir() {
         let real = fs::canonicalize(&given).map_err(|error| format!("cannot read {}: {error}", shown(&given)))?;
         let manifest = Manifest::read(&real.join("mote.toml")).map_err(|error| error.to_string())?;
-        let path = relative(&real_project, &real).display().to_string();
+        let path = shown(&relative(&real_project, &real));
         let path = if path.is_empty() { ".".to_string() } else { path };
         (manifest, format!("{{ path = \"{path}\" }}"), path)
     } else if given.is_file() && given.extension().is_some_and(|extension| extension == "zip") {
@@ -85,7 +85,8 @@ pub fn add(project: &Path, cwd: &Path, what: &str, home: Option<&Path>) -> Resul
             fs::copy(&real, &dest).map_err(|error| format!("cannot write {}: {error}", shown(&dest)))?;
             inside
         };
-        let path = kept.to_str().ok_or_else(|| "the path is not UTF-8".to_string())?.to_string();
+        let _ = kept.to_str().ok_or_else(|| "the path is not UTF-8".to_string())?;
+        let path = shown(&kept);
         (manifest, format!("{{ zip = \"{path}\" }}"), path)
     } else {
         return Err(format!("{} is not a zip file or a package directory", shown(&given)));

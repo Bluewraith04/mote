@@ -1,0 +1,111 @@
+// A window, real or headless, that shows layouts and gives back the events sent to it.
+import Node from doc
+import { Port, PortMode } from std.port
+import { Event, Next } from .event
+import { Layout, layout } from .layout
+import Routes from .routes
+import { pane_close, pane_headless, pane_inject, pane_open, pane_present } from ._lib
+import { decode, encode, words_of } from ._wire
+
+/// A window, real or headless, that shows layouts and gives back the events sent to it.
+pub class Window {
+    pub var width: Int
+    pub var height: Int
+    pub var last: Layout?
+    pub var frames: List<Layout>
+    var handle: Int
+    var screen: Bool
+    var events: Receiver<[UInt8]>
+
+    /// Opens a window of `width` by `height` pixels; only one can be open at a time.
+    pub fn open(width: Int, height: Int, title: String) -> Result<Window, Error> {
+        let (end, events) = Port.open(PortMode.Queue(256))
+        let error: [UInt8] = [0; 256]
+        let handle = pane_open(width, height, title, end, error)
+        if handle < 0 {
+            let message = String.from_bytes(error.slice(0, 0 - handle - 1))
+            return Err(Error.new(ErrorKind.Other, "pane: " + (if message == null { "window failed" } else { message })))
+        }
+        return Ok(Window { width: width, height: height, last: null, frames: [], handle: handle, screen: true, events: events })
+    }
+
+    /// A window with no screen: it keeps every layout it is shown in `frames` and gives back only the events sent with `inject`.
+    pub fn headless(width: Int, height: Int) -> Window {
+        let (end, events) = Port.open(PortMode.Queue(256))
+        let handle = pane_headless(end)
+        return Window { width: width, height: height, last: null, frames: [], handle: handle, screen: false, events: events }
+    }
+
+    /// Sends the window an event as if the user had caused it; false if its queue is full or closed.
+    pub fn inject(self, event: Event) -> Bool {
+        if self.handle == 0 { return false }
+        return pane_inject(self.handle, encode(words_of(event))) == 0
+    }
+
+    /// Shows a layout.
+    pub fn present(var self, shown: Layout) {
+        if self.screen {
+            shown.paint(self.handle)
+        } else {
+            self.frames.push(shown)
+        }
+        self.last = shown
+    }
+
+    /// The next event, waiting for one in a real window; null when a headless window has none or the window is closed.
+    pub fn next(var self) -> Event? {
+        while true {
+            let message = if self.screen { self.events.recv() } else { self.events.try_recv() }
+            if message == null { return null }
+            let event = decode(message)
+            if event != null {
+                match event {
+                    Resized(w, h) => {
+                        self.width = w
+                        self.height = h
+                    }
+                    _ => {}
+                }
+                return event
+            }
+        }
+        return null
+    }
+
+    /// Shows `view(state)` and passes each event to `update` until it quits or there are no more events; returns the last state.
+    pub fn run<S>(var self, initial: S, view: (S) -> Node, update: (S, Event) -> Next<S>) -> Result<S, Error> {
+        return self.drive(initial, view, |state: S, event: Event| -> Result<Next<S>, Error> { return Ok(update(state, event)) })
+    }
+
+    /// As `run`, but an event runs the pipeline `routes` has for it, and an event with none changes nothing (a `Close` with none quits).
+    pub fn run_routes<S>(var self, initial: S, view: (S) -> Node, routes: Routes) -> Result<S, Error> {
+        return self.drive(initial, view, |state: S, event: Event| -> Result<Next<S>, Error> { return routes.handle(state, event) })
+    }
+
+    fn drive<S>(var self, initial: S, view: (S) -> Node, update: (S, Event) -> Result<Next<S>, Error>) -> Result<S, Error> {
+        var state = initial
+        while true {
+            let shown = layout(view(state), self.width, self.height)?
+            self.present(shown)
+            let event = self.next()
+            if event == null { return Ok(state) }
+            let seen = match event {
+                Click(_, x, y, button) => Event.Click(shown.at(x, y), x, y, button)
+                _ => event
+            }
+            match update(state, seen)? {
+                Continue(next) => { state = next }
+                Quit(last) => { return Ok(last) }
+            }
+        }
+        return Ok(state)
+    }
+
+    /// Closes the window.
+    pub fn close(var self) {
+        if self.handle != 0 {
+            pane_close(self.handle)
+            self.handle = 0
+        }
+    }
+}

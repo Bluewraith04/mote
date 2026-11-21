@@ -3,10 +3,8 @@ mod flow;
 mod tests;
 mod typed;
 
-use std::collections::HashMap;
-
 use mote_base::Interner;
-use mote_semantics::{Function as Declared, Program};
+use mote_semantics::Program;
 
 use crate::ir::{BlockId, Callee, FuncId, Function, FunctionKind, Inst, Module, Op, Operand, RegId, Terminator};
 
@@ -20,16 +18,8 @@ pub struct VerifyError {
 /// Checks that every block, register and function a function names exists, and that each op, call and terminator fits the types of its registers.
 pub fn verify(module: &Module, program: &Program, interner: &Interner) -> Vec<VerifyError> {
     let mut errors = Vec::new();
-    let mut intrinsics: HashMap<&str, Vec<&Declared>> = HashMap::new();
-    for (_, def) in program.defs.iter() {
-        if let Some(function) = def.function()
-            && let Some(name) = function.intrinsic
-        {
-            intrinsics.entry(interner.resolve(name)).or_default().push(function);
-        }
-    }
     for (id, function) in module.functions.iter() {
-        let mut check = Check { module, program, interner, intrinsics: &intrinsics, function, id, errors: &mut errors, inst: None };
+        let mut check = Check { module, program, interner, function, id, errors: &mut errors, inst: None };
         check.run();
     }
     errors
@@ -39,8 +29,6 @@ struct Check<'a> {
     module: &'a Module,
     program: &'a Program,
     interner: &'a Interner,
-    /// The declarations in std of each intrinsic name.
-    intrinsics: &'a HashMap<&'a str, Vec<&'a Declared>>,
     function: &'a Function,
     id: FuncId,
     errors: &'a mut Vec<VerifyError>,

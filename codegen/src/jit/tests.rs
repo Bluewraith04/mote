@@ -163,3 +163,33 @@ fn jit_each_call_has_a_descriptor_that_lists_the_words_of_the_references_and_nev
     }
     assert!(descriptors.iter().any(|(_, descriptor)| descriptor.refs.len() >= 2));
 }
+
+#[test]
+fn jit_detects_single_threaded_and_runs_direct_fast_path() {
+    let mut pipeline = built("import Instant from std.time\nfn main() {\n    var xs = [1, 2, 3]\n    xs.push(4)\n    println(xs.len())\n    let t = Instant.now()\n    println(t.elapsed().as_nanos() >= 0)\n}\n");
+    let compiled = compile(&pipeline.module, &mut pipeline.program, &pipeline.interner, EntryKind::Main).unwrap();
+    assert!(compiled.single_threaded);
+    let ran = compiled.run();
+    assert!(ran.fault.is_none(), "{:?}", ran.fault);
+    assert_eq!(ran.output, "4\ntrue\n");
+
+    let mut spawned = built("fn main() {\n    let t = spawn { 1 + 1 }\n    println(t.await())\n}\n");
+    let compiled = compile(&spawned.module, &mut spawned.program, &spawned.interner, EntryKind::Main).unwrap();
+    assert!(!compiled.single_threaded);
+}
+
+#[test]
+fn jit_pointer_and_buffer_fault_on_null_oob_and_use_after_close() {
+    let mut null_load = built("import std.mem.*\nfn main() {\n    let p = Pointer<Int>.nil()\n    println(p.load())\n}\n");
+    let ran = compile(&null_load.module, &mut null_load.program, &null_load.interner, EntryKind::Main).unwrap().run();
+    assert_eq!(ran.fault.as_ref().map(|f| f.kind), Some(mote_abi::FaultKind::NullPointer));
+
+    let mut neg_alloc = built("import std.mem.*\nfn main() {\n    let p = Pointer<Int>.alloc(-1)\n}\n");
+    let ran = compile(&neg_alloc.module, &mut neg_alloc.program, &neg_alloc.interner, EntryKind::Main).unwrap().run();
+    assert_eq!(ran.fault.as_ref().map(|f| f.kind), Some(mote_abi::FaultKind::IndexOutOfRange));
+
+    let mut closed = built("import std.mem.{Buffer}\nfn main() {\n    let b = Buffer<Int>.alloc(2)\n    let _ = b.close()\n    println(b.get(0))\n}\n");
+    let ran = compile(&closed.module, &mut closed.program, &closed.interner, EntryKind::Main).unwrap().run();
+    assert_eq!(ran.fault.as_ref().map(|f| f.kind), Some(mote_abi::FaultKind::Raised));
+    assert!(ran.fault.as_ref().unwrap().message.contains("closed"));
+}

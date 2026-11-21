@@ -240,7 +240,7 @@ true
 * `?` on an optional needs a function returning an optional; on a `Result`, a function returning a `Result` whose error type the error fits. Convert with `.ok_or(e)?`. <!-- block -->
 
 ```mote
-import { parse_int } from std.string
+import parse_int from std.string
 
 fn half(n: Int) -> Int? {
     if n % 2 == 0 {
@@ -286,7 +286,7 @@ fn bad(n: Int) -> Int {
 ```
 
 ```mote
-import { parse_int } from std.string
+import parse_int from std.string
 
 fn bad(s: String) -> Int? {
     let n = parse_int(s)? // error
@@ -295,7 +295,7 @@ fn bad(s: String) -> Int? {
 ```
 
 ```mote
-import { parse_int } from std.string
+import parse_int from std.string
 
 fn bad(s: String) -> Result<Int, String> {
     let n = parse_int(s)? // error
@@ -429,7 +429,7 @@ let n = bad.unwrap() // faults Raised
 * `match` takes `Ok` and `Err`, `Some` and `None`. See [patterns.md](patterns.md). <!-- block -->
 
 ```mote
-import { parse_int } from std.string
+import parse_int from std.string
 
 fn main() {
     match parse_int("12") {

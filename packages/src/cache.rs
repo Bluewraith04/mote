@@ -9,9 +9,12 @@ use sha2::{Digest, Sha256};
 use crate::archive::unpack;
 use crate::package::shown;
 
-/// The mote home: `$MOTE_HOME`, else `~/.mote`; none when neither is set.
+/// The mote home: `$MOTE_HOME`, else `~/.mote` (using `HOME`, or `USERPROFILE` on Windows); none when neither is set.
 pub fn default_home() -> Option<PathBuf> {
-    home_of(std::env::var_os("MOTE_HOME"), std::env::var_os("HOME"))
+    let home = std::env::var_os("HOME").filter(|text| !text.is_empty());
+    #[cfg(target_os = "windows")]
+    let home = home.or_else(|| std::env::var_os("USERPROFILE").filter(|text| !text.is_empty()));
+    home_of(std::env::var_os("MOTE_HOME"), home)
 }
 
 fn home_of(mote_home: Option<std::ffi::OsString>, home: Option<std::ffi::OsString>) -> Option<PathBuf> {

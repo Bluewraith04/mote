@@ -1,0 +1,79 @@
+// Pipelines: steps that change the state from text, channels and screens.
+import { parse_float, parse_int } from std.string
+import { Kind, Shape } from std.reflect
+import Next from .event
+
+/// One step of a pipeline: set a field of the state from text, show a screen (set the field `screen`), send text to a channel, wait for a reply into a field, or end the run.
+pub enum Step {
+    Set(String, String)
+    Show(String)
+    Send(Sender<String>, String)
+    Await(Receiver<String>, String)
+    Quit
+}
+
+// A field of the state from text: a `Bool`, `Int`, `Float` or `String`, or the unit variant of an enum that has that name.
+fn text_value<F>(text: String, field: String) -> Result<F, Error> {
+    const info = @type_info(F)
+    comptime if info.kind == Kind.Bool {
+        if text == "true" { return Ok(true) }
+        if text == "false" { return Ok(false) }
+        return Err(Error.new(ErrorKind.InvalidData, "pane: ${field} wants true or false, not ${text}"))
+    } else comptime if info.kind == Kind.Int && (info.name == "Int" || info.name == "Int64") {
+        let n = parse_int(text)
+        if n.is_err() { return Err(Error.new(ErrorKind.InvalidData, "pane: ${field} wants an integer, not ${text}")) }
+        return Ok(n.unwrap())
+    } else comptime if info.kind == Kind.Float && info.name == "Float" {
+        let x = parse_float(text)
+        if x.is_err() { return Err(Error.new(ErrorKind.InvalidData, "pane: ${field} wants a number, not ${text}")) }
+        return Ok(x.unwrap())
+    } else comptime if info.kind == Kind.String {
+        return Ok(text)
+    } else comptime if info.kind == Kind.Enum {
+        comptime for v in @variants(F) {
+            comptime if v.shape == Shape.Unit {
+                if v.name == text { return Ok(@__construct_variant<F>(v.name)) }
+            }
+        }
+        return Err(Error.new(ErrorKind.InvalidData, "pane: ${field} has no variant ${text}"))
+    } else {
+        return Err(Error.new(ErrorKind.Unsupported, "pane: ${field} is a ${info.name}, which text cannot set"))
+    }
+}
+
+// The state with one field replaced by the value of the text; the given state is left as it was.
+fn set_field<S>(state: S, name: String, text: String) -> Result<S, Error> {
+    const info = @type_info(S)
+    comptime if info.kind != Kind.Struct && info.kind != Kind.Class {
+        return Err(Error.new(ErrorKind.InvalidData, "pane: ${info.name} is not a struct or class"))
+    } else {
+        comptime for f in @fields(S) {
+            if f.name == name {
+                let part = text_value<@FieldType(S, f.name)>(text, name)?
+                var whole = @__duplicate(state)
+                @set_field(whole, f.name, part)
+                return Ok(whole)
+            }
+        }
+        return Err(Error.new(ErrorKind.InvalidData, "pane: ${info.name} has no field ${name}"))
+    }
+}
+
+/// Runs the steps in order on the state and gives the new state: `Continue` after the last step, `Quit` at a `Quit` step. A step that fails, or a channel that closes before it replies, is an `Err`.
+pub fn run_steps<S>(state: S, steps: List<Step>) -> Result<Next<S>, Error> {
+    var current = state
+    for step in steps {
+        match step {
+            Set(field, text) => { current = set_field<S>(current, field, text)? }
+            Show(screen) => { current = set_field<S>(current, "screen", screen)? }
+            Send(to, text) => { to.send(text) }
+            Await(source, field) => {
+                let reply = source.recv()
+                if reply == null { return Err(Error.new(ErrorKind.Other, "pane: the channel for ${field} closed")) }
+                current = set_field<S>(current, field, reply)?
+            }
+            Quit => { return Ok(Next.Quit(current)) }
+        }
+    }
+    return Ok(Next.Continue(current))
+}

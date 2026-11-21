@@ -366,7 +366,7 @@ dependencies = [
 
 [[package]]
 name = "mote"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "mote-base",
  "mote-codegen",
@@ -380,18 +380,18 @@ dependencies = [
 
 [[package]]
 name = "mote-abi"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "mote-base",
 ]
 
 [[package]]
 name = "mote-base"
-version = "0.2.0"
+version = "0.2.1"
 
 [[package]]
 name = "mote-codegen"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "cranelift-codegen",
  "cranelift-frontend",
@@ -413,14 +413,14 @@ dependencies = [
 
 [[package]]
 name = "mote-heap"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "mote-abi",
 ]
 
 [[package]]
 name = "mote-integration"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "mote",
  "mote-abi",
@@ -435,7 +435,7 @@ dependencies = [
 
 [[package]]
 name = "mote-ir"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "mote-abi",
  "mote-base",
@@ -444,7 +444,7 @@ dependencies = [
 
 [[package]]
 name = "mote-packages"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "flate2",
  "mote-abi",
@@ -457,7 +457,7 @@ dependencies = [
 
 [[package]]
 name = "mote-runtime"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "mote-abi",
  "mote-base",
@@ -467,14 +467,14 @@ dependencies = [
 
 [[package]]
 name = "mote-scheduler"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "mote-abi",
 ]
 
 [[package]]
 name = "mote-semantics"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "mote-abi",
  "mote-base",
@@ -483,7 +483,7 @@ dependencies = [
 
 [[package]]
 name = "mote-syntax"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "mote-base",
 ]

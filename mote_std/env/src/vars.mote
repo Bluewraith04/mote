@@ -1,0 +1,83 @@
+// Environment variables.
+import text_of from ._text
+import { env_get, env_set, env_remove, env_list } from ._lib
+
+/// The value of a variable, or null when it is not set or its value is not UTF-8.
+pub fn get(name: String) -> String? {
+    var size = 256
+    while true {
+        let buffer: [UInt8] = [0; size]
+        let length = env_get(name, buffer)
+        if length < 0 { return null }
+        if length <= size { return text_of(buffer, 0, length) }
+        size = length
+    }
+    return null
+}
+
+/// The value of a variable, or `fallback` when it is not set.
+pub fn get_or(name: String, fallback: String) -> String {
+    let found = get(name)
+    if found == null { return fallback }
+    return found
+}
+
+/// Whether the variable is set, even to an empty value.
+pub fn has(name: String) -> Bool {
+    let buffer: [UInt8] = [0; 1]
+    return env_get(name, buffer) >= 0
+}
+
+fn bad_name(name: String) -> Bool {
+    return name == "" || name.contains("=")
+}
+
+/// Sets a variable for this process and the programs it starts; a name that is empty or has `=` in it is an `Err`.
+pub fn set(name: String, value: String) -> Result<Null, Error> {
+    if bad_name(name) { return Err(Error.new(ErrorKind.InvalidData, "${name}: not a variable name")) }
+    if env_set(name, value) < 0 { return Err(Error.new(ErrorKind.InvalidData, "${name}: cannot be set")) }
+    return Ok(null)
+}
+
+/// Removes a variable; one that is not set is not an error.
+pub fn remove(name: String) -> Result<Null, Error> {
+    if bad_name(name) { return Err(Error.new(ErrorKind.InvalidData, "${name}: not a variable name")) }
+    if env_remove(name) < 0 { return Err(Error.new(ErrorKind.InvalidData, "${name}: cannot be removed")) }
+    return Ok(null)
+}
+
+/// Every variable as a name and a value, in the order the process holds them; one that is not UTF-8 is left out.
+pub fn vars() -> List<(String, String)> {
+    var size = 4096
+    while true {
+        let buffer: [UInt8] = [0; size]
+        let needed = env_list(buffer)
+        if needed > size {
+            size = needed
+            continue
+        }
+        var found: List<(String, String)> = []
+        var start = 0
+        for at in 0..needed {
+            if buffer[at] != 0 { continue }
+            let entry = text_of(buffer, start, at)
+            start = at + 1
+            if entry == null { continue }
+            let split = entry.find("=")
+            if split == null { continue }
+            if split == 0 { continue }
+            found.push((entry.slice(0, split).to_string(), entry.slice(split + 1, entry.len()).to_string()))
+        }
+        return found
+    }
+    return []
+}
+
+/// An indexable view of the process environment (`env()["HOME"]`).
+pub struct Env {
+    /// Returns the value of `name`, or `null` when unset or invalid UTF-8.
+    pub fn __getitem__(self, name: String) -> String? { return get(name) }
+}
+
+/// Returns an `Env` view allowing `env()["NAME"]` lookup.
+pub fn env() -> Env { return Env {} }

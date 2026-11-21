@@ -1,0 +1,53 @@
+// An event as the bytes a window pushes into its port.
+import Event from .event
+
+// An event as six little-endian i32 words, the form a window pushes into its port.
+pub fn encode(words: [Int; 6]) -> [UInt8] {
+    var out: [UInt8] = [0; 24]
+    for at in 0..6 {
+        var value = words[at]
+        if value < 0 { value = value + 4294967296 }
+        for part in 0..4 {
+            out[at * 4 + part] = (value % 256) as UInt8
+            value = value / 256
+        }
+    }
+    return out
+}
+
+pub fn word(bytes: [UInt8], at: Int) -> Int {
+    var value = 0
+    var scale = 1
+    for part in 0..4 {
+        value = value + (bytes[at * 4 + part] as Int) * scale
+        scale = scale * 256
+    }
+    return if value >= 2147483648 { value - 4294967296 } else { value }
+}
+
+pub fn decode(bytes: [UInt8]) -> Event? {
+    if bytes.len() != 24 { return null }
+    let kind = word(bytes, 0)
+    let a = word(bytes, 1)
+    let b = word(bytes, 2)
+    let c = word(bytes, 3)
+    let d = word(bytes, 4)
+    if kind == 1 { return Event.Click(null, a, b, c) }
+    if kind == 2 { return Event.Key(a) }
+    if kind == 3 { return Event.Text(a) }
+    if kind == 4 { return Event.Wheel(a, b, c, d) }
+    if kind == 5 { return Event.Resized(a, b) }
+    if kind == 6 { return Event.Close }
+    return null
+}
+
+pub fn words_of(event: Event) -> [Int; 6] {
+    return match event {
+        Click(_, x, y, button) => [1, x, y, button, 0, 0]
+        Key(code) => [2, code, 0, 0, 0, 0]
+        Text(code) => [3, code, 0, 0, 0, 0]
+        Wheel(x, y, dx, dy) => [4, x, y, dx, dy, 0]
+        Resized(w, h) => [5, w, h, 0, 0, 0]
+        Close => [6, 0, 0, 0, 0, 0]
+    }
+}

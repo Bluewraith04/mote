@@ -4,14 +4,14 @@ use mote_syntax as ast;
 use super::FnCx;
 use crate::cx::Cx;
 use crate::defs::{Bound, DefId, DefKind, Payload};
-use crate::types::{TyId, TyKind};
+use crate::types::{GenericArg, TyId, TyKind};
 
 impl Cx<'_> {
-    /// The bounds on the type parameters of a struct, class or enum.
+    /// The bounds on the generic parameters of a struct, class or enum.
     pub(crate) fn type_bounds(&self, def: DefId) -> Vec<Vec<Bound>> {
         match &self.program.defs[def].kind {
-            DefKind::Record(record) => record.generics.iter().map(|param| param.bounds.clone()).collect(),
-            DefKind::Enum(en) => en.generics.iter().map(|param| param.bounds.clone()).collect(),
+            DefKind::Record(record) => record.generics.iter().map(|param| param.bounds().to_vec()).collect(),
+            DefKind::Enum(en) => en.generics.iter().map(|param| param.bounds().to_vec()).collect(),
             _ => Vec::new(),
         }
     }
@@ -19,13 +19,22 @@ impl Cx<'_> {
     /// Reports a type argument, at any depth, that does not meet the bounds of its parameter.
     pub(crate) fn check_type_bounds(&mut self, f: &FnCx, ty: TyId, span: Span) {
         match self.program.types.kind(ty).clone() {
-            TyKind::Adt { def, args } => {
-                let bounds = self.type_bounds(def);
-                for (&arg, bound) in args.iter().zip(&bounds) {
-                    self.check_bounds(f, arg, bound, &args, span);
-                }
+            TyKind::Builtin { args, .. } => {
                 for arg in args {
                     self.check_type_bounds(f, arg, span);
+                }
+            }
+            TyKind::Adt { def, args } => {
+                let bounds = self.type_bounds(def);
+                for (arg, bound) in args.iter().zip(&bounds) {
+                    if let GenericArg::Type(arg_ty) = arg {
+                        self.check_bounds(f, *arg_ty, bound, &args, span);
+                    }
+                }
+                for arg in args {
+                    if let GenericArg::Type(arg_ty) = arg {
+                        self.check_type_bounds(f, arg_ty, span);
+                    }
                 }
             }
             TyKind::Tuple(items) | TyKind::Union(items) => {
@@ -45,8 +54,9 @@ impl Cx<'_> {
     }
 
     /// A type written in a body, with its type arguments checked against their bounds.
-    pub(crate) fn written_type(&mut self, f: &FnCx, written: Id<ast::Type>) -> TyId {
-        let ty = self.lower_type(&f.scope, written);
+    pub(crate) fn written_type(&mut self, f: &mut FnCx, written: Id<ast::Type>) -> TyId {
+        let scope = f.scope.clone();
+        let ty = self.lower_type_with(&scope, Some(f), written);
         let span = self.ast(f.module)[written].span;
         self.check_type_bounds(f, ty, span);
         ty

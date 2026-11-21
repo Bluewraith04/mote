@@ -1,0 +1,175 @@
+// Reading an event from the front of the input bytes.
+import Event from .event
+import { Key, KeyEvent } from .key
+import { MouseEvent, MouseKind } from .mouse
+import text_of from ._support
+
+// What was read from the front of the bytes: the event (null for bytes that mean nothing) and how many bytes it used, 0 when more are needed.
+pub struct Step {
+    pub event: Event?
+    pub used: Int
+}
+
+pub fn incomplete() -> Step {
+    return Step { event: null, used: 0 }
+}
+
+pub fn key_step(key: Key, used: Int, ctrl: Bool, alt: Bool, shift: Bool) -> Step {
+    return Step { event: Event.Key(KeyEvent { key: key, ctrl: ctrl, alt: alt, shift: shift }), used: used }
+}
+
+pub fn char_key(code: Int) -> Key {
+    let one: [UInt8] = [code as UInt8]
+    return Key.Char(text_of(one)!)
+}
+
+// The shift, alt and ctrl held according to a modifier parameter of an escape sequence (1 for none).
+pub fn held(code: Int) -> (Bool, Bool, Bool) {
+    if code < 1 { return (false, false, false) }
+    let bits = code - 1
+    return ((bits & 1) != 0, (bits & 2) != 0, (bits & 4) != 0)
+}
+
+pub fn function_key(code: Int) -> Key? {
+    if code == 1 || code == 7 { return Key.Home }
+    if code == 2 { return Key.Insert }
+    if code == 3 { return Key.Delete }
+    if code == 4 || code == 8 { return Key.End }
+    if code == 5 { return Key.PageUp }
+    if code == 6 { return Key.PageDown }
+    if code >= 11 && code <= 15 { return Key.Function(code - 10) }
+    if code >= 17 && code <= 21 { return Key.Function(code - 11) }
+    if code == 23 { return Key.Function(11) }
+    if code == 24 { return Key.Function(12) }
+    return null
+}
+
+pub fn mouse_step(params: List<Int>, press: Bool, used: Int) -> Step {
+    if params.len() < 3 { return Step { event: null, used: used } }
+    let code = params[0]
+    let col = params[1] - 1
+    let row = params[2] - 1
+    var kind = if press { MouseKind.Press } else { MouseKind.Release }
+    var button = code & 3
+    if (code & 64) != 0 {
+        kind = if button == 0 { MouseKind.ScrollUp } else { MouseKind.ScrollDown }
+        button = 0
+    } else if (code & 32) != 0 {
+        kind = if button == 3 { MouseKind.Move } else { MouseKind.Drag }
+    }
+    if button == 3 { button = 0 }
+    let event = MouseEvent { kind: kind, button: button, row: row, col: col, ctrl: (code & 16) != 0, alt: (code & 8) != 0, shift: (code & 4) != 0 }
+    return Step { event: Event.Mouse(event), used: used }
+}
+
+pub fn csi_step(final: Int, params: List<Int>, private: Bool, alt: Bool, used: Int) -> Step {
+    if private && (final == 77 || final == 109) { return mouse_step(params, final == 77, used) }
+    let (shift, more_alt, ctrl) = held(if params.len() > 1 { params[1] } else { 0 })
+    let alt_held = alt || more_alt
+    var key: Key? = null
+    if final == 65 {
+        key = Key.Up
+    } else if final == 66 {
+        key = Key.Down
+    } else if final == 67 {
+        key = Key.Right
+    } else if final == 68 {
+        key = Key.Left
+    } else if final == 72 {
+        key = Key.Home
+    } else if final == 70 {
+        key = Key.End
+    } else if final == 90 {
+        return key_step(Key.BackTab, used, ctrl, alt_held, true)
+    } else if final >= 80 && final <= 83 {
+        key = Key.Function(final - 79)
+    } else if final == 126 {
+        key = function_key(params[0])
+    }
+    if key == null { return Step { event: null, used: used } }
+    return key_step(key!, used, ctrl, alt_held, shift)
+}
+
+pub fn decode_csi(bytes: [UInt8], at: Int, alt: Bool) -> Step {
+    var i = at + 2
+    var private = false
+    if i < bytes.len() && (bytes[i] == 60 || bytes[i] == 63) {
+        private = bytes[i] == 60
+        i += 1
+    }
+    var params: List<Int> = []
+    var number = -1
+    while i < bytes.len() {
+        let c = bytes[i] as Int
+        if c >= 48 && c <= 57 {
+            number = (if number < 0 { 0 } else { number }) * 10 + (c - 48)
+        } else if c == 59 {
+            params.push(number)
+            number = -1
+        } else if c >= 64 && c <= 126 {
+            params.push(number)
+            return csi_step(c, params, private, alt, i + 1 - at)
+        } else if c < 32 || c > 47 {
+            return Step { event: null, used: i - at + 1 }
+        }
+        i += 1
+    }
+    return incomplete()
+}
+
+pub fn decode_ss3(bytes: [UInt8], at: Int, alt: Bool) -> Step {
+    if bytes.len() < at + 3 { return incomplete() }
+    let c = bytes[at + 2] as Int
+    var key: Key? = null
+    if c == 65 {
+        key = Key.Up
+    } else if c == 66 {
+        key = Key.Down
+    } else if c == 67 {
+        key = Key.Right
+    } else if c == 68 {
+        key = Key.Left
+    } else if c == 72 {
+        key = Key.Home
+    } else if c == 70 {
+        key = Key.End
+    } else if c >= 80 && c <= 83 {
+        key = Key.Function(c - 79)
+    }
+    if key == null { return Step { event: null, used: 3 } }
+    return key_step(key!, 3, false, alt, false)
+}
+
+// The event at the front of `bytes` from `at`, with `alt` set when an escape came before it.
+pub fn decode(bytes: [UInt8], at: Int, alt: Bool) -> Step {
+    let count = bytes.len() - at
+    if count <= 0 { return incomplete() }
+    let first = bytes[at] as Int
+    if first == 27 {
+        if count == 1 { return incomplete() }
+        let second = bytes[at + 1] as Int
+        if second == 91 { return decode_csi(bytes, at, alt) }
+        if second == 79 { return decode_ss3(bytes, at, alt) }
+        let inner = decode(bytes, at + 1, true)
+        if inner.used == 0 { return inner }
+        return Step { event: inner.event, used: inner.used + 1 }
+    }
+    if first == 13 || first == 10 { return key_step(Key.Enter, 1, false, alt, false) }
+    if first == 9 { return key_step(Key.Tab, 1, false, alt, false) }
+    if first == 127 || first == 8 { return key_step(Key.Backspace, 1, false, alt, false) }
+    if first == 0 { return key_step(Key.Char(" "), 1, true, alt, false) }
+    if first < 27 { return key_step(char_key(first + 96), 1, true, alt, false) }
+    if first < 32 { return key_step(char_key(first + 64), 1, true, alt, false) }
+    var length = 1
+    if first >= 240 {
+        length = 4
+    } else if first >= 224 {
+        length = 3
+    } else if first >= 192 {
+        length = 2
+    }
+    if count < length { return incomplete() }
+    let text = text_of(bytes.slice(at, at + length).to_array())
+    if text == null { return Step { event: null, used: length } }
+    return key_step(Key.Char(text), length, false, alt, false)
+}

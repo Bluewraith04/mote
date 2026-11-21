@@ -1,6 +1,5 @@
-import { Stream } from std.collections
-import { Channel } from std.sync
-import { Task, sleep } from std.task
+import Channel from std.sync
+import sleep from std.task
 
 fn count(n: Int) -> Stream<Int> {
     var i = 0

@@ -1,23 +1,27 @@
 //! Deep copies that change nothing: of a value that holds no object, and of a value built only to be copied.
 
 use mote_base::Interner;
-use mote_semantics::{DefKind, Payload, Program, TyId, TyKind};
+use mote_semantics::{DefKind, GenericArg, Payload, Program, TyId, TyKind};
 
 use crate::ir::{Callee, Function, Op, Operand, RegId};
 use crate::uses::{reads, terminator_reads, writes};
 
 /// Whether a value of the type holds no object: only numbers, text, and structs, tuples, enums and optionals of those.
-fn flat(program: &Program, ty: TyId, env: &[TyId], open: &mut Vec<(mote_semantics::DefId, Vec<TyId>)>) -> bool {
+fn flat(program: &Program, ty: TyId, env: &[GenericArg], open: &mut Vec<(mote_semantics::DefId, Vec<GenericArg>)>) -> bool {
     match program.types.kind(ty) {
         TyKind::Unit | TyKind::Bool | TyKind::String | TyKind::Int(_) | TyKind::Float(_) => true,
-        TyKind::Param { index, .. } => env.get(*index as usize).is_some_and(|&arg| flat(program, arg, &[], open)),
-        TyKind::Optional(inner) => flat(program, *inner, env, open),
+        TyKind::Param { index, .. } => env.get(*index as usize).and_then(GenericArg::as_type).is_some_and(|arg| flat(program, arg, &[], open)),
+        TyKind::FixedArray(inner, _) | TyKind::Optional(inner) => flat(program, *inner, env, open),
         TyKind::Tuple(members) | TyKind::Union(members) => members.iter().all(|&member| flat(program, member, env, open)),
+        TyKind::Builtin { .. } => false,
         TyKind::Adt { def, args } => {
-            let item = &program.defs[*def];
-            if item.lang.is_some() || !args.iter().all(|&arg| flat(program, arg, env, open)) {
+            if !args.iter().filter_map(GenericArg::as_type).all(|arg| flat(program, arg, env, open)) {
                 return false;
             }
+            if program.std.map == Some(*def) || program.std.set == Some(*def) {
+                return false;
+            }
+            let item = &program.defs[*def];
             let key = (*def, args.clone());
             if open.contains(&key) {
                 return true;
@@ -35,7 +39,7 @@ fn flat(program: &Program, ty: TyId, env: &[TyId], open: &mut Vec<(mote_semantic
             open.pop();
             answer
         }
-        TyKind::Infer(_) | TyKind::Function(_) | TyKind::Array(_) | TyKind::FixedArray(..) | TyKind::Error => false,
+        TyKind::Infer(_) | TyKind::Function(_) | TyKind::Array(_) | TyKind::Any | TyKind::Error => false,
     }
 }
 

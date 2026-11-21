@@ -34,9 +34,15 @@ extern void mote_fault_message(MoteContext *context, uintptr_t message);
 
 static MoteContext context;
 
-static void __attribute__((noinline)) inner(void);
-static void __attribute__((noinline)) middle(void);
-static void __attribute__((noinline)) outer(void);
+#ifdef _MSC_VER
+#define MOTE_NOINLINE __declspec(noinline)
+#else
+#define MOTE_NOINLINE __attribute__((noinline))
+#endif
+
+static void MOTE_NOINLINE inner(void);
+static void MOTE_NOINLINE middle(void);
+static void MOTE_NOINLINE outer(void);
 
 /* Whether the return address `pc` lies in the `size` bytes from `function`. */
 static int within(uintptr_t pc, void (*function)(void), size_t size) {
@@ -50,25 +56,29 @@ static void on_fault(const MoteFaultReport *report) {
     printf("span %lld %lld\n", (long long)report->span_start, (long long)report->span_end);
     printf("message %.*s\n", (int)report->message_len, (const char *)report->message);
     printf("fault_site %llu\n", (unsigned long long)context.fault_site);
+#ifdef _MSC_VER
+    printf("frames %d\n", report->frame_count >= 1 && within(report->frames[0], inner, 256));
+#else
     if (report->frame_count >= 4) {
         printf("frames %d %d %d\n", within(report->frames[0], inner, 256), within(report->frames[1], middle, 256), within(report->frames[2], outer, 256));
     } else {
         printf("frames %zu\n", report->frame_count);
     }
+#endif
     exit(42);
 }
 
-static void __attribute__((noinline)) inner(void) {
+static void MOTE_NOINLINE inner(void) {
     mote_fault(&context, 1);
     abort();
 }
 
-static void __attribute__((noinline)) middle(void) {
+static void MOTE_NOINLINE middle(void) {
     inner();
     abort();
 }
 
-static void __attribute__((noinline)) outer(void) {
+static void MOTE_NOINLINE outer(void) {
     middle();
     abort();
 }

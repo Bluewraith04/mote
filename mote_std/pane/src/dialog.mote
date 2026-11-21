@@ -1,0 +1,20 @@
+// Native file picker dialogs when running on Windows; returns null when cancelled or unsupported.
+import { pane_dialog_open, pane_dialog_save } from ._lib
+
+/// Opens a native file open dialog filtered by `filter_ext` (e.g. `"csv"`); returns null if cancelled or unsupported.
+pub fn open_file_dialog(title: String, filter_ext: String) -> String? {
+    let buffer: [UInt8] = [0; 4096]
+    let got = pane_dialog_open(title, filter_ext, buffer)
+    if got <= 0 { return null }
+    let capped = if got > buffer.len() { buffer.len() } else { got }
+    return String.from_bytes(buffer.slice(0, capped))
+}
+
+/// Opens a native file save dialog filtered by `filter_ext` (e.g. `"csv"`); returns null if cancelled or unsupported.
+pub fn save_file_dialog(title: String, filter_ext: String, default_name: String) -> String? {
+    let buffer: [UInt8] = [0; 4096]
+    let got = pane_dialog_save(title, filter_ext, default_name, buffer)
+    if got <= 0 { return null }
+    let capped = if got > buffer.len() { buffer.len() } else { got }
+    return String.from_bytes(buffer.slice(0, capped))
+}

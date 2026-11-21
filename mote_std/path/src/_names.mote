@@ -1,0 +1,63 @@
+// The names of a path, which the other files read and join again.
+import join as join_with from std.string
+
+fn is_ascii_alpha(ch: String) -> Bool {
+    return (ch >= "A" && ch <= "Z") || (ch >= "a" && ch <= "z")
+}
+
+/// Converts Windows backslashes to forward slashes.
+pub fn forward(path: String) -> String {
+    return join_with(path.split("\\"), "/")
+}
+
+/// The root prefix of a path (`"/"`, `"C:/"`, etc.), or `""` when relative.
+pub fn root_of(path: String) -> String {
+    let s = forward(path)
+    if s.len() >= 3 && is_ascii_alpha(s.slice(0, 1).to_string()) && s.slice(1, 3) == ":/" {
+        return s.slice(0, 3).to_string()
+    }
+    if s.starts_with("/") {
+        return "/"
+    }
+    return ""
+}
+
+// The names of a path, without the root prefix, empty parts or `.`.
+pub fn names(path: String) -> List<String> {
+    let s = forward(path)
+    let r = root_of(s)
+    let rest = if r == "" { s } else { s.slice(r.len(), s.len()).to_string() }
+    var out: List<String> = []
+    for part in rest.split("/") {
+        if part != "" && part != "." {
+            out.push(part)
+        }
+    }
+    return out
+}
+
+// The names with each `..` cancelling the name before it; a relative path keeps a `..` it cannot cancel and an absolute one drops it.
+pub fn cancel(items: List<String>, absolute: Bool) -> List<String> {
+    var out: List<String> = []
+    for item in items {
+        if item != ".." {
+            out.push(item)
+        } else if out.len() > 0 && out.get(out.len() - 1) != ".." {
+            out.pop()
+        } else if !absolute {
+            out.push("..")
+        }
+    }
+    return out
+}
+
+pub fn assemble(items: List<String>, root: String) -> String {
+    let body = join_with(items, "/")
+    if root != "" {
+        return root + body
+    }
+    if body == "" {
+        return "."
+    }
+    return body
+}

@@ -1,0 +1,44 @@
+// System-seeded random array initializers.
+import Random from .generator
+
+/// `n` floats uniformly distributed in `[0.0, 1.0)`, seeded from the system source.
+pub fn rand(n: Int) -> Result<[Float], Error> {
+    var rng = Random.system()?
+    return Ok(rng.rand(n))
+}
+
+/// `n` floats from the standard normal distribution `N(0, 1)`, seeded from the system source.
+pub fn randn(n: Int) -> Result<[Float], Error> {
+    var rng = Random.system()?
+    return Ok(rng.randn(n))
+}
+
+/// `n` floats uniformly distributed in `[low, high)`, seeded from the system source.
+pub fn uniform(n: Int, low: Float, high: Float) -> Result<[Float], Error> {
+    var rng = Random.system()?
+    return Ok(rng.uniform_array(n, low, high))
+}
+
+/// `n` floats from `N(mean, std^2)`, seeded from the system source.
+pub fn normal(n: Int, mean: Float = 0.0, std: Float = 1.0) -> Result<[Float], Error> {
+    var rng = Random.system()?
+    return Ok(rng.normal_array(n, mean, std))
+}
+
+/// `n` integers uniformly distributed in `[low, high)`, seeded from the system source.
+pub fn randint(n: Int, low: Int, high: Int) -> Result<[Int], Error> {
+    var rng = Random.system()?
+    return Ok(rng.randint(n, low, high))
+}
+
+/// `n` booleans with equal probability, seeded from the system source.
+pub fn randbool(n: Int) -> Result<[Bool], Error> {
+    var rng = Random.system()?
+    return Ok(rng.randbool(n))
+}
+
+/// A random permutation of `0..n`, seeded from the system source.
+pub fn permutation(n: Int) -> Result<[Int], Error> {
+    var rng = Random.system()?
+    return Ok(rng.permutation(n))
+}

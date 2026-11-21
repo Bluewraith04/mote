@@ -1,3 +1,0 @@
-// Text operations on `/`-separated paths; nothing here reads the file system.
-pub import { is_absolute, join, normalize, split } from .parts
-pub import { extension, file_name, parent, relative_to } from .names

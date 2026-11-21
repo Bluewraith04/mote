@@ -1,0 +1,84 @@
+// An element tree as the `doc` nodes the layout reads, and the handlers its clicks reach.
+import doc
+import Node from doc
+import { Element, ElementKind } from .element
+
+/// The handler of the element with an id.
+pub struct Click {
+    pub id: String
+    pub run: (Any) -> Any
+}
+
+/// What an element tree builds: the node to lay out and the handlers by element id.
+pub class Built {
+    pub node: Node
+    pub clicks: List<Click>
+}
+
+class Collector {
+    var clicks: List<Click>
+    var count: Int
+}
+
+fn named(element: Element, name: String) -> String? {
+    for each in element.attrs {
+        if each.name == name { return each.value }
+    }
+    return null
+}
+
+// A parent's axis: 0 for a row, 1 for a column, 2 for the top.
+fn grow_along(element: Element, var node: Node, axis: Int) -> Result<Null, Error> {
+    if axis != 1 && named(element, "width") == null { node.set_attr("width", "grow")? }
+    if axis != 0 && named(element, "height") == null { node.set_attr("height", "grow")? }
+    return Ok(null)
+}
+
+fn put_bare(element: Element, axis: Int, var found: Collector) -> Result<Node, Error> {
+    let name = match element.kind {
+        Text => "text"
+        Row => "row"
+        Column => "column"
+        Box => "box"
+        Spacer => "spacer"
+    }
+    var node = Node.element(name)
+    for each in element.attrs { node.set_attr(each.name, each.value)? }
+    if element.grows { grow_along(element, node, axis)? }
+    if element.click != null {
+        var id = named(element, "id")
+        if id == null {
+            id = "~${found.count}"
+            found.count += 1
+            node.set_attr("id", id!)?
+        }
+        found.clicks.push(Click { id: id!, run: element.click! })
+    }
+    if element.kind == ElementKind.Text {
+        var txt = doc.text(element.label)
+        node.append(txt)?
+    }
+    let across = if element.kind == ElementKind.Column { 1 } else { 0 }
+    for kid in element.kids {
+        var child = put(kid, across, found)?
+        node.append(child)?
+    }
+    return Ok(node)
+}
+
+fn put(element: Element, axis: Int, var found: Collector) -> Result<Node, Error> {
+    if element.outer == 0 { return put_bare(element, axis, found) }
+    var frame = Node.element("box")
+    frame.set_attr("padding", "${element.outer}")?
+    if element.grows { grow_along(element, frame, axis)? }
+    var inner = put_bare(element, if element.grows { 2 } else { axis }, found)?
+    frame.append(inner)?
+    return Ok(frame)
+}
+
+/// The nodes of an element tree, with the handler of every element that has one; an element with a handler and no `id` is given one that starts with `~`.
+pub fn build(root: Element) -> Result<Built, Error> {
+    var found = Collector { clicks: [], count: 0 }
+    let node = put(root, 2, found)?
+    return Ok(Built { node: node, clicks: found.clicks })
+}

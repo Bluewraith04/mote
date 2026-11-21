@@ -1,0 +1,45 @@
+// A value wrapper over `/`-separated path text with `/` joining and normalized equality.
+import { Display, Eq } from std.traits
+import { extension, file_name, parent, relative_to } from .names
+import { is_absolute, join, normalize, split } from .parts
+
+/// A `/`-separated path supporting `p / sub` joining and normalized equality.
+pub struct Path: (Eq, Display) {
+    raw: String
+
+    pub fn new(raw: String) -> Path { return Path { raw: raw } }
+
+    /// Joins `sub` beneath `self`, or returns `sub` if it is absolute.
+    pub fn __div__(self, sub: String | Path) -> Path {
+        let part = if sub is String { sub } else { sub.raw }
+        return Path { raw: join(self.raw, part) }
+    }
+
+    /// Equality after path normalization.
+    pub fn eq(self, other: Path) -> Bool {
+        return normalize(self.raw) == normalize(other.raw)
+    }
+
+    pub fn __eq__(self, other: Path) -> Bool { return self.eq(other) }
+
+    pub fn is_absolute(self) -> Bool { return is_absolute(self.raw) }
+    pub fn normalize(self) -> Path { return Path { raw: normalize(self.raw) } }
+    pub fn split(self) -> List<String> { return split(self.raw) }
+
+    pub fn parent(self) -> Path? {
+        let found = parent(self.raw)
+        if found == null { return null }
+        return Path { raw: found }
+    }
+
+    pub fn file_name(self) -> String? { return file_name(self.raw) }
+    pub fn extension(self) -> String? { return extension(self.raw) }
+
+    pub fn relative_to(self, base: Path) -> Path? {
+        let found = relative_to(self.raw, base.raw)
+        if found == null { return null }
+        return Path { raw: found }
+    }
+
+    pub fn to_string(self) -> String { return self.raw }
+}

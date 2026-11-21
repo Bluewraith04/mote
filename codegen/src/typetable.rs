@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet};
 use mote_abi::{HandleKind, Kind, PairPayload, Scalar, TypeId, TypeTable};
 use mote_base::Interner;
 use mote_ir::{FuncId, FunctionKind, Module, Op, Operand};
-use mote_semantics::{DefId, DefKind, FloatTy, IntTy, LangItem, Payload, Program, TyId, TyKind};
+use mote_semantics::{BuiltinTy, DefId, DefKind, FloatTy, GenericArg, IntTy, Payload, Program, TyId, TyKind};
 
 /// The table of a program and the way from a `TyId` to its entry.
 pub struct TypeMap {
@@ -16,7 +16,6 @@ pub struct TypeMap {
     channels: HashMap<TyId, TypeId>,
     buffers: HashMap<TypeId, TypeId>,
     maps: HashSet<TypeId>,
-    dyn_type: Option<TypeId>,
 }
 
 impl TypeMap {
@@ -34,21 +33,11 @@ impl TypeMap {
     pub fn boxed(&self, ty: TyId) -> TypeId {
         *self.boxes.get(&ty).unwrap_or_else(|| panic!("type {} has no box", ty.index()))
     }
-    /// The `Box` of a type the program describes, or `None` for any other.
-    pub fn try_boxed(&self, ty: TyId) -> Option<TypeId> {
-        self.boxes.get(&ty).copied()
-    }
-
-    /// `std.meta.Dyn`, when the program names it.
-    pub fn dyn_type(&self) -> Option<TypeId> {
-        self.dyn_type
-    }
 
     /// Every type of the program and its entry.
     pub fn entries(&self) -> impl Iterator<Item = (TyId, TypeId)> + '_ {
         self.ids.iter().map(|(&ty, &id)| (ty, id))
     }
-
 
     /// The channel behind the `Sender` and `Receiver` of messages of the type.
     pub fn channel(&self, message: TyId) -> TypeId {
@@ -68,10 +57,10 @@ impl TypeMap {
 
 /// Builds the table for every type the module names.
 pub fn build(module: &Module, program: &mut Program, interner: &Interner) -> TypeMap {
-    let mut builder = Builder { program, interner, table: TypeTable::new(), ids: HashMap::new(), closures: HashMap::new(), boxes: HashMap::new(), channels: HashMap::new(), buffers: HashMap::new(), maps: HashSet::new(), dyn_type: None, queue: Vec::new() };
+    let mut builder = Builder { program, interner, table: TypeTable::new(), ids: HashMap::new(), closures: HashMap::new(), boxes: HashMap::new(), channels: HashMap::new(), buffers: HashMap::new(), maps: HashSet::new(), queue: Vec::new() };
     builder.roots(module);
     builder.drain();
-    TypeMap { table: builder.table, ids: builder.ids, closures: builder.closures, boxes: builder.boxes, channels: builder.channels, buffers: builder.buffers, maps: builder.maps, dyn_type: builder.dyn_type }
+    TypeMap { table: builder.table, ids: builder.ids, closures: builder.closures, boxes: builder.boxes, channels: builder.channels, buffers: builder.buffers, maps: builder.maps }
 }
 
 /// An object type that is reserved and waits for its members.
@@ -93,7 +82,6 @@ struct Builder<'a> {
     channels: HashMap<TyId, TypeId>,
     buffers: HashMap<TypeId, TypeId>,
     maps: HashSet<TypeId>,
-    dyn_type: Option<TypeId>,
     queue: Vec<Work>,
 }
 
@@ -124,6 +112,15 @@ impl Builder<'_> {
                     if let Op::IsType { ty, .. } | Op::UnionPayload { ty, .. } = inst.op {
                         self.ensure(ty);
                     }
+                    if let Op::Convert { conversion: mote_semantics::Conversion::ToUnion, operand: Operand::Reg(reg) } = &inst.op {
+                        let held = function.regs[*reg].ty;
+                        if !matches!(self.program.types.kind(held), TyKind::Union(_) | TyKind::Any) {
+                            let held_id = self.ensure(held);
+                            if self.table.pair_payload(held_id) == PairPayload::Boxed {
+                                self.boxed(held);
+                            }
+                        }
+                    }
                     if let Op::Defer { resource: Operand::Reg(reg), .. } = inst.op {
                         self.boxed(function.regs[reg].ty);
                     }
@@ -141,11 +138,6 @@ impl Builder<'_> {
                 self.closures.insert(id, closure);
                 self.queue.push(Work::Closure(closure, members));
             }
-        }
-        let reflected: Vec<TyId> = self.program.reflected.iter().map(|entry| entry.ty).collect();
-        for ty in reflected {
-            self.ensure(ty);
-            self.boxed(ty);
         }
     }
 
@@ -184,6 +176,7 @@ impl Builder<'_> {
             }
             TyKind::FixedArray(element, count) => {
                 let element = self.ensure(element);
+                let count = count.as_u32().expect("concrete fixed array length");
                 let name = self.name(ty);
                 self.table.add(name, Kind::FixedArray(element, count))
             }
@@ -202,7 +195,16 @@ impl Builder<'_> {
                 let name = self.name(ty);
                 self.table.add(name, Kind::Pair)
             }
+            TyKind::Any => self.table.add("Any", Kind::Pair),
             TyKind::Array(_) | TyKind::Function(_) => self.reserve(ty),
+            TyKind::Builtin { kind, .. } => match kind {
+                BuiltinTy::Pointer => {
+                    let address = self.ensure(TyId::UINT64);
+                    let name = self.name(ty);
+                    self.table.add(name, Kind::Struct(vec![address]))
+                }
+                _ => self.reserve(ty),
+            },
             TyKind::Adt { def, args } => self.adt(ty, def, &args),
             TyKind::Error | TyKind::Param { .. } | TyKind::Infer(_) => panic!("type {} is not concrete", ty.index()),
         }
@@ -216,9 +218,9 @@ impl Builder<'_> {
         id
     }
 
-    fn adt(&mut self, ty: TyId, def: DefId, args: &[TyId]) -> TypeId {
+    fn adt(&mut self, ty: TyId, def: DefId, args: &[GenericArg]) -> TypeId {
         let item = &self.program.defs[def];
-        if item.lang.is_some_and(is_object_lang) || item.is_class() {
+        if item.is_class() {
             return self.reserve(ty);
         }
         match &item.kind {
@@ -240,18 +242,12 @@ impl Builder<'_> {
         }
     }
 
-    /// Whether the definition is `std.meta.Dyn`, a class with no declared fields that holds a type number and a boxed value.
-    fn is_dyn(&self, def: DefId) -> bool {
-        let definition = &self.program.defs[def];
-        self.interner.resolve(definition.name) == "Dyn" && definition.owner.is_none() && definition.record().is_some_and(|record| record.is_class && record.fields.is_empty())
-    }
-
-    fn fields(&mut self, def: DefId, args: &[TyId]) -> Vec<TyId> {
+    fn fields(&mut self, def: DefId, args: &[GenericArg]) -> Vec<TyId> {
         let declared: Vec<TyId> = self.program.defs[def].record().map(|record| record.fields.iter().map(|field| field.ty).collect()).unwrap_or_default();
-        declared.into_iter().map(|field| self.program.types.subst(field, args)).collect()
+        declared.into_iter().map(|field| self.program.types.subst_generic(field, args)).collect()
     }
 
-    fn variants(&mut self, def: DefId, args: &[TyId]) -> Vec<Vec<TyId>> {
+    fn variants(&mut self, def: DefId, args: &[GenericArg]) -> Vec<Vec<TyId>> {
         let declared: Vec<Vec<TyId>> = self.program.defs[def]
             .enum_def()
             .map(|item| {
@@ -265,7 +261,7 @@ impl Builder<'_> {
                     .collect()
             })
             .unwrap_or_default();
-        declared.into_iter().map(|payload| payload.into_iter().map(|ty| self.program.types.subst(ty, args)).collect()).collect()
+        declared.into_iter().map(|payload| payload.into_iter().map(|ty| self.program.types.subst_generic(ty, args)).collect()).collect()
     }
 
     /// The entries of the members of a value type; a member that holds the type itself is held in a box.
@@ -290,7 +286,7 @@ impl Builder<'_> {
             TyKind::FixedArray(element, _) | TyKind::Optional(element) => vec![element],
             TyKind::Adt { def, args } => {
                 let item = &self.program.defs[def];
-                if item.lang.is_some_and(is_object_lang) || item.is_class() {
+                if item.is_class() {
                     return false;
                 }
                 if matches!(item.kind, DefKind::Enum(_)) { self.variants(def, &args).concat() } else { self.fields(def, &args) }
@@ -351,62 +347,43 @@ impl Builder<'_> {
         let defined = match kind {
             TyKind::Array(element) => Kind::Array(self.ensure(element)),
             TyKind::Function(_) => Kind::Closure(Vec::new()),
+            TyKind::Builtin { kind, args } => self.define_builtin(id, kind, &args),
             TyKind::Adt { def, args } => {
-                if self.program.defs[def].lang == Some(LangItem::List) {
-                    let buffer = self.program.types.array(args[0]);
-                    let buffer = self.ensure(buffer);
-                    self.buffers.insert(id, buffer);
-                }
-                if matches!(self.program.defs[def].lang, Some(LangItem::Map | LangItem::Set)) {
+                if self.program.std.map == Some(def) || self.program.std.set == Some(def) {
                     self.maps.insert(id);
                 }
-                if self.is_dyn(def) {
-                    self.dyn_type = Some(id);
-                    let int = self.ensure(TyId::INT);
-                    let reference = self.table.add("Ref", Kind::Scalar(Scalar::Ref));
-                    Kind::Class(vec![int, reference])
-                } else {
-                    self.define_adt(def, &args)
-                }
+                let fields = self.fields(def, &args);
+                Kind::Class(fields.into_iter().map(|field| self.ensure(field)).collect())
             }
             _ => unreachable!("only object types wait"),
         };
         self.table.define(id, defined);
     }
 
-    fn define_adt(&mut self, def: DefId, args: &[TyId]) -> Kind {
-        let lang = self.program.defs[def].lang;
+    fn define_builtin(&mut self, id: TypeId, kind: BuiltinTy, args: &[TyId]) -> Kind {
         let first = args.first().copied();
-        match lang {
-            Some(LangItem::List) => {
+        match kind {
+            BuiltinTy::List => {
                 let element = first.expect("a list has an element type");
                 let buffer = self.program.types.array(element);
-                self.ensure(buffer);
+                let buffer_id = self.ensure(buffer);
+                self.buffers.insert(id, buffer_id);
                 Kind::List(self.ensure(element))
             }
-            Some(LangItem::Array) => Kind::Array(self.ensure(first.expect("an array has an element type"))),
-            Some(LangItem::Task) => Kind::Handle(HandleKind::Task, vec![self.ensure(first.expect("a task has a result type"))]),
-            Some(item @ (LangItem::Sender | LangItem::Receiver)) => {
+            BuiltinTy::Task => Kind::Handle(HandleKind::Task, vec![self.ensure(first.expect("a task has a result type"))]),
+            BuiltinTy::Sender | BuiltinTy::Receiver => {
                 self.channel(first.expect("an end has a message type"));
-                Kind::Handle(if item == LangItem::Sender { HandleKind::Sender } else { HandleKind::Receiver }, Vec::new())
+                Kind::Handle(if kind == BuiltinTy::Sender { HandleKind::Sender } else { HandleKind::Receiver }, Vec::new())
             }
-            Some(LangItem::Mutex) => Kind::Handle(HandleKind::Mutex, vec![self.ensure(first.expect("a mutex has a value type"))]),
-            Some(LangItem::Once) => Kind::Handle(HandleKind::Once, vec![self.ensure(first.expect("a once has a value type"))]),
-            Some(LangItem::AtomicInt) => Kind::Handle(HandleKind::AtomicInt, Vec::new()),
-            Some(LangItem::AtomicBool) => Kind::Handle(HandleKind::AtomicBool, Vec::new()),
-            Some(LangItem::PortEnd) => Kind::Handle(HandleKind::Port, Vec::new()),
-            Some(LangItem::Stream) => Kind::Closure(Vec::new()),
-            _ => {
-                let fields = self.fields(def, args);
-                Kind::Class(fields.into_iter().map(|field| self.ensure(field)).collect())
-            }
+            BuiltinTy::Mutex => Kind::Handle(HandleKind::Mutex, vec![self.ensure(first.expect("a mutex has a value type"))]),
+            BuiltinTy::Once => Kind::Handle(HandleKind::Once, vec![self.ensure(first.expect("a once has a value type"))]),
+            BuiltinTy::AtomicInt => Kind::Handle(HandleKind::AtomicInt, Vec::new()),
+            BuiltinTy::AtomicBool => Kind::Handle(HandleKind::AtomicBool, Vec::new()),
+            BuiltinTy::PortEnd => Kind::Handle(HandleKind::Port, Vec::new()),
+            BuiltinTy::Stream => Kind::Closure(Vec::new()),
+            BuiltinTy::Pointer => unreachable!("Pointer is a value type"),
         }
     }
-}
-
-/// The lang items whose values are runtime objects rather than records.
-fn is_object_lang(item: LangItem) -> bool {
-    matches!(item, LangItem::List | LangItem::Array | LangItem::Task | LangItem::Sender | LangItem::Receiver | LangItem::Mutex | LangItem::Once | LangItem::AtomicInt | LangItem::AtomicBool | LangItem::PortEnd | LangItem::Stream)
 }
 
 fn int_scalar(int: IntTy) -> Scalar {

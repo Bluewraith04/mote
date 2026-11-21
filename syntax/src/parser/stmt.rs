@@ -49,7 +49,9 @@ impl Parser<'_> {
         }
         let kind = match self.peek() {
             T::Let | T::Var => StmtKind::Binding(self.binding()),
-            T::If => StmtKind::If(self.if_parts()),
+            T::Const => StmtKind::Const(self.const_decl()),
+            T::Comptime => self.comptime_stmt(),
+            T::If => StmtKind::If(self.if_parts(false)),
             T::While => {
                 self.bump();
                 let condition = self.condition();
@@ -154,7 +156,7 @@ impl Parser<'_> {
         Condition::Expr(self.head(Head::Condition, |p| p.expr()))
     }
 
-    fn if_parts(&mut self) -> If {
+    fn if_parts(&mut self, comptime: bool) -> If {
         if !self.enter() {
             self.leave();
             return If { condition: Condition::Expr(self.error_expr()), then: Block { stmts: Vec::new(), span: self.span() }, otherwise: None };
@@ -164,10 +166,13 @@ impl Parser<'_> {
         let then = self.block();
         let otherwise = if self.else_follows() {
             self.bump();
+            let next_comptime = comptime && self.eat(T::Comptime);
             if self.at(T::If) {
                 let start = self.start();
-                let parts = self.if_parts();
-                Some(Else::If(self.stmt_node(StmtKind::If(parts), start)))
+                let is_comptime = comptime || next_comptime;
+                let parts = self.if_parts(is_comptime);
+                let kind = if is_comptime { StmtKind::ComptimeIf(parts) } else { StmtKind::If(parts) };
+                Some(Else::If(self.stmt_node(kind, start)))
             } else {
                 Some(Else::Block(self.block()))
             }
@@ -176,6 +181,25 @@ impl Parser<'_> {
         };
         self.leave();
         If { condition, then, otherwise }
+    }
+
+    fn comptime_stmt(&mut self) -> StmtKind {
+        self.bump();
+        match self.peek() {
+            T::If => StmtKind::ComptimeIf(self.if_parts(true)),
+            T::For => {
+                self.bump();
+                let pattern = self.binding_pattern();
+                self.expect(T::In);
+                let iterable = self.head(Head::Condition, |p| p.expr());
+                StmtKind::ComptimeFor { pattern, iterable, body: self.block() }
+            }
+            T::OpenBrace => StmtKind::ComptimeBlock(self.block()),
+            _ => {
+                self.unexpected("`if`, `for`, or `{`");
+                StmtKind::Error
+            }
+        }
     }
 
     pub(super) fn else_follows(&mut self) -> bool {

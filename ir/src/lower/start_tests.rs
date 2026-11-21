@@ -127,7 +127,7 @@ fn top_level_statements_run_after_the_globals_of_their_module() {
             "  b0:",
             "    return 0",
             "f4:",
-            "fn top-level m26() -> Null",
+            "fn top-level m28() -> Null",
             "  b0:",
             "    r0 = load_global hits",
             "    r1 = add r0, 1",

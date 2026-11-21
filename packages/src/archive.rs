@@ -175,13 +175,14 @@ mod tests {
     fn archive_packs_the_files_in_path_order_and_names_the_zip_after_the_package() {
         let scratch = Scratch::new();
         let dir = scratch.package("pane", "pane", &[], &[("lib.mote", "a"), ("nav/go.mote", "b")]);
-        scratch.write("pane/native/x86_64-linux/libpane.so", "so");
+        let lib_rel = format!("lib/{}/{}", crate::host_triple(), crate::library_file("pane"));
+        scratch.write(&format!("pane/{lib_rel}"), "so");
         scratch.write("pane/README.md", "read me");
         let packed = pack(&dir).unwrap();
         assert_eq!((packed.file.as_str(), packed.files), ("pane-0.1.0.zip", 5));
         let out = scratch.path("out");
         unpack(&packed.bytes, &out).unwrap();
-        assert_eq!(names_in(&out), ["README.md", "mote.toml", "native/x86_64-linux/libpane.so", "src/lib.mote", "src/nav/go.mote"]);
+        assert_eq!(names_in(&out), ["README.md", lib_rel.as_str(), "mote.toml", "src/lib.mote", "src/nav/go.mote"]);
         assert_eq!(fs::read_to_string(out.join("src/nav/go.mote")).unwrap(), "b");
     }
 
@@ -208,6 +209,7 @@ mod tests {
         assert_eq!(pack(&dir).unwrap(), first);
     }
 
+    #[cfg(unix)]
     #[test]
     fn archive_a_symbolic_link_cannot_be_packed() {
         let scratch = Scratch::new();

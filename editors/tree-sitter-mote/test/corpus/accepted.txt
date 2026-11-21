@@ -261,29 +261,31 @@ pub fn f<T>(a: T) -> T { return a }
         (identifier)))))
 
 ================================================================================
-NativeFunction: pub native fn f<T>(a: Int) -> Int
+ExternBlock: extern "c" { pub fn f(a: Int) -> Int }
 ================================================================================
 
-pub native fn f<T>(a: Int) -> Int
+extern "c" {
+    pub fn f(a: Int) -> Int
+}
 
 ---
 
 (source_file
-  (native_function_item
-    (visibility)
-    (identifier)
-    (generics
-      (generic_parameter
-        (identifier)))
-    (parameters
-      (parameter
-        (identifier)
-        (named_type
-          (path
-            (identifier)))))
-    (named_type
-      (path
-        (identifier)))))
+  (extern_block
+    (string_literal
+      (string_content))
+    (extern_fn
+      (visibility)
+      (identifier)
+      (parameters
+        (parameter
+          (identifier)
+          (named_type
+            (path
+              (identifier)))))
+      (named_type
+        (path
+          (identifier))))))
 
 ================================================================================
 Test: test "t" { }
@@ -483,6 +485,53 @@ import { * } from m
 (source_file
   (import_item
     (module_path
+      (identifier))))
+
+================================================================================
+Import#4: import a.b.{ c as d, e, }
+================================================================================
+
+import a.b.{ c as d, e, }
+
+---
+
+(source_file
+  (import_item
+    (module_path
+      (identifier)
+      (identifier))
+    (import_name
+      (identifier)
+      (identifier))
+    (import_name
+      (identifier))))
+
+================================================================================
+Import#4: import a.b.{ * }
+================================================================================
+
+import a.b.{ * }
+
+---
+
+(source_file
+  (import_item
+    (module_path
+      (identifier)
+      (identifier))))
+
+================================================================================
+Import#4: import a.b.*
+================================================================================
+
+import a.b.*
+
+---
+
+(source_file
+  (import_item
+    (module_path
+      (identifier)
       (identifier))))
 
 ================================================================================

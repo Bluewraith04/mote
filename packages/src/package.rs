@@ -10,9 +10,9 @@ use crate::manifest::{is_name, Manifest, PackageError, Source};
 /// Names no package may take: `std` is the standard library and `prelude` is its prelude module.
 pub const RESERVED: [&str; 2] = ["std", "prelude"];
 
-/// Whether no package may take the name: a reserved name, or the name of an embedded core library.
+/// Whether no package may take the name: a reserved name, or the name of a core library in `mote_std`.
 pub fn is_reserved(name: &str) -> bool {
-    RESERVED.contains(&name) || crate::libraries::core_names().contains(&name)
+    RESERVED.contains(&name) || crate::libraries::core_names().iter().any(|found| found == name)
 }
 
 /// How deep `src/` may nest.
@@ -41,9 +41,9 @@ pub struct Package {
     pub tests: Vec<SourceFile>,
 }
 
-/// The path as an error or a diagnostic names it: without a leading `./`.
+/// The path as an error or a diagnostic names it: without a leading `./`, using `/`.
 pub fn shown(path: &Path) -> String {
-    let text = path.display().to_string();
+    let text = path.display().to_string().replace('\\', "/");
     text.strip_prefix("./").map(str::to_string).unwrap_or(text)
 }
 
@@ -129,7 +129,7 @@ impl Packages {
                 return Err(PackageError { file: package.manifest_file.clone(), line: package.manifest.name_line, key: "package.name".into(), message: format!("`{name}` is reserved") });
             }
             if let Some(&first) = by_name.get(name) {
-                let other = all[first].dir.display();
+                let other = shown(&all[first].dir);
                 return Err(PackageError { file: package.manifest_file.clone(), line: package.manifest.name_line, key: "package.name".into(), message: format!("also the name of the package in {other}") });
             }
             by_name.insert(name.clone(), index);
@@ -203,14 +203,14 @@ impl Packages {
 /// The directory the zip at `path` unpacks to in the cache.
 fn unpacked(path: &Path, cache: Option<&Cache>, file: &str, line: u32, key: &str) -> Result<PathBuf, PackageError> {
     let fail = |message: String| PackageError { file: file.to_string(), line, key: key.to_string(), message };
-    let bytes = fs::read(path).map_err(|_| fail(format!("no zip at {}", path.display())))?;
+    let bytes = fs::read(path).map_err(|_| fail(format!("no zip at {}", shown(path))))?;
     let cache = cache.ok_or_else(|| fail("no mote home: set MOTE_HOME or HOME".to_string()))?;
-    let dir = cache.extract(&bytes).map_err(|message| fail(format!("{}: {message}", path.display())))?;
+    let dir = cache.extract(&bytes).map_err(|message| fail(format!("{}: {message}", shown(path))))?;
     canonical(&dir, file, line, key)
 }
 
 fn canonical(path: &Path, file: &str, line: u32, key: &str) -> Result<PathBuf, PackageError> {
-    fs::canonicalize(path).map_err(|_| PackageError { file: file.to_string(), line, key: key.to_string(), message: format!("no package at {}", path.display()) })
+    fs::canonicalize(path).map_err(|_| PackageError { file: file.to_string(), line, key: key.to_string(), message: format!("no package at {}", shown(path)) })
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -325,9 +325,9 @@ mod tests {
         assert_eq!(rels, ["a.mote", "b/a.mote", "b/z.mote", "main.mote"]);
         let tests: Vec<(&str, &str)> = package.tests.iter().map(|file| (file.rel.as_str(), file.text.as_str())).collect();
         assert_eq!(tests, [("sub/u.mote", "deeper"), ("t.mote", "under tests")]);
-        assert_eq!(package.tests[1].name, dir.join("tests/t.mote").display().to_string());
+        assert_eq!(package.tests[1].name, shown(&dir.join("tests/t.mote")));
         assert_eq!(package.files[3].text, "m");
-        assert_eq!(package.files[3].name, dir.join("src/main.mote").display().to_string());
+        assert_eq!(package.files[3].name, shown(&dir.join("src/main.mote")));
         assert_eq!(package.manifest.name, "app");
     }
 
@@ -353,7 +353,7 @@ mod tests {
         let dir = scratch.package("app", "app", &[], &[("main.mote", "")]);
         std::fs::write(dir.join("src/main.mote"), [0xff, 0xfe, 0x41]).unwrap();
         let found = Package::load(&dir).unwrap_err();
-        assert_eq!(found.file, dir.join("src/main.mote").display().to_string());
+        assert_eq!(found.file, shown(&dir.join("src/main.mote")));
         assert!(found.message.starts_with("cannot read: ") && found.message.contains("UTF-8"), "{found}");
     }
 
@@ -361,7 +361,7 @@ mod tests {
     fn graph_load_a_directory_without_a_manifest_is_an_error_naming_the_file() {
         let scratch = Scratch::new();
         let found = Package::load(&scratch.path("empty")).unwrap_err();
-        assert_eq!(found.file, scratch.path("empty/mote.toml").display().to_string());
+        assert_eq!(found.file, shown(&scratch.path("empty/mote.toml")));
         assert!(found.message.starts_with("cannot read: "), "{found}");
     }
 
@@ -370,7 +370,7 @@ mod tests {
         let scratch = Scratch::new();
         let dir = scratch.package("app", "app", &[], &[("my-file.mote", "")]);
         let found = Package::load(&dir).unwrap_err().to_string();
-        assert_eq!(found, format!("{}: `my-file.mote` is not a module name: letters, digits and `_`, not starting with a digit", dir.join("src/my-file.mote").display()));
+        assert_eq!(found, format!("{}: `my-file.mote` is not a module name: letters, digits and `_`, not starting with a digit", shown(&dir.join("src/my-file.mote"))));
         let nested = scratch.package("nested", "nested", &[], &[("a-b/x.mote", "")]);
         assert!(Package::load(&nested).unwrap_err().to_string().contains("`a-b` is not a module name"));
     }
@@ -393,7 +393,7 @@ mod tests {
         let app = scratch.package("app", "app", &[("pane", "../other")], &[]);
         scratch.package("other", "other", &[], &[]);
         let found = Packages::load(&app, std_package(), None).unwrap_err();
-        assert_eq!(found.to_string(), format!("{}:5: `dependencies.pane`: the package there is named `other`", app.join("mote.toml").display()));
+        assert_eq!(found.to_string(), format!("{}:5: `dependencies.pane`: the package there is named `other`", shown(&app.join("mote.toml"))));
     }
 
     #[test]
@@ -413,7 +413,7 @@ mod tests {
         scratch.package("b", "b", &[("a", "../a")], &[]);
         let found = Packages::load(&app, std_package(), None).unwrap_err();
         let real = fs::canonicalize(scratch.path("b")).unwrap();
-        assert_eq!(found.to_string(), format!("{}:5: `dependencies.a`: dependency cycle a -> b -> a", real.join("mote.toml").display()));
+        assert_eq!(found.to_string(), format!("{}:5: `dependencies.a`: dependency cycle a -> b -> a", shown(&real.join("mote.toml"))));
     }
 
     /// An app whose manifest lists `entries` (name, source key, path) and holds the zip of each package in `deps/`.
@@ -463,7 +463,7 @@ mod tests {
         let pane = scratch.package("pane", "pane", &[("wire", "../wire")], &[("lib.mote", "")]);
         let app = app_with_zips(&scratch, &[("pane", "zip", "deps/pane.zip")], &[("deps/pane.zip", &pane)]);
         let found = Packages::load(&app, std_package(), Some(&scratch.path("home"))).unwrap_err();
-        assert_eq!(found.to_string(), format!("{}: `dependencies`: `pane` needs `wire`; add it", app.join("mote.toml").display()));
+        assert_eq!(found.to_string(), format!("{}: `dependencies`: `pane` needs `wire`; add it", shown(&app.join("mote.toml"))));
     }
 
     #[test]
@@ -487,14 +487,14 @@ mod tests {
         let pane = scratch.package("pane", "pane", &[], &[("lib.mote", "")]);
         let app = app_with_zips(&scratch, &[("pane", "zip", "deps/pane.zip"), ("gone", "zip", "deps/gone.zip")], &[("deps/pane.zip", &pane)]);
         let home = scratch.path("home");
-        let manifest = app.join("mote.toml").display().to_string();
+        let manifest = shown(&app.join("mote.toml"));
         let no_home = Packages::load(&app, std_package(), None).unwrap_err();
         assert_eq!(no_home.to_string(), format!("{manifest}:5: `dependencies.pane`: no mote home: set MOTE_HOME or HOME"));
         let missing = Packages::load(&app, std_package(), Some(&home)).unwrap_err();
-        assert_eq!(missing.to_string(), format!("{manifest}:6: `dependencies.gone`: no zip at {}", app.join("deps/gone.zip").display()));
+        assert_eq!(missing.to_string(), format!("{manifest}:6: `dependencies.gone`: no zip at {}", shown(&app.join("deps/gone.zip"))));
         fs::write(app.join("deps/gone.zip"), "not a zip").unwrap();
         let bad = Packages::load(&app, std_package(), Some(&home)).unwrap_err();
-        assert!(bad.to_string().starts_with(&format!("{manifest}:6: `dependencies.gone`: {}: not a zip file: ", app.join("deps/gone.zip").display())), "{bad}");
+        assert!(bad.to_string().starts_with(&format!("{manifest}:6: `dependencies.gone`: {}: not a zip file: ", shown(&app.join("deps/gone.zip")))), "{bad}");
         let renamed = app_with_zips(&scratch, &[("other", "zip", "deps/pane.zip")], &[("deps/pane.zip", &pane)]);
         let found = Packages::load(&renamed, std_package(), Some(&home)).unwrap_err();
         assert_eq!(found.to_string(), format!("{manifest}:5: `dependencies.other`: the package there is named `pane`"));

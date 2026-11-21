@@ -1,5 +1,0 @@
-// JSON values, their text, and the encoding and decoding of Mote values by reflection.
-pub import { Json } from .value
-pub import { parse } from .parse
-pub import { ToJson, encode } from .encode
-pub import { FromJson, decode } from .decode

@@ -1,4 +1,0 @@
-// Leveled logging with key-value fields, written by a sink; there is no clock, so a record has no time.
-pub import { Level } from .level
-pub import { Record } from .record
-pub import { Logger } from .logger

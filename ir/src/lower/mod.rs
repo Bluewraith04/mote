@@ -1,5 +1,6 @@
 //! Lowers the typed bodies of a program into the register CFG.
 
+mod array;
 mod call;
 mod closure;
 mod data;
@@ -29,7 +30,7 @@ mod tests;
 use std::collections::{HashMap, HashSet};
 
 use mote_base::{Arena, Id, Interner, Span};
-use mote_semantics::{Body, DefId, DefKind, ExprKind, Init, Instance, LangItem, Local, PatternKind, Program, StmtKind, TyId, TyKind};
+use mote_semantics::{Body, BuiltinTy, DefId, DefKind, ExprKind, Init, Instance, Local, PatternKind, Program, StmtKind, TyId, TyKind};
 
 use crate::builder::FunctionBuilder;
 use crate::ir::{BlockId, Callee, Const, Entry, EntryKind, FuncId, Function, FunctionKind, Module, Op, Operand, RegId, Terminator};
@@ -219,11 +220,14 @@ fn celled_locals(body: &Body) -> HashSet<Id<Local>> {
 }
 
 fn return_type(program: &mut Program, instance: &Instance) -> TyId {
+    if let Some(&ret) = program.instance_returns.get(instance) {
+        return ret;
+    }
     let declared = match program.defs[instance.def].function() {
         Some(function) => function.ret,
         None => return TyId::UNIT,
     };
-    program.types.subst(declared, &instance.args)
+    program.types.subst_generic(declared, &instance.args)
 }
 
 /// One body being lowered.
@@ -322,21 +326,20 @@ impl<'a> Lowering<'a> {
         Operand::Const(Const::Null)
     }
 
-    /// Whether the type is a `Map` or a `Set`, whose `==` and indexing run std code.
+    /// Whether the type is a `Map` or a `Set`, whose indexing and literals run std code.
     fn is_collection(&self, ty: TyId) -> bool {
-        matches!(self.program.types.kind(ty), TyKind::Adt { def, .. } if matches!(self.program.defs[*def].lang, Some(LangItem::Map | LangItem::Set)))
+        matches!(self.program.types.kind(ty), TyKind::Adt { def, .. } if self.program.std.map == Some(*def) || self.program.std.set == Some(*def))
     }
 
     /// Whether writing through a value of the type changes what other holders see.
     fn is_reference(&self, ty: TyId) -> bool {
         match self.program.types.kind(ty) {
-            TyKind::Array(_) => true,
+            TyKind::Array(_) | TyKind::Builtin { kind: BuiltinTy::List, .. } => true,
             TyKind::Adt { def, .. } => {
-                let item = &self.program.defs[*def];
-                match item.lang {
-                    Some(LangItem::List | LangItem::Map | LangItem::Set | LangItem::Array) => true,
-                    _ => matches!(&item.kind, DefKind::Record(record) if record.is_class),
+                if self.program.std.map == Some(*def) || self.program.std.set == Some(*def) {
+                    return true;
                 }
+                matches!(&self.program.defs[*def].kind, DefKind::Record(record) if record.is_class)
             }
             _ => false,
         }

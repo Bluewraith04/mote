@@ -75,5 +75,114 @@ pub fn fnv(text: &str) -> String {
 
 /// The path below the root, as written in messages.
 pub fn relative(path: &Path) -> String {
-    path.strip_prefix(root()).unwrap_or(path).display().to_string()
+    mote_packages::shown(path.strip_prefix(root()).unwrap_or(path))
+}
+
+/// Builds the shared `demo` library (and static archive when `archive` is true) into `package_dir/lib/<triple>/`.
+pub fn build_demo_library(package_dir: &Path, archive: bool) {
+    let libs = package_dir.join("lib").join(mote_packages::host_triple());
+    std::fs::create_dir_all(&libs).expect("a directory for the library");
+    let demo = root().join("integration/libs/demo.c");
+    #[cfg(not(target_os = "windows"))]
+    {
+        let cc = |args: &[&std::ffi::OsStr]| {
+            let status = std::process::Command::new("cc").args(args).status().expect("cc runs");
+            assert!(status.success(), "cc {args:?}");
+        };
+        cc(&["-shared".as_ref(), "-fPIC".as_ref(), "-O1".as_ref(), "-o".as_ref(), libs.join("libdemo.so").as_os_str(), demo.as_os_str(), "-lpthread".as_ref()]);
+        if archive {
+            let object = libs.join("demo.o");
+            cc(&["-c".as_ref(), "-fPIC".as_ref(), "-O1".as_ref(), "-Dmote_init=mote_init_demo".as_ref(), "-o".as_ref(), object.as_os_str(), demo.as_os_str()]);
+            let made = std::process::Command::new("ar").arg("rcs").arg(libs.join("libdemo.a")).arg(&object).status().expect("ar runs");
+            assert!(made.success(), "ar builds the archive");
+        }
+    }
+    #[cfg(target_os = "windows")]
+    {
+        fn newest_dir(parent: &Path) -> Option<PathBuf> {
+            let mut dirs: Vec<PathBuf> = std::fs::read_dir(parent).ok()?.filter_map(|e| e.ok()).map(|e| e.path()).filter(|p| p.is_dir()).collect();
+            dirs.sort();
+            dirs.pop()
+        }
+        fn find_msvc_tools() -> (PathBuf, PathBuf, Option<std::ffi::OsString>, Option<std::ffi::OsString>, PathBuf) {
+            if let Some(vc_tools) = std::env::var_os("VCToolsInstallDir").filter(|v| !v.is_empty()) {
+                let bin = PathBuf::from(&vc_tools).join(r"bin\Hostx64\x64");
+                return (bin.join("cl.exe"), bin.join("lib.exe"), std::env::var_os("INCLUDE"), std::env::var_os("LIB"), bin);
+            }
+            let pf86 = std::env::var_os("ProgramFiles(x86)").map(PathBuf::from).unwrap_or_else(|| PathBuf::from(r"C:\Program Files (x86)"));
+            let vswhere = pf86.join(r"Microsoft Visual Studio\Installer\vswhere.exe");
+            let out = std::process::Command::new(&vswhere)
+                .args(["-latest", "-products", "*", "-requires", "Microsoft.VisualStudio.Component.VC.Tools.x86.x64", "-property", "installationPath"])
+                .output()
+                .expect("vswhere runs");
+            let vs_root = PathBuf::from(String::from_utf8_lossy(&out.stdout).trim());
+            let vc_ver = newest_dir(&vs_root.join(r"VC\Tools\MSVC")).expect("MSVC version dir");
+            let bin = vc_ver.join(r"bin\Hostx64\x64");
+            let mut inc = vec![vc_ver.join("include")];
+            let mut lib = vec![vc_ver.join(r"lib\x64")];
+            if let Some(sdk_inc) = newest_dir(&pf86.join(r"Windows Kits\10\Include")) {
+                inc.extend([sdk_inc.join("ucrt"), sdk_inc.join("um"), sdk_inc.join("shared")]);
+            }
+            if let Some(sdk_lib) = newest_dir(&pf86.join(r"Windows Kits\10\Lib")) {
+                lib.extend([sdk_lib.join(r"um\x64"), sdk_lib.join(r"ucrt\x64")]);
+            }
+            let join = |dirs: Vec<PathBuf>| std::env::join_paths(dirs).expect("valid paths");
+            (bin.join("cl.exe"), bin.join("lib.exe"), Some(join(inc)), Some(join(lib)), bin)
+        }
+        let (cl, lib_exe, inc, lib, bin) = find_msvc_tools();
+        let mut path_dirs = vec![bin];
+        if let Some(existing) = std::env::var_os("PATH") {
+            path_dirs.extend(std::env::split_paths(&existing));
+        }
+        let path_env = std::env::join_paths(path_dirs).expect("valid PATH");
+        let run_tool = |exe: &Path, args: &[&std::ffi::OsStr]| {
+            let mut cmd = std::process::Command::new(exe);
+            cmd.args(args).env("PATH", &path_env);
+            if let Some(ref v) = inc {
+                cmd.env("INCLUDE", v);
+            }
+            if let Some(ref v) = lib {
+                cmd.env("LIB", v);
+            }
+            let out = cmd.output().unwrap_or_else(|e| panic!("{} failed to start: {e}", exe.display()));
+            assert!(out.status.success(), "{} failed:\n{}\n{}", exe.display(), String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+        };
+        let dll_out = libs.join("demo.dll");
+        let dll_obj = libs.join("demo_dll.obj");
+        let imp_lib = libs.join("demo_imp.lib");
+        let exp_file = libs.join("demo_imp.exp");
+        run_tool(&cl, &[
+            "/nologo".as_ref(),
+            "/O1".as_ref(),
+            "/MD".as_ref(),
+            "/LD".as_ref(),
+            "/DDEMO_DLL".as_ref(),
+            format!("/Fo{}", dll_obj.display()).as_ref(),
+            format!("/Fe{}", dll_out.display()).as_ref(),
+            demo.as_os_str(),
+            "/link".as_ref(),
+            format!("/IMPLIB:{}", imp_lib.display()).as_ref(),
+        ]);
+        let _ = std::fs::remove_file(&dll_obj);
+        let _ = std::fs::remove_file(&imp_lib);
+        let _ = std::fs::remove_file(&exp_file);
+        if archive {
+            let obj = libs.join("demo.obj");
+            run_tool(&cl, &[
+                "/nologo".as_ref(),
+                "/O1".as_ref(),
+                "/MD".as_ref(),
+                "/c".as_ref(),
+                "/Dmote_init=mote_init_demo".as_ref(),
+                format!("/Fo{}", obj.display()).as_ref(),
+                demo.as_os_str(),
+            ]);
+            run_tool(&lib_exe, &[
+                "/nologo".as_ref(),
+                format!("/OUT:{}", libs.join("demo.lib").display()).as_ref(),
+                obj.as_os_str(),
+            ]);
+            let _ = std::fs::remove_file(&obj);
+        }
+    }
 }

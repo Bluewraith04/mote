@@ -39,7 +39,7 @@ let _count = 1
 ## Keywords
 
 <!-- table: keywords -->
-* Reserved: `Self` `as` `break` `class` `continue` `else` `enum` `false` `fn` `for` `from` `if` `import` `in` `is` `let` `match` `native` `null` `pub` `return` `scope` `self` `spawn` `struct` `super` `trait` `true` `type` `var` `while` `with` `yield`.
+* Reserved: `Self` `as` `break` `class` `comptime` `const` `continue` `else` `enum` `extend` `extern` `false` `fn` `for` `from` `if` `import` `in` `is` `let` `match` `null` `pub` `return` `scope` `self` `spawn` `struct` `super` `trait` `true` `type` `var` `while` `with` `yield`.
 <!-- /table -->
 * A keyword cannot be a name or follow a `.`, except `from`, which may name a method. <!-- test: keywords_are_not_identifiers, grammar_every_case_gives_the_result_it_records -->
 

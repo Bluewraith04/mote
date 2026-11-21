@@ -1,0 +1,4 @@
+// Signals delivered to the program as values on a channel.
+pub import Signal from .signal
+pub import { Subscription, subscribe } from .subscription
+pub import { pid, send } from .control

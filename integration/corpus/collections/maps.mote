@@ -57,5 +57,5 @@ fn main() {
     ages.set("dee", 1)
     println(other.len())
     println(ages.len())
-    println(other.equals(ages))
+    println(other == ages)
 }

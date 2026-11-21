@@ -1,0 +1,69 @@
+// The functions of the external library `sqlite`.
+
+extern "sqlite" {
+    @blocking
+    pub fn sqlite_open(path: [UInt8], error: [UInt8]) -> Int
+
+    @blocking
+    pub fn sqlite_close(handle: Int) -> Int
+
+    @blocking
+    pub fn sqlite_batch(handle: Int, sql: [UInt8], error: [UInt8]) -> Int
+
+    @blocking
+    pub fn sqlite_execute(handle: Int, sql: [UInt8], params: Int, error: [UInt8]) -> Int
+
+    @blocking
+    pub fn sqlite_query(handle: Int, sql: [UInt8], params: Int, error: [UInt8]) -> Int
+
+    pub fn sqlite_last_insert_id(handle: Int) -> Int
+    pub fn sqlite_interrupt(handle: Int)
+
+    @blocking
+    pub fn sqlite_prepare(handle: Int, sql: [UInt8], error: [UInt8]) -> Int
+
+    @blocking
+    pub fn sqlite_stmt_execute(stmt: Int, params: Int, error: [UInt8]) -> Int
+
+    @blocking
+    pub fn sqlite_stmt_query(stmt: Int, params: Int, error: [UInt8]) -> Int
+
+    @blocking
+    pub fn sqlite_stmt_bind(stmt: Int, params: Int, error: [UInt8]) -> Int
+
+    @blocking
+    pub fn sqlite_stmt_step(stmt: Int, error: [UInt8]) -> Int
+
+    pub fn sqlite_stmt_reset(stmt: Int)
+    pub fn sqlite_stmt_columns(stmt: Int) -> Int
+    pub fn sqlite_stmt_col_name(stmt: Int, col: Int, out: [UInt8]) -> Int
+    pub fn sqlite_stmt_col_type(stmt: Int, col: Int) -> Int
+    pub fn sqlite_stmt_col_int(stmt: Int, col: Int) -> Int
+    pub fn sqlite_stmt_col_real(stmt: Int, col: Int) -> Float
+    pub fn sqlite_stmt_col_bytes(stmt: Int, col: Int, out: [UInt8]) -> Int
+
+    @blocking
+    pub fn sqlite_stmt_execute_batch(stmt: Int, batch: Int, error: [UInt8]) -> Int
+
+    @blocking
+    pub fn sqlite_stmt_close(stmt: Int) -> Int
+
+    pub fn sqlite_batch_params_new() -> Int
+    pub fn sqlite_batch_params_push(batch: Int, params: Int) -> Int
+    pub fn sqlite_batch_params_free(batch: Int) -> Int
+    pub fn sqlite_params_new() -> Int
+    pub fn sqlite_params_null(handle: Int) -> Int
+    pub fn sqlite_params_int(handle: Int, value: Int) -> Int
+    pub fn sqlite_params_real(handle: Int, value: Float) -> Int
+    pub fn sqlite_params_text(handle: Int, value: [UInt8]) -> Int
+    pub fn sqlite_params_blob(handle: Int, value: [UInt8]) -> Int
+    pub fn sqlite_params_free(handle: Int) -> Int
+    pub fn sqlite_rows_count(handle: Int) -> Int
+    pub fn sqlite_rows_columns(handle: Int) -> Int
+    pub fn sqlite_rows_name(handle: Int, column: Int, out: [UInt8]) -> Int
+    pub fn sqlite_rows_type(handle: Int, row: Int, column: Int) -> Int
+    pub fn sqlite_rows_int(handle: Int, row: Int, column: Int) -> Int
+    pub fn sqlite_rows_real(handle: Int, row: Int, column: Int) -> Float
+    pub fn sqlite_rows_bytes(handle: Int, row: Int, column: Int, out: [UInt8]) -> Int
+    pub fn sqlite_rows_free(handle: Int) -> Int
+}

@@ -1,0 +1,178 @@
+// The request a server reads and the response it writes.
+import { Json, encode as encode_json, parse as parse_json } from json
+import { find_header, segments_of } from ._text
+import url_decode from .url
+
+fn bytes_to_json(body: [UInt8]) -> Result<Json, Error> {
+    let text = String.from_bytes(body)
+    if text == null { return Err(Error.new(ErrorKind.InvalidData, "the body is not text")) }
+    return parse_json(text)
+}
+
+/// Case-insensitive HTTP header collection supporting `headers["Name"]` lookup.
+pub class Headers {
+    names: [String]
+    values: [String]
+
+    pub fn empty() -> Headers { return Headers { names: [], values: [] } }
+    pub fn from(pairs: [(String, String)]) -> Headers {
+        var names: List<String> = []
+        var values: List<String> = []
+        for pair in pairs {
+            names.push(pair.0.to_lower())
+            values.push(pair.1)
+        }
+        return Headers { names: names.to_array(), values: values.to_array() }
+    }
+    pub fn len(self) -> Int { return self.names.len() }
+    pub fn at(self, index: Int) -> (String, String) { return (self.names[index], self.values[index]) }
+    pub fn pairs(self) -> [(String, String)] {
+        var items: List<(String, String)> = []
+        for i in 0..self.names.len() {
+            items.push((self.names[i], self.values[i]))
+        }
+        return items.to_array()
+    }
+    pub fn clone(self) -> Headers { return Headers { names: self.names, values: self.values } }
+
+    /// Returns a copy with an appended header (name lower-cased).
+    pub fn with_header(self, name: String, value: String) -> Headers {
+        var names = self.names.to_list()
+        var values = self.values.to_list()
+        names.push(name.to_lower())
+        values.push(value)
+        return Headers { names: names.to_array(), values: values.to_array() }
+    }
+
+    /// Returns a copy with `name` set to `value` (case-insensitively replaced if present).
+    pub fn set(self, name: String, value: String) -> Headers {
+        let lower = name.to_lower()
+        var names = self.names.to_list()
+        var values = self.values.to_list()
+        for i in 0..names.len() {
+            if names.get(i) == lower {
+                values.set(i, value)
+                return Headers { names: names.to_array(), values: values.to_array() }
+            }
+        }
+        names.push(lower)
+        values.push(value)
+        return Headers { names: names.to_array(), values: values.to_array() }
+    }
+
+    /// Case-insensitive header lookup.
+    pub fn __getitem__(self, name: String) -> String? {
+        return find_header(self.pairs(), name.to_lower())
+    }
+}
+
+/// A request: the method and target as sent, the path and query split at `?`, headers, the body and the peer's address.
+pub class Request {
+    pub method: String
+    pub target: String
+    pub path: String
+    pub query: String
+    pub version: String
+    pub headers: Headers
+    pub body: [UInt8]
+    pub peer: String
+
+    /// The value of a header, by its name in any case.
+    pub fn header(self, name: String) -> String? { return self.headers[name] }
+
+    /// The value of a query parameter, decoded; `a=1&b` gives "" for `b`.
+    pub fn query_param(self, name: String) -> String? {
+        for pair in self.query.split("&") {
+            let at = pair.find("=")
+            let key = if at == null { pair } else { pair.slice(0, at).to_string() }
+            if url_decode(key.replace("+", " ")) == name {
+                if at == null { return "" }
+                return url_decode(pair.slice(at + 1, pair.len()).to_string().replace("+", " "))
+            }
+        }
+        return null
+    }
+
+    /// The path split at `/` with each part decoded.
+    pub fn segments(self) -> [String] { return segments_of(self.path) }
+
+    /// The parts a path takes for each `:name` of the pattern, when the method and the other parts match; null otherwise.
+    pub fn route(self, method: String, pattern: String) -> [String]? {
+        if self.method != method { return null }
+        let wanted = segments_of(pattern)
+        let actual = segments_of(self.path)
+        if wanted.len() != actual.len() { return null }
+        var found: List<String> = []
+        for k in 0..wanted.len() {
+            if wanted[k].starts_with(":") {
+                found.push(actual[k])
+            } else if wanted[k] != actual[k] {
+                return null
+            }
+        }
+        return found.to_array()
+    }
+
+    pub fn body_text(self) -> String? { return String.from_bytes(self.body) }
+
+    /// The body parsed as JSON.
+    pub fn body_json(self) -> Result<Json, Error> { return bytes_to_json(self.body) }
+
+    /// The JSON body decoded directly into `T`.
+    pub fn body_as<T>(self) -> Result<T, Error> {
+        let parsed = self.body_json()?
+        return parsed.decode<T>()
+    }
+}
+
+/// A response: the status, headers and the body. The server adds `content-length` and `connection`.
+pub class Response {
+    pub status: Int
+    pub headers: Headers
+    pub body: [UInt8]
+    pub upgrade: Bool
+
+    /// A response with a content type and bytes.
+    pub fn bytes(status: Int, content_type: String, body: [UInt8]) -> Response {
+        return Response { status: status, headers: Headers.from([("content-type", content_type)]), body: body, upgrade: false }
+    }
+
+    pub fn text(status: Int, text: String) -> Response { return Response.bytes(status, "text/plain; charset=utf-8", text.bytes()) }
+
+    pub fn html(status: Int, text: String) -> Response { return Response.bytes(status, "text/html; charset=utf-8", text.bytes()) }
+
+    pub fn json(status: Int, value: Json) -> Response { return Response.bytes(status, "application/json", value.to_string().bytes()) }
+
+    /// Encodes `value` as JSON and builds a response with status `status`.
+    pub fn from_json<T>(status: Int, value: T) -> Result<Response, Error> {
+        let encoded = encode_json(value)?
+        return Ok(Response.json(status, encoded))
+    }
+
+    /// A response with no body.
+    pub fn empty(status: Int) -> Response { return Response { status: status, headers: Headers.empty(), body: [], upgrade: false } }
+
+    /// A 302 to `location`.
+    pub fn redirect(location: String) -> Response { return Response.empty(302).with_header("location", location) }
+
+    /// The answer that turns the connection into a WebSocket, when the request asked for one.
+    pub fn upgrade_to_websocket() -> Response { return Response { status: 101, headers: Headers.empty(), body: [], upgrade: true } }
+
+    /// The response with one more header.
+    pub fn with_header(self, name: String, value: String) -> Response {
+        return Response { status: self.status, headers: self.headers.with_header(name, value), body: self.body, upgrade: self.upgrade }
+    }
+
+    pub fn header(self, name: String) -> String? { return self.headers[name] }
+
+    pub fn body_text(self) -> String? { return String.from_bytes(self.body) }
+
+    pub fn body_json(self) -> Result<Json, Error> { return bytes_to_json(self.body) }
+
+    /// The JSON body decoded directly into `T`.
+    pub fn body_as<T>(self) -> Result<T, Error> {
+        let parsed = self.body_json()?
+        return parsed.decode<T>()
+    }
+}
+

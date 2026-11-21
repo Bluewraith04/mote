@@ -1,6 +1,6 @@
 use mote_base::{Id, Span, Symbol};
 
-use super::{Block, Condition, Ident, Pattern, Path, SpawnBody, Type};
+use super::{Block, Condition, GenericArg, Ident, Pattern, Path, SpawnBody, Type};
 use crate::token::{FloatLiteral, IntLiteral};
 
 #[derive(Clone, Debug, PartialEq)]
@@ -24,15 +24,18 @@ pub enum ExprKind {
     List(Vec<Id<Expr>>),
     ArrayRepeat { value: Id<Expr>, len: Id<Expr> },
     Map(Vec<MapEntry>),
-    StructInit { path: Path, args: Vec<Id<Type>>, fields: Vec<FieldInit> },
+    StructInit { path: Path, args: Vec<GenericArg>, fields: Vec<FieldInit> },
     Lambda { params: Vec<LambdaParam>, ret: Option<Id<Type>>, body: LambdaBody },
     Call { callee: Id<Expr>, args: Vec<Arg> },
-    Member { object: Id<Expr>, name: Ident },
+    Builtin { name: Ident, generic_args: Vec<GenericArg>, args: Vec<Arg> },
+    Member { object: Id<Expr>, name: Ident, args: Vec<GenericArg> },
     TupleIndex { object: Id<Expr>, index: IntLiteral },
-    OptionalMember { object: Id<Expr>, name: Ident },
+    OptionalMember { object: Id<Expr>, name: Ident, args: Vec<GenericArg> },
     Index { object: Id<Expr>, index: Id<Expr> },
     Slice { object: Id<Expr>, start: Option<Id<Expr>>, end: Option<Id<Expr>>, inclusive: bool, step: Option<Id<Expr>> },
-    TypeApply { path: Path, args: Vec<Id<Type>> },
+    TypeApply { path: Path, args: Vec<GenericArg> },
+    Comptime(Block),
+    ComptimeIf { condition: Condition, then: Id<Expr>, otherwise: ElseExpr },
     Unwrap(Id<Expr>),
     Propagate(Id<Expr>),
     Unary { op: UnaryOp, operand: Id<Expr> },

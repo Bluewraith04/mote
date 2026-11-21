@@ -8,8 +8,6 @@ mod ir;
 mod lower;
 pub mod opt;
 mod print;
-pub mod reflect;
-pub mod requirements;
 #[cfg(test)]
 mod tests;
 mod uses;

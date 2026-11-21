@@ -5,10 +5,8 @@ use std::path::{Path, PathBuf};
 
 use mote_base::{render, Diagnostic, DiagnosticSink, Interner, SourceMap};
 use mote_ir::{lower, optimize, verify, Module};
-use mote_packages::{build, core_packages, default_home, host_triple, natives, standard, unpack_natives, Natives, PackageModules, Packages, Version};
-use mote_semantics::{analyze, check, instantiate, DefId, DefKind, Instance, LangItem, ModuleId, Program, Resolved, TyKind};
-
-use crate::requirements::unmet;
+use mote_packages::{build, core_packages, default_home, host_triple, linked_libraries, standard, LinkedLibraries, PackageModules, Packages, Version};
+use mote_semantics::{analyze, check, instantiate, DefId, DefKind, GenericArg, Instance, ModuleId, Program, Resolved, TyKind};
 
 /// What the program is built for, which decides the entries.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -23,9 +21,9 @@ pub enum Target {
 
 #[derive(Clone, Debug)]
 pub struct Options {
-    /// A directory that replaces the embedded std.
+    /// A directory that replaces `mote_std/std`.
     pub std: Option<PathBuf>,
-    /// A directory of core library packages that replaces the embedded ones.
+    /// A directory of libraries that replaces `mote_std`.
     pub core: Option<PathBuf>,
     pub optimize: bool,
     /// For `Run`, the file below the package that holds the `main`, such as `src/other.mote`, instead of the manifest's `entry`.
@@ -70,10 +68,10 @@ pub struct Pipeline {
     pub interner: Interner,
     pub program: Program,
     pub module: Module,
-    pub natives: Natives,
+    pub libraries: LinkedLibraries,
     /// Where each package's modules are in the program.
     pub ranges: Vec<PackageModules>,
-    /// `std.meta.debug_text` for the error type of a `main` that returns a `Result` whose error is not an `Error`.
+    /// `std.reflect.debug_text` for the error type of a `main` that returns a `Result` whose error is not an `Error`.
     pub error_text: Option<Instance>,
     /// The warnings of the passes, as they are printed.
     pub warnings: Vec<String>,
@@ -97,12 +95,9 @@ impl Pipeline {
     /// Builds the package in `dir` for the target.
     pub fn build(dir: &Path, target: Target, options: &Options) -> Result<Pipeline, Failure> {
         let home = options.home.clone().or_else(default_home);
-        let packages = Packages::load(dir, standard(options.std.as_deref()).map_err(line_error)?, home.as_deref()).map_err(line_error)?;
-        let core = core_packages(options.core.as_deref(), home.as_deref()).map_err(line_error)?;
+        let packages = Packages::load(dir, standard(options.std.as_deref(), options.home.as_deref()).map_err(line_error)?, home.as_deref()).map_err(line_error)?;
+        let core = core_packages(options.core.as_deref(), options.home.as_deref()).map_err(line_error)?;
         let packages = packages.with_core(core, target != Target::Run).map_err(line_error)?;
-        if let (None, Some(home)) = (options.core.as_deref(), home.as_deref()) {
-            unpack_natives(&packages, home).map_err(line_error)?;
-        }
         let toolchain = toolchain();
         for package in &packages.list {
             package.manifest.check_toolchain(&package.manifest_file, &toolchain).map_err(line_error)?;
@@ -116,11 +111,11 @@ impl Pipeline {
         stop_on_errors(&sink, &map)?;
         let Entries { mut roots, error_text } = entries(&program, &interner, &ranges, &packages, target, options).map_err(line_error)?;
         roots.extend(error_text.clone());
-        instantiate(&mut program, &interner, &mut sink, &roots);
+        instantiate(&mut program, &mut interner, &mut sink, &roots);
         stop_on_errors(&sink, &map)?;
         analyze(&mut program, &interner, &mut sink);
         stop_on_errors(&sink, &map)?;
-        let linked = natives(&program, &interner, &ranges, &packages, host_triple());
+        let linked = linked_libraries(&program, &interner, &ranges, &packages, host_triple());
         for error in &linked.errors {
             sink.emit(error.clone());
         }
@@ -131,17 +126,13 @@ impl Pipeline {
         }
         stop_on_errors(&sink, &map)?;
         let mut module = lowered.module;
-        for found in unmet(&module, &mut program, &interner)? {
-            sink.emit(Diagnostic::error(found.text(&program, &interner), found.span));
-        }
-        stop_on_errors(&sink, &map)?;
         internal(&module, &program, &interner)?;
         if options.optimize {
             optimize(&mut module, &mut program, &mut interner);
             internal(&module, &program, &interner)?;
         }
         let warnings = printed(&sink, &map);
-        Ok(Pipeline { packages, map, interner, program, module, natives: linked, ranges, error_text, warnings })
+        Ok(Pipeline { packages, map, interner, program, module, libraries: linked, ranges, error_text, warnings })
     }
 }
 
@@ -164,16 +155,16 @@ struct Entries {
 fn error_text(program: &Program, interner: &Interner, main: DefId) -> Option<Instance> {
     let function = program.defs[main].function()?;
     let TyKind::Adt { def, args } = program.types.kind(function.ret) else { return None };
-    if program.defs[*def].lang != Some(LangItem::Result) || args.len() != 2 {
+    if program.std.result != Some(*def) || args.len() != 2 {
         return None;
     }
-    let error = args[1];
-    if matches!(program.types.kind(error), TyKind::Adt { def, .. } if program.defs[*def].lang == Some(LangItem::Error)) {
+    let error = args[1].as_type()?;
+    if matches!(program.types.kind(error), TyKind::Adt { def, .. } if program.std.error == Some(*def)) {
         return None;
     }
-    let meta = program.modules.iter().find(|(_, module)| module.path.iter().map(|&part| interner.resolve(part)).eq(["std", "meta"])).map(|(id, _)| id)?;
-    match program.modules[meta].scope.get(&interner.get("debug_text")?) {
-        Some(Resolved::Def(def)) => Some(Instance { def: *def, args: vec![error] }),
+    let reflect = program.modules.iter().find(|(_, module)| module.path.iter().map(|&part| interner.resolve(part)).eq(["std", "reflect"])).map(|(id, _)| id)?;
+    match program.modules[reflect].scope.get(&interner.get("debug_text")?) {
+        Some(Resolved::Def(def)) => Some(Instance { def: *def, args: vec![GenericArg::Type(error)] }),
         _ => None,
     }
 }
@@ -278,7 +269,7 @@ mod tests {
 
     #[test]
     fn pipeline_test_target_holds_the_test_blocks_of_every_file_and_no_main() {
-        let mut pipeline = built(&[("main.mote", "import { assert } from std.test\n\nfn main() {\n    println(\"hi\")\n}\n\ntest \"one\" {\n    assert(1 == 1)\n}\n"), ("util.mote", "import { assert } from std.test\n\ntest \"two\" {\n    assert(2 == 2)\n}\n")], Target::Test).unwrap();
+        let mut pipeline = built(&[("main.mote", "import assert from std.test\n\nfn main() {\n    println(\"hi\")\n}\n\ntest \"one\" {\n    assert(1 == 1)\n}\n"), ("util.mote", "import assert from std.test\n\ntest \"two\" {\n    assert(2 == 2)\n}\n")], Target::Test).unwrap();
         let kinds: Vec<EntryKind> = pipeline.module.entries.iter().map(|entry| entry.kind).collect();
         assert!(kinds.iter().all(|kind| matches!(kind, EntryKind::Test(_))), "{kinds:?}");
         let run = crate::run::run_tests(&mut pipeline).unwrap();
@@ -338,25 +329,10 @@ mod tests {
     }
 
     #[test]
-    fn pipeline_an_unmet_require_for_a_listing_is_printed_at_the_listing_type() {
-        let source = "import { require, describe, Kind } from std.meta\n\ntrait OnlyStructs {\n    fn tag(self) -> String {\n        require(describe<Self>().kind() == Kind.Struct, \"needs a struct\")\n        return \"ok\"\n    }\n}\n\nenum E: (OnlyStructs) {\n    A\n}\n\nfn main() {\n    println(\"x\")\n}\n";
-        let text = failure(&[("main.mote", source)], Target::Run);
-        assert!(text.contains("error: `E` cannot list `OnlyStructs`: needs a struct"), "{text}");
-        assert!(text.contains("10 | enum E: (OnlyStructs) {\n"), "{text}");
-    }
-
-    #[test]
-    fn pipeline_an_unmet_require_in_a_function_is_printed_at_the_call() {
-        let text = failure(&[("main.mote", "import { require } from std.meta\n\nfn main() {\n    require(false, \"never holds\")\n}\n")], Target::Run);
-        assert!(text.contains("error: never holds"), "{text}");
-        assert!(text.contains("4 |     require(false, \"never holds\")\n"), "{text}");
-    }
-
-    #[test]
     fn pipeline_a_native_that_cannot_cross_to_c_is_printed_at_the_native_fn() {
-        let text = failure(&[("main.mote", "@link(\"c\")\nnative fn f(items: [String]) -> Int\n\nfn main() {\n    println(f([\"a\"]))\n}\n")], Target::Run);
+        let text = failure(&[("main.mote", "extern \"c\" {\n    fn f(items: [String]) -> Int\n}\n\nfn main() {\n    println(f([\"a\"]))\n}\n")], Target::Run);
         assert!(text.contains("error: parameter `items` of type `[String]` has no C type"), "{text}");
-        assert!(text.contains("2 | native fn f(items: [String]) -> Int\n"), "{text}");
+        assert!(text.contains("2 |     fn f(items: [String]) -> Int\n"), "{text}");
     }
 
     #[test]
@@ -372,7 +348,7 @@ mod tests {
         let dir = scratch.package("app", "app", &[], &[("main.mote", HELLO)]);
         scratch.write("app/mote.toml", "[package]\nname = \"app\"\nversion = 3\n");
         let text = Pipeline::build(&dir, Target::Run, &Options::default()).err().unwrap().to_string();
-        assert_eq!(text, format!("error: {}:3: `package.version`: expected a string, found an integer\n", dir.join("mote.toml").display()));
+        assert_eq!(text, format!("error: {}:3: `package.version`: expected a string, found an integer\n", mote_packages::shown(&dir.join("mote.toml"))));
     }
 
     #[test]
@@ -381,7 +357,7 @@ mod tests {
         let dir = scratch.package("app", "app", &[], &[("main.mote", HELLO)]);
         scratch.write("app/mote.toml", "[package]\nname = \"app\"\nversion = \"0.1.0\"\nmote = \"99.0.0\"\n");
         let text = Pipeline::build(&dir, Target::Run, &Options::default()).err().unwrap().to_string();
-        assert_eq!(text, format!("error: {}:4: `package.mote`: needs mote 99.0.0, this is {}\n", dir.join("mote.toml").display(), toolchain()));
+        assert_eq!(text, format!("error: {}:4: `package.mote`: needs mote 99.0.0, this is {}\n", mote_packages::shown(&dir.join("mote.toml")), toolchain()));
     }
 
     #[test]
@@ -439,7 +415,7 @@ mod tests {
         assert_eq!((count(None), count(Some("parse")), count(Some("numbers")), count(Some("zzz"))), (3, 2, 1, 0));
     }
 
-    const PASSING: &str = "import { assert } from std.test\n\ntest \"in tests\" {\n    assert(1 == 1)\n}\n";
+    const PASSING: &str = "import assert from std.test\n\ntest \"in tests\" {\n    assert(1 == 1)\n}\n";
 
     /// The names of the test blocks the pipeline holds.
     fn test_names(pipeline: &mut Pipeline) -> Vec<String> {
@@ -450,7 +426,7 @@ mod tests {
     fn pipeline_test_and_check_targets_include_the_test_blocks_of_tests() {
         let (scratch, dir) = app(&[("main.mote", HELLO)]);
         scratch.write("app/tests/a.mote", PASSING);
-        scratch.write("app/tests/sub/b.mote", "import { assert } from std.test\nimport ..a\n\ntest \"deeper\" {\n    assert(true)\n}\n");
+        scratch.write("app/tests/sub/b.mote", "import assert from std.test\nimport ..a\n\ntest \"deeper\" {\n    assert(true)\n}\n");
         for target in [Target::Test, Target::Check] {
             let mut pipeline = Pipeline::build(&dir, target, &Options::default()).unwrap();
             assert_eq!(test_names(&mut pipeline), ["in tests", "deeper"], "{target:?}");
@@ -472,7 +448,7 @@ mod tests {
     #[test]
     fn pipeline_a_test_file_imports_the_package_it_tests() {
         let (scratch, dir) = app(&[("lib.mote", "pub fn two() -> Int {\n    return 2\n}\n"), ("main.mote", HELLO)]);
-        scratch.write("app/tests/uses.mote", "import { assert_eq } from std.test\nimport { two } from app\n\ntest \"two\" {\n    assert_eq(two(), 2)\n}\n");
+        scratch.write("app/tests/uses.mote", "import assert_eq from std.test\nimport two from app\n\ntest \"two\" {\n    assert_eq(two(), 2)\n}\n");
         let mut pipeline = Pipeline::build(&dir, Target::Test, &Options::default()).unwrap();
         assert_eq!(test_names(&mut pipeline), ["two"]);
     }
@@ -483,5 +459,35 @@ mod tests {
         let options = Options { std: Some(PathBuf::from("/nonexistent/std")), ..Options::default() };
         let text = Pipeline::build(&dir, Target::Run, &options).err().unwrap().to_string();
         assert!(text.starts_with("error: /nonexistent/std/mote.toml: cannot read"), "{text}");
+    }
+
+    #[test]
+    fn pipeline_reflect_show_on_multi_field_struct_unrolls_statically() {
+        let source = "import show from std.reflect\n\nstruct Point {\n    x: Int\n    y: Int\n    label: String\n}\n\nfn main() {\n    println(show(Point { x: 1, y: 2, label: \"hi\" }))\n}\n";
+        let pipeline = built(&[("main.mote", source)], Target::Run).unwrap();
+        let show_ir: String = pipeline
+            .module
+            .functions
+            .iter()
+            .filter_map(|(_, func)| match &func.kind {
+                mote_ir::FunctionKind::Instance(inst)
+                    if pipeline.interner.resolve(pipeline.program.defs[inst.def].name) == "show_nested" =>
+                {
+                    Some(mote_ir::print_function(func, &pipeline.program, &pipeline.interner))
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n---\n");
+        assert!(show_ir.contains("field r0.0") && show_ir.contains("field r0.1") && show_ir.contains("field r0.2"), "{show_ir}");
+        assert!(show_ir.contains("\"x\"") && show_ir.contains("\"y\"") && show_ir.contains("\"label\""), "{show_ir}");
+        assert!(!show_ir.contains("meta_ints") && !show_ir.contains("meta_texts"), "{show_ir}");
+    }
+
+    #[test]
+    fn pipeline_dependent_const_generic_array_length_evaluates_and_runs() {
+        let source = "fn padded<T, const N: Int>(fill: T) -> [T; N + 1] {\n    return [fill; N + 1]\n}\n\nfn main() {\n    let arr = padded<Int, 2>(9)\n    println(arr[0])\n    println(arr[2])\n}\n";
+        let mut pipeline = built(&[("main.mote", source)], Target::Run).unwrap();
+        assert_eq!(output_of(&mut pipeline), "9\n9\n");
     }
 }

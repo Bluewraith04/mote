@@ -6,12 +6,12 @@ use mote_base::{Interner, Severity};
 
 use crate::analyze::analyze;
 use crate::check::check;
-use crate::defs::{DefId, DefKind, Resolved};
+use crate::defs::{DefId, DefKind, GenericParam, ModuleId, Resolved};
 use crate::instantiate::instantiate;
 use crate::program::{Instance, Program};
 use crate::resolve::resolve;
 use crate::testing::parse_sources;
-use crate::types::TyId;
+use crate::types::{ConstArg, ConstVal, GenericArg, IntTy, TyId, TyKind};
 
 /// A program that went through every pass, and what the passes reported.
 pub struct Compiled {
@@ -47,7 +47,7 @@ fn collect(dir: &Path, path: &[String], out: &mut Vec<(String, String)>) {
 /// The std source as (module path, text).
 pub fn std_sources() -> Vec<(String, String)> {
     let mut sources = Vec::new();
-    collect(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../std/src"), &[], &mut sources);
+    collect(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../mote_std/std/src"), &[], &mut sources);
     sources
 }
 
@@ -84,26 +84,71 @@ fn build(main: &str, whole_std: bool) -> Compiled {
     let entries: Vec<Instance> = entries.into_iter().map(|def| Instance { def, args: Vec::new() }).collect();
     let mut wanted = entries.clone();
     if whole_std {
-        let type_args = |def: DefId| {
-            let item = &program.defs[def];
-            let function = item.function().filter(|function| function.has_body)?;
-            let owned = match item.owner.map(|owner| &program.defs[owner].kind) {
-                None => 0,
-                Some(DefKind::Record(record)) => record.generics.len(),
-                Some(DefKind::Enum(item)) => item.generics.len(),
-                Some(_) => return None,
+        let int_arr = program.types.array(TyId::INT);
+        let bool_arr = program.types.array(TyId::BOOL);
+        let nested_arr = program.types.array(int_arr);
+        let pair_ty = program.types.tuple(vec![TyId::INT, TyId::INT]);
+        let pair_arr = program.types.array(pair_ty);
+        let dummy_arg = |param: &GenericParam| -> GenericArg {
+            match param {
+                GenericParam::Type { .. } => GenericArg::Type(TyId::INT),
+                GenericParam::Const { ty, .. } => match program.types.kind(*ty) {
+                    TyKind::Bool => GenericArg::Const(ConstArg::Val(ConstVal::Bool(false))),
+                    TyKind::Int(i) => GenericArg::Const(ConstArg::Val(ConstVal::Int(1, *i))),
+                    _ => GenericArg::Const(ConstArg::Val(ConstVal::Int(1, IntTy::I64))),
+                },
+            }
+        };
+        let std_array_args = |name: &str, count: usize| -> Option<Vec<GenericArg>> {
+            if count == 0 {
+                return Some(Vec::new());
+            }
+            let tys = match name {
+                "full" | "from_fn" => vec![TyId::INT],
+                "all" | "any" | "none" => vec![bool_arr],
+                "select" => vec![bool_arr, int_arr],
+                "flatten" => vec![nested_arr, TyId::INT],
+                "zip" => vec![int_arr, TyId::INT, int_arr, TyId::INT, pair_arr],
+                "enumerate" => vec![int_arr, TyId::INT, pair_arr],
+                "concat" => vec![int_arr, int_arr, TyId::INT],
+                "scan" | "map" => vec![int_arr, TyId::INT, TyId::INT, int_arr],
+                "zip_with" => vec![int_arr, TyId::INT, int_arr, TyId::INT, TyId::INT, int_arr],
+                _ => std::iter::once(int_arr).chain(std::iter::repeat_n(TyId::INT, count.saturating_sub(1))).collect(),
             };
-            Some(owned + function.generics.len())
+            Some(tys.into_iter().map(GenericArg::Type).collect())
+        };
+        let is_std_array = |m: ModuleId| -> bool {
+            let p = &program.modules[m].path;
+            p.len() == 2 && parsed.interner.resolve(p[0]) == "std" && parsed.interner.resolve(p[1]) == "array"
+        };
+        let type_args = |def: DefId| -> Option<Vec<GenericArg>> {
+            let item = &program.defs[def];
+            let function = item.function().filter(|function| function.has_body && function.link.is_none())?;
+            if item.extend.is_none() && item.owner.is_none() && is_std_array(item.module) {
+                return std_array_args(parsed.interner.resolve(item.name), function.generics.len());
+            }
+            let mut out = Vec::new();
+            if let Some(ext) = item.extend {
+                out.extend(program.extends[ext].generics.iter().map(dummy_arg));
+            } else if let Some(owner) = item.owner {
+                match &program.defs[owner].kind {
+                    DefKind::Record(record) => out.extend(record.generics.iter().map(dummy_arg)),
+                    DefKind::Enum(en) => out.extend(en.generics.iter().map(dummy_arg)),
+                    _ => return None,
+                }
+            }
+            out.extend(function.generics.iter().map(dummy_arg));
+            Some(out)
         };
         let extra: Vec<Instance> = program
             .defs
             .iter()
             .filter(|&(_, def)| def.module != module && program.modules[def.module].is_std)
-            .filter_map(|(def, _)| type_args(def).map(|count| Instance { def, args: vec![TyId::INT; count] }))
+            .filter_map(|(def, _)| type_args(def).map(|args| Instance { def, args }))
             .collect();
         wanted.extend(extra);
     }
-    instantiate(&mut program, &parsed.interner, &mut parsed.sink, &wanted);
+    instantiate(&mut program, &mut parsed.interner, &mut parsed.sink, &wanted);
     analyze(&mut program, &parsed.interner, &mut parsed.sink);
     let errors = parsed
         .sink

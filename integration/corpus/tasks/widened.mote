@@ -1,4 +1,4 @@
-import { Task, sleep } from std.task
+import sleep from std.task
 
 fn number() -> Task<Int> {
     return spawn { return 7 }

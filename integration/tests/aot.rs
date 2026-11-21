@@ -161,8 +161,8 @@ fn program_jobs() -> Vec<Job> {
 fn block_jobs() -> Vec<Job> {
     let mut jobs = Vec::new();
     for file in SEEDED_TESTS {
-        let source = std::fs::read_to_string(common::root().join("std/tests").join(format!("{file}.mote"))).expect("a readable file");
-        let recorded = std::fs::read_to_string(common::root().join("std/tests").join(format!("{file}.expect"))).unwrap_or_default();
+        let source = std::fs::read_to_string(common::root().join("mote_std/std/tests").join(format!("{file}.mote"))).expect("a readable file");
+        let recorded = std::fs::read_to_string(common::root().join("mote_std/std/tests").join(format!("{file}.expect"))).unwrap_or_default();
         let found = sections(&recorded);
         let start_output = found.first().map(|(_, body)| output_of(body)).unwrap_or_default();
         for (index, (header, body)) in found.iter().skip(1).enumerate().filter(|(_, (_, body))| !body.starts_with("skipped")) {
@@ -202,25 +202,10 @@ fn aot_a_fault_and_an_error_end_the_executable_with_code_1() {
     assert_eq!(shown(&job, &built(&job, true, &scratch).unwrap(), None).unwrap(), recorded);
 }
 
-/// Runs `cc` with the arguments.
-fn cc(args: &[&std::ffi::OsStr]) {
-    let status = Command::new("cc").args(args).status().expect("cc runs");
-    assert!(status.success(), "cc {args:?}");
-}
-
-/// The package `app` with `libdemo.so` and, when `archive` is set, `libdemo.a` built from `integration/natives/demo.c`; the archive's init is `mote_init_demo`.
+/// The package `app` with its shared `demo` library and, when `archive` is set, its static archive built from `integration/libs/demo.c`; the archive's init is `mote_init_demo`.
 fn demo_package(scratch: &Scratch, source: &str, archive: bool) -> PathBuf {
     let dir = scratch.package("app", "app", &[], &[("main.mote", source)]);
-    let natives = dir.join("native").join(mote_packages::host_triple());
-    std::fs::create_dir_all(&natives).expect("a directory for the library");
-    let demo = common::root().join("integration/natives/demo.c");
-    cc(&["-shared".as_ref(), "-fPIC".as_ref(), "-O1".as_ref(), "-o".as_ref(), natives.join("libdemo.so").as_os_str(), demo.as_os_str(), "-lpthread".as_ref()]);
-    if archive {
-        let object = natives.join("demo.o");
-        cc(&["-c".as_ref(), "-fPIC".as_ref(), "-O1".as_ref(), "-Dmote_init=mote_init_demo".as_ref(), "-o".as_ref(), object.as_os_str(), demo.as_os_str()]);
-        let made = Command::new("ar").arg("rcs").arg(natives.join("libdemo.a")).arg(&object).status().expect("ar runs");
-        assert!(made.success(), "ar builds the archive");
-    }
+    common::build_demo_library(&dir, archive);
     dir
 }
 
@@ -229,15 +214,15 @@ fn run_without_the_shared_library(dir: &Path, scratch: &Scratch) -> Exit {
     let mut pipeline = Pipeline::build(dir, Target::Run, &Options::default()).unwrap_or_else(|failure| panic!("{failure}"));
     let out = scratch.dir.join("demo-exe");
     link(&mut pipeline, &out).unwrap_or_else(|failure| panic!("{failure}"));
-    std::fs::remove_file(dir.join("native").join(mote_packages::host_triple()).join("libdemo.so")).expect("the shared library is there");
-    let _ = std::fs::remove_dir_all(scratch.dir.join("native"));
+    std::fs::remove_file(dir.join("lib").join(mote_packages::host_triple()).join(mote_packages::library_file("demo"))).expect("the shared library is there");
+    let _ = std::fs::remove_dir_all(scratch.dir.join("lib"));
     run_exe(&out, None, "").unwrap()
 }
 
 #[test]
-fn aot_static_a_program_whose_natives_ship_an_archive_runs_without_the_shared_library() {
+fn aot_static_a_program_whose_libraries_ship_an_archive_runs_without_the_shared_library() {
     let scratch = Scratch::new();
-    let source = "@link(\"demo\")\nnative fn add_i64(a: Int, b: Int) -> Int\n\n@link(\"demo\")\nnative fn greeting() -> String\n\nfn main() {\n    println(add_i64(1, 2))\n    println(greeting())\n}\n";
+    let source = "extern \"demo\" {\n    fn add_i64(a: Int, b: Int) -> Int\n    fn greeting() -> String\n}\n\nfn main() {\n    println(add_i64(1, 2))\n    println(greeting())\n}\n";
     let dir = demo_package(&scratch, source, true);
     let exit = run_without_the_shared_library(&dir, &scratch);
     assert_eq!((exit.stdout.as_str(), exit.stderr.as_str(), exit.code), ("3\nhello from c\n", "", Some(0)));
@@ -246,7 +231,7 @@ fn aot_static_a_program_whose_natives_ship_an_archive_runs_without_the_shared_li
 #[test]
 fn aot_static_a_linked_library_gets_its_init_before_main() {
     let scratch = Scratch::new();
-    let source = "@link(\"demo\")\nnative fn host_size() -> UInt64\n\nfn main() {\n    println(host_size())\n}\n";
+    let source = "extern \"demo\" {\n    fn host_size() -> UInt64\n}\n\nfn main() {\n    println(host_size())\n}\n";
     let dir = demo_package(&scratch, source, true);
     let exit = run_without_the_shared_library(&dir, &scratch);
     assert_eq!((exit.stdout.as_str(), exit.code), ("32\n", Some(0)));
@@ -255,7 +240,7 @@ fn aot_static_a_linked_library_gets_its_init_before_main() {
 #[test]
 fn aot_static_a_library_with_no_archive_is_opened_when_the_executable_starts() {
     let scratch = Scratch::new();
-    let source = "@link(\"demo\")\nnative fn add_i64(a: Int, b: Int) -> Int\n\nfn main() {\n    println(add_i64(1, 2))\n}\n";
+    let source = "extern \"demo\" {\n    fn add_i64(a: Int, b: Int) -> Int\n}\n\nfn main() {\n    println(add_i64(1, 2))\n}\n";
     let dir = demo_package(&scratch, source, false);
     let exit = run_without_the_shared_library(&dir, &scratch);
     assert_eq!((exit.stdout.as_str(), exit.stderr.as_str(), exit.code), ("", "error: library `demo` not found\n", Some(1)));

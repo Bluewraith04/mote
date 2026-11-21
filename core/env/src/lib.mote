@@ -1,3 +1,0 @@
-// Environment variables and the working directory of the process.
-pub import { get, get_or, has, remove, set, vars } from .vars
-pub import { current_dir, set_current_dir } from .cwd

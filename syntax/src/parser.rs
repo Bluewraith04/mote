@@ -37,16 +37,22 @@ struct Ctx {
     head: Head,
     no_range: bool,
     no_union: bool,
+    no_gt: bool,
 }
 
-const FREE: Ctx = Ctx { head: Head::Free, no_range: false, no_union: false };
+const FREE: Ctx = Ctx { head: Head::Free, no_range: false, no_union: false, no_gt: false };
 
 struct Words {
     test: Symbol,
     send: Symbol,
     wildcard: Symbol,
     from: Symbol,
+    extend: Symbol,
     self_upper: Symbol,
+    type_of: Symbol,
+    type_arg: Symbol,
+    field_type: Symbol,
+    variant_field_type: Symbol,
 }
 
 struct Parser<'a> {
@@ -78,7 +84,12 @@ impl<'a> Parser<'a> {
             send: interner.intern("Send"),
             wildcard: interner.intern("_"),
             from: interner.intern("from"),
+            extend: interner.intern("extend"),
             self_upper: interner.intern("Self"),
+            type_of: interner.intern("typeof"),
+            type_arg: interner.intern("TypeArg"),
+            field_type: interner.intern("FieldType"),
+            variant_field_type: interner.intern("VariantFieldType"),
         };
         Parser {
             ast,
@@ -218,6 +229,10 @@ impl<'a> Parser<'a> {
         if self.at(T::From) {
             let span = self.bump().span;
             return Ident { name: self.words.from, span };
+        }
+        if self.at(T::Extend) {
+            let span = self.bump().span;
+            return Ident { name: self.words.extend, span };
         }
         self.name()
     }
@@ -411,6 +426,8 @@ fn is_stmt_keyword(kind: TokenKind) -> bool {
         kind,
         T::Let
             | T::Var
+            | T::Const
+            | T::Comptime
             | T::Fn
             | T::If
             | T::While
@@ -429,7 +446,21 @@ fn is_stmt_keyword(kind: TokenKind) -> bool {
 fn is_item_start(kind: TokenKind) -> bool {
     matches!(
         kind,
-        T::Fn | T::Native | T::Struct | T::Class | T::Enum | T::Trait | T::Type | T::Import | T::Pub | T::At | T::Let | T::Var
+        T::Fn
+            | T::Extern
+            | T::Extend
+            | T::Const
+            | T::Comptime
+            | T::Struct
+            | T::Class
+            | T::Enum
+            | T::Trait
+            | T::Type
+            | T::Import
+            | T::Pub
+            | T::At
+            | T::Let
+            | T::Var
     )
 }
 
@@ -438,15 +469,18 @@ fn is_stopper(kind: TokenKind) -> bool {
         kind,
         T::Let
             | T::Var
+            | T::Const
+            | T::Comptime
             | T::Fn
             | T::Struct
             | T::Class
             | T::Enum
             | T::Trait
+            | T::Extend
+            | T::Extern
             | T::Type
             | T::Import
             | T::Pub
-            | T::Native
             | T::While
             | T::For
             | T::Return
@@ -482,6 +516,8 @@ fn starts_expr(kind: TokenKind) -> bool {
             | T::If
             | T::Match
             | T::Spawn
+            | T::At
+            | T::Comptime
     )
 }
 
@@ -495,17 +531,20 @@ fn describe(kind: TokenKind) -> String {
         T::Error => return "an invalid token".into(),
         T::Let => "let",
         T::Var => "var",
+        T::Const => "const",
+        T::Comptime => "comptime",
         T::Fn => "fn",
         T::Struct => "struct",
         T::Class => "class",
         T::Enum => "enum",
         T::Trait => "trait",
+        T::Extend => "extend",
+        T::Extern => "extern",
         T::Type => "type",
         T::Pub => "pub",
         T::Import => "import",
         T::From => "from",
         T::As => "as",
-        T::Native => "native",
         T::Scope => "scope",
         T::Spawn => "spawn",
         T::With => "with",

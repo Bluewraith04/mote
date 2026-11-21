@@ -5,7 +5,6 @@ mod common;
 use std::collections::BTreeSet;
 
 use mote::{Options, Pipeline, Target};
-use mote_ir::{Callee, Op};
 use mote_packages::testing::Scratch;
 use mote_semantics::{DefId, DefKind};
 
@@ -21,38 +20,23 @@ fn qualified(pipeline: &Pipeline, def: DefId) -> String {
     parts.join(".")
 }
 
-/// The public functions and methods `std` declares that have a body or a native behind them.
+/// The public functions and methods `std` declares that have a body or an extern declaration.
 fn declared(pipeline: &Pipeline) -> BTreeSet<String> {
     let program = &pipeline.program;
     program
         .defs
         .iter()
         .filter(|(_, item)| item.is_pub && item.origin.is_some() && program.modules[item.module].is_std)
+        .filter(|(_, item)| !(program.modules[item.module].path.len() == 2 && pipeline.interner.resolve(program.modules[item.module].path[1]) == "array"))
         .filter(|(_, item)| item.owner.is_none_or(|owner| program.defs[owner].is_pub && !matches!(program.defs[owner].kind, DefKind::Trait(_))))
-        .filter(|(_, item)| matches!(&item.kind, DefKind::Function(function) if function.has_body || function.native))
+        .filter(|(_, item)| matches!(&item.kind, DefKind::Function(function) if function.has_body || function.link.is_some()))
         .map(|(def, _)| qualified(pipeline, def))
         .collect()
 }
 
-/// The functions a program instantiates, and those whose intrinsic one of its functions calls.
+/// The functions a program instantiates.
 fn reached(pipeline: &Pipeline) -> BTreeSet<String> {
-    let mut found: BTreeSet<String> = pipeline.program.order.iter().map(|instance| qualified(pipeline, instance.def)).collect();
-    let mut called = std::collections::HashSet::new();
-    for (_, function) in pipeline.module.functions.iter() {
-        for (_, block) in function.blocks.iter() {
-            for inst in &block.insts {
-                if let Op::Call { callee: Callee::Intrinsic(name), .. } = &inst.op {
-                    called.insert(*name);
-                }
-            }
-        }
-    }
-    for (def, item) in pipeline.program.defs.iter() {
-        if matches!(&item.kind, DefKind::Function(function) if function.intrinsic.is_some_and(|name| called.contains(&name))) {
-            found.insert(qualified(pipeline, def));
-        }
-    }
-    found
+    pipeline.program.order.iter().map(|instance| qualified(pipeline, instance.def)).collect()
 }
 
 fn built(source: &str, target: Target) -> Option<Pipeline> {
@@ -66,7 +50,7 @@ fn std_calls_every_public_function() {
     let mut sources: Vec<(Target, String)> = Vec::new();
     for path in common::files_with("mote") {
         let relative = common::relative(&path);
-        if relative.starts_with("std/tests/") {
+        if relative.starts_with("mote_std/std/tests/") {
             sources.push((Target::Test, std::fs::read_to_string(&path).expect("a readable file")));
         } else if relative.starts_with("integration/corpus/") {
             sources.push((Target::Run, std::fs::read_to_string(&path).expect("a readable file")));

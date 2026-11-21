@@ -456,8 +456,6 @@ Ok(0)
 * State that changes while the program runs belongs in a `Mutex` or an atomic. <!-- block -->
 
 ```mote
-import { Mutex } from std.sync
-
 fn main() {
     let m = Mutex(0)
     m.lock(|n| { n += 1 })

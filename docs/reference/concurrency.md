@@ -1,13 +1,11 @@
 # Concurrency
 
-* The names `Channel Sender Receiver Mutex Once` come from `std.sync`, `Task` from `std.task`, and the atomics `Int64` and `Bool` from `std.atomic`. <!-- block -->
+* `Channel` comes from `std.sync`; `Sender`, `Receiver`, `Mutex`, `Once`, `Task`, `AtomicInt`, and `AtomicBool` are universal builtins. <!-- block -->
 
 ```mote
-import { Channel, Sender, Receiver, Mutex, Once } from std.sync
-import { Task } from std.task
-import std.atomic as atomic
+import Channel from std.sync
 
-fn types(a: atomic.Int64, b: atomic.Bool) {}
+fn types(a: AtomicInt, b: AtomicBool, tx: Sender<Int>, rx: Receiver<Int>, m: Mutex<Int>, o: Once<Int>, t: Task<Int>) {}
 ```
 
 ## Tasks
@@ -16,8 +14,6 @@ fn types(a: atomic.Int64, b: atomic.Bool) {}
 * `h.await()` waits and gives `Ok(value)`, or `Err(error)` when the task faulted; `?` unwraps it in a function that returns a `Result`. <!-- block -->
 
 ```mote
-import { Task } from std.task
-
 fn twice(n: Int) -> Int {
     return n * 2
 }
@@ -60,7 +56,7 @@ division by zero
 * A cancelled task ends at its next wait; its `await` gives an `Err`, and that is not a fault. `await_timeout` returns `None` and leaves the task running. <!-- block --> <!-- test: differential_timed_the_compiled_code_shows_the_recorded_results, differential_cancel_the_compiled_code_shows_the_recorded_results -->
 
 ```mote
-import { sleep } from std.task
+import sleep from std.task
 
 fn main() {
     let slow = spawn {
@@ -157,7 +153,7 @@ fn main() {
 * `Channel<T>(n)` returns a `(Sender<T>, Receiver<T>)` pair. `n` is the buffer; `0` is a rendezvous. <!-- block -->
 
 ```mote
-import { Channel } from std.sync
+import Channel from std.sync
 
 fn main() {
     let (tx, rx) = Channel<Int>(3)
@@ -202,7 +198,7 @@ null
 * A producer task sends, and the consumer reads until the channel closes. <!-- block -->
 
 ```mote
-import { Channel } from std.sync
+import Channel from std.sync
 
 fn main() {
     var total = 0
@@ -237,8 +233,6 @@ fn main() {
 | `m.set(v)` | replaces the value with a `deep_clone()` of `v` |
 
 ```mote
-import { Mutex } from std.sync
-
 fn main() {
     let hits = Mutex(0)
     scope {
@@ -282,8 +276,6 @@ fn main() {
 | `o.get_or_init(\|\| value)` | the value; the first call runs the body and later calls return what it made |
 
 ```mote
-import { Once } from std.sync
-
 fn main() {
     let config = Once<String>()
     println(config.get_or_init(|| "mote"))
@@ -309,14 +301,12 @@ mote
 <!-- test: mutex_once_and_atomics_have_their_methods -->
 | Type | Made by | Calls |
 |---|---|---|
-| `atomic.Int64` | `atomic.Int64(n)` | `load()`; `store(n)`; `swap(n)` returns the old value; `compare_exchange(expected, n)` stores `n` and returns `true` only when the value was `expected`; `fetch_add(n)` and `fetch_sub(n)` return the old value |
-| `atomic.Bool` | `atomic.Bool(b)` | `load()`; `store(b)`; `swap(b)`; `compare_exchange(expected, b)` |
+| `AtomicInt` | `AtomicInt(n)` | `load()`; `store(n)`; `swap(n)` returns the old value; `compare_exchange(expected, n)` stores `n` and returns `true` only when the value was `expected`; `fetch_add(n)` and `fetch_sub(n)` return the old value |
+| `AtomicBool` | `AtomicBool(b)` | `load()`; `store(b)`; `swap(b)`; `compare_exchange(expected, b)` |
 
 ```mote
-import std.atomic as atomic
-
 fn main() {
-    let done = atomic.Int64(0)
+    let done = AtomicInt(0)
     scope {
         for i in 0..3 {
             spawn { done.fetch_add(1) }
@@ -327,7 +317,7 @@ fn main() {
     println(done.compare_exchange(10, 11))
     println(done.compare_exchange(10, 12))
     println(done.load())
-    let flag = atomic.Bool(false)
+    let flag = AtomicBool(false)
     println(flag.swap(true))
     println(flag.load())
 }
@@ -373,7 +363,7 @@ true
 * A resource that must not be shared belongs to one task; the others send it requests on a channel, with a reply channel in the request. <!-- block -->
 
 ```mote
-import { Channel, Sender } from std.sync
+import Channel from std.sync
 
 struct Add {
     n: Int

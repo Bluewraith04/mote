@@ -1,8 +1,8 @@
-//! What the helpers of compiled code know about the program: how each type is shown and what `std.meta` describes.
+//! What the helpers of compiled code know about the program: how each type is shown.
 
-use mote_abi::{Carries, Described, Meta, Shown};
+use mote_abi::{Carries, Meta, Shown};
 use mote_base::Interner;
-use mote_semantics::{FloatTy, LangItem, Payload, Program, TyKind};
+use mote_semantics::{BuiltinTy, FloatTy, Payload, Program, TyKind};
 
 use crate::typetable::TypeMap;
 
@@ -16,20 +16,7 @@ pub fn build(program: &Program, interner: &Interner, types: &TypeMap) -> Meta {
     for (ty, id) in types.entries() {
         shown[id.index()] = shown_of(program, interner, ty);
     }
-    let number = |ty| program.reflect_index[&ty];
-    let described = program
-        .reflected
-        .iter()
-        .map(|entry| Described {
-            kind: entry.kind,
-            ty: types.id(entry.ty),
-            boxed: types.try_boxed(entry.ty).expect("a described type has a box"),
-            args: entry.args.iter().map(|&ty| number(ty)).collect(),
-            fields: entry.fields.iter().map(|field| number(field.ty)).collect(),
-            variants: entry.variants.iter().map(|variant| variant.fields.iter().map(|field| number(field.ty)).collect()).collect(),
-        })
-        .collect();
-    Meta { string: types.id(mote_semantics::TyId::STRING), dyn_type: types.dyn_type(), shown, described }
+    Meta { string: types.id(mote_semantics::TyId::STRING), dyn_type: None, shown, described: Vec::new() }
 }
 
 fn shown_of(program: &Program, interner: &Interner, ty: mote_semantics::TyId) -> Shown {
@@ -45,38 +32,42 @@ fn shown_of(program: &Program, interner: &Interner, ty: mote_semantics::TyId) ->
         TyKind::FixedArray(..) => Shown::FixedArray,
         TyKind::Array(_) => Shown::Array,
         TyKind::Optional(_) => Shown::Optional,
-        TyKind::Union(_) => Shown::Union,
+        TyKind::Union(_) | TyKind::Any => Shown::Union,
         TyKind::Function(_) => Shown::Closure,
+        TyKind::Builtin { kind, .. } => match kind {
+            BuiltinTy::List => Shown::List,
+            BuiltinTy::Stream => Shown::Closure,
+            BuiltinTy::Pointer => Shown::Opaque,
+            _ if kind.is_handle() => Shown::Handle,
+            _ => Shown::Opaque,
+        },
         TyKind::Adt { def, .. } => {
-            let definition = &program.defs[*def];
-            match definition.lang {
-                Some(LangItem::List) => Shown::List,
-                Some(LangItem::Array) => Shown::Array,
-                Some(LangItem::Map) => Shown::Map,
-                Some(LangItem::Set) => Shown::Set,
-                Some(LangItem::Range) => Shown::Range,
-                Some(LangItem::Stream) => Shown::Closure,
-                Some(item) if item.is_handle() => Shown::Handle,
-                _ => {
-                    if let Some(record) = definition.record() {
-                        Shown::Record(interner.resolve(definition.name).to_string(), names(interner, record.fields.iter().map(|field| field.name)))
-                    } else if let Some(item) = definition.enum_def() {
-                        Shown::Enum(
-                            item.variants
-                                .iter()
-                                .map(|variant| {
-                                    let name = interner.resolve(variant.name).to_string();
-                                    match &variant.payload {
-                                        Payload::Unit => (name, Carries::Nothing, Vec::new()),
-                                        Payload::Tuple(types) => (name, Carries::Tuple, vec![String::new(); types.len()]),
-                                        Payload::Struct(fields) => (name, Carries::Named, names(interner, fields.iter().map(|field| field.name))),
-                                    }
-                                })
-                                .collect(),
-                        )
-                    } else {
-                        Shown::Opaque
-                    }
+            if program.std.map == Some(*def) {
+                Shown::Map
+            } else if program.std.set == Some(*def) {
+                Shown::Set
+            } else if program.std.range == Some(*def) {
+                Shown::Range
+            } else {
+                let definition = &program.defs[*def];
+                if let Some(record) = definition.record() {
+                    Shown::Record(interner.resolve(definition.name).to_string(), names(interner, record.fields.iter().map(|field| field.name)))
+                } else if let Some(item) = definition.enum_def() {
+                    Shown::Enum(
+                        item.variants
+                            .iter()
+                            .map(|variant| {
+                                let name = interner.resolve(variant.name).to_string();
+                                match &variant.payload {
+                                    Payload::Unit => (name, Carries::Nothing, Vec::new()),
+                                    Payload::Tuple(types) => (name, Carries::Tuple, vec![String::new(); types.len()]),
+                                    Payload::Struct(fields) => (name, Carries::Named, names(interner, fields.iter().map(|field| field.name))),
+                                }
+                            })
+                            .collect(),
+                    )
+                } else {
+                    Shown::Opaque
                 }
             }
         }

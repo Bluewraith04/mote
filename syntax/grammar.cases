@@ -65,8 +65,14 @@ From ‖ accept ‖ from ‖ From Eof
 From ‖ reject ‖ fromx ‖ Ident Newline Eof
 As ‖ accept ‖ as ‖ As Eof
 As ‖ reject ‖ asx ‖ Ident Newline Eof
-Native ‖ accept ‖ native ‖ Native Eof
-Native ‖ reject ‖ nativex ‖ Ident Newline Eof
+Extern ‖ accept ‖ extern ‖ Extern Eof
+Extern ‖ reject ‖ externx ‖ Ident Newline Eof
+Extend#1 ‖ accept ‖ extend ‖ Extend Eof
+Extend#1 ‖ reject ‖ extendx ‖ Ident Newline Eof
+Const#1 ‖ accept ‖ const ‖ Const Eof
+Const#1 ‖ reject ‖ constx ‖ Ident Newline Eof
+Comptime ‖ accept ‖ comptime ‖ Comptime Eof
+Comptime ‖ reject ‖ comptimex ‖ Ident Newline Eof
 Scope#1 ‖ accept ‖ scope ‖ Scope Eof
 Scope#1 ‖ reject ‖ scopex ‖ Ident Newline Eof
 Spawn ‖ accept ‖ spawn ‖ Spawn Eof
@@ -238,8 +244,14 @@ AttributeValue ‖ accept ‖ @a(p.q, "s", 1, 1.5, true, false)\nfn f() {} ‖ @
 AttributeValue ‖ reject ‖ @a(x + 1)\nfn f() {} ‖ error: expected `)`, found `+`
 Function ‖ accept ‖ pub fn f<T>(a: T) -> T { return a } ‖ pub (fn f<T> (a:T) -> T (block (return a)))
 Function ‖ reject ‖ fn f( {} ‖ error: expected a name, found `{`
-NativeFunction ‖ accept ‖ pub native fn f<T>(a: Int) -> Int ‖ pub (native f<T> (a:Int) -> Int)
-NativeFunction ‖ reject ‖ native f() ‖ error: expected `fn`, found a name
+ExternBlock ‖ accept ‖ pub extern "c" { @blocking pub fn open(p: String) -> Int } ‖ pub (extern "c" @blocking pub (fn open (p:String) -> Int))
+ExternBlock ‖ reject ‖ extern fn f() ‖ error: expected a library name string, found `fn`
+ExternFn ‖ accept ‖ extern "c" { fn close(fd: Int) } ‖ (extern "c" (fn close (fd:Int)))
+ExternFn ‖ reject ‖ extern "c" { let x = 1 } ‖ error: expected `fn`, found `let`
+Extend#2 ‖ accept ‖ extend<T> [T]: (Clone) { fn dup(self) -> [T] { return [] } } ‖ (extend<T> [T]: (Clone) (fn dup (self) -> [T] (block (return (list)))))
+Extend#2 ‖ reject ‖ extend {} ‖ error: expected a type, found `{`
+Const#2 ‖ accept ‖ pub const N: Int = 4 ‖ pub (const N:Int 4)
+Const#2 ‖ reject ‖ const N: Int ‖ error: expected `=`, found the end of the line
 Test ‖ accept ‖ test "t" { } ‖ (test "t" (block))
 Test ‖ reject ‖ test "t" ‖ error: expected `{`, found the end of the file
 Record ‖ accept ‖ pub struct S<T>: (Eq) { x: Int\nfn m(self) {} } ‖ pub (struct S<T>: (Eq) (field x:Int) (fn m (self) (block)))
@@ -255,7 +267,14 @@ Import#2 ‖ accept ‖ pub import a.b as c ‖ pub (import a.b as c)
 Import#2 ‖ reject ‖ import ‖ error: expected a name, found the end of the file
 Import#3 ‖ accept ‖ import { a as b, c, } from ..m ‖ (import {a as b, c} from ..m)
 Import#3 ‖ accept ‖ import { * } from m ‖ (import {*} from m)
+Import#3 ‖ accept ‖ import a as b from ..m ‖ (import {a as b} from ..m)
+Import#3 ‖ accept ‖ import * from m ‖ (import {*} from m)
 Import#3 ‖ reject ‖ import { a b } from m ‖ error: expected `}`, found a name
+Import#4 ‖ accept ‖ import a.b.{ c as d, e, } ‖ (import {c as d, e} from a.b)
+Import#4 ‖ accept ‖ import a.b.{ * } ‖ (import {*} from a.b)
+Import#4 ‖ accept ‖ import a.b.* ‖ (import {*} from a.b)
+Import#4 ‖ reject ‖ import a.b. ‖ error: expected `*`, found the end of the file
+Import#4 ‖ reject ‖ import a.{ c d } ‖ error: expected `}`, found a name
 ImportName ‖ accept ‖ import { a as b } from m ‖ (import {a as b} from m)
 ImportName ‖ reject ‖ import { as b } from m ‖ error: expected a name, found `as`
 ModulePath ‖ accept ‖ import ..super.a.b ‖ (import ..super.a.b)
@@ -264,7 +283,7 @@ TopLevelStmt ‖ accept ‖ pub let a = 1\nf(a) ‖ pub (let a 1) ; (call f a)
 TopLevelStmt ‖ reject ‖ pub f(a) ‖ error: expected an item, found a name
 Generics ‖ accept ‖ fn f<A, B: Eq + Ord,>() {} ‖ (fn f<A, B: Eq + Ord> () (block))
 Generics ‖ reject ‖ fn f<>() {} ‖ error: expected a name, found `>`
-GenericParam ‖ accept ‖ fn f<T: A + B>() {} ‖ (fn f<T: A + B> () (block))
+GenericParam ‖ accept ‖ fn f<T: A + B, const N: Int>() {} ‖ (fn f<T: A + B, const N: Int> () (block))
 GenericParam ‖ reject ‖ fn f<1>() {} ‖ error: expected a name, found a number
 Traits ‖ accept ‖ struct S: (A, B,) { } ‖ (struct S: (A, B))
 Traits ‖ reject ‖ struct S: A { } ‖ error: expected `(`, found a name
@@ -286,8 +305,10 @@ TraitMember ‖ accept ‖ trait T { fn f<A>(self) -> Int { return 1 }\nfn g() }
 TraitMember ‖ reject ‖ trait T { f() } ‖ error: expected `fn`, found a name
 NamedType ‖ accept ‖ let a: a.B = x ‖ (let a:a.B x)
 NamedType ‖ reject ‖ let a: = x ‖ error: expected a type, found `=`
-GenericType ‖ accept ‖ let a: List<Int, String,> = x ‖ (let a:List<Int, String> x)
+GenericType ‖ accept ‖ let a: List<Int, String,> = x\nlet v: Vec<Int, 3> = y ‖ (let a:List<Int, String> x) ; (let v:Vec<Int, 3> y)
 GenericType ‖ reject ‖ let a: List<> = x ‖ error: expected a type, found `>`
+BuiltinType ‖ accept ‖ let a: @TypeOf(x) = x ‖ (let a:(@TypeOf x) x)
+BuiltinType ‖ reject ‖ let a: @ = x ‖ error: expected a name, found `=`
 NullableType ‖ accept ‖ let a: Int? = x ‖ (let a:Int? x)
 NullableType ‖ reject ‖ let a: ? = x ‖ error: expected a type, found `?`
 NullableType of NullableType ‖ accept ‖ let a: Int?? = x ‖ (let a:Int?? x)
@@ -308,14 +329,20 @@ GroupedType ‖ accept ‖ let a: (Int | String)? = x ‖ (let a:(Int | String)?
 GroupedType ‖ reject ‖ let a: (Int = x ‖ error: expected `)`, found `=`
 Binding ‖ accept ‖ let (a, b): (Int, Int) = t\nvar c = 1 ‖ (let (a, b):(Int, Int) t) ; (var c 1)
 Binding ‖ reject ‖ let a: Int ‖ error: expected `=`, found the end of the line
+ConstStmt ‖ accept ‖ fn f() { const X = 1 + 2 } ‖ (fn f () (block (const X (+ 1 2))))
+ConstStmt ‖ reject ‖ fn f() { const X = } ‖ error: expected an expression, found `}`
 Assign ‖ accept ‖ a = 1\na += 1\na -= 1\na *= 1\na /= 1\na %= 1\na &= 1\na |= 1\na ^= 1\na <<= 1\na >>= 1\na ??= b ‖ (= a 1) ; (+= a 1) ; (-= a 1) ; (*= a 1) ; (/= a 1) ; (%= a 1) ; (&= a 1) ; (|= a 1) ; (^= a 1) ; (<<= a 1) ; (>>= a 1) ; (??= a b)
 Assign ‖ reject ‖ a += ‖ error: expected an expression, found the end of the file
 If#2 ‖ accept ‖ if x { } else if y { } else { } ‖ (if x (block) (if y (block) (block)))
 If#2 ‖ reject ‖ if x ‖ error: expected `{`, found the end of the file
+ComptimeIf ‖ accept ‖ comptime if flag { } else { } ‖ (comptime-if flag (block) (block))
+ComptimeIf ‖ reject ‖ comptime if flag ‖ error: expected `{`, found the end of the file
 While#2 ‖ accept ‖ while x { } ‖ (while x (block))
 While#2 ‖ reject ‖ while { } ‖ error: expected `{`, found the end of the file
 For#2 ‖ accept ‖ for (a, b) in xs { } ‖ (for (a, b) xs (block))
 For#2 ‖ reject ‖ for a xs { } ‖ error: expected `in`, found a name
+ComptimeFor ‖ accept ‖ comptime for f in fs { } ‖ (comptime-for f fs (block))
+ComptimeFor ‖ reject ‖ comptime for f fs { } ‖ error: expected `in`, found a name
 Match#2 ‖ accept ‖ match x { 1 => a, _ => { b } } ‖ (match x (1 => a) (_ => (block b)))
 Match#2 ‖ reject ‖ match x { 1 } ‖ error: expected `=>`, found `}`
 MatchArm ‖ accept ‖ match x { n if n > 1 => a\n_ => b } ‖ (match x (n if (> n 1) => a) (_ => b))
@@ -324,6 +351,8 @@ Condition ‖ accept ‖ if let Some(a) = x { }\nif y { } ‖ (if (let Some(a) x
 Condition ‖ reject ‖ if let a { } ‖ error: expected `=`, found the end of the line
 Scope#2 ‖ accept ‖ scope { } ‖ (scope (block))
 Scope#2 ‖ reject ‖ scope ‖ error: expected `{`, found the end of the file
+ComptimeBlock ‖ accept ‖ comptime { let x = 1 } ‖ (comptime (block (let x 1)))
+ComptimeBlock ‖ reject ‖ comptime 1 ‖ error: expected `if`, `for`, or `{`, found a number
 With#2 ‖ accept ‖ with a = b { } ‖ (with a b (block))
 With#2 ‖ reject ‖ with a { } ‖ error: expected `=`, found `{`
 SpawnStmt ‖ accept ‖ spawn work()\nspawn { } ‖ (spawn (call work)) ; (spawn (block))
@@ -402,6 +431,8 @@ LambdaParam ‖ accept ‖ let f = |var a: Int, b| a ‖ (let f (lambda (var a:I
 LambdaParam ‖ reject ‖ let f = |1| a ‖ error: expected a name, found a number
 Call ‖ accept ‖ f(1, a = 2,) ‖ (call f 1 a=2)
 Call ‖ reject ‖ f(1 2) ‖ error: expected `)`, found a number
+BuiltinExpr ‖ accept ‖ @construct<T>(1, 2) ‖ (@construct<T> 1 2)
+BuiltinExpr ‖ reject ‖ let x = @foo ‖ error: expected `(`, found the end of the line
 Arg ‖ accept ‖ f(a = 1, 2) ‖ (call f a=1 2)
 Arg ‖ reject ‖ f(= 1) ‖ error: expected an expression, found `=`
 Member ‖ accept ‖ a.b ‖ (. a b)
@@ -434,6 +465,10 @@ SpawnExpr ‖ accept ‖ let t = spawn f()\nlet u = spawn { 1 } ‖ (let t (spaw
 SpawnExpr ‖ reject ‖ let t = spawn ‖ error: expected an expression, found the end of the file
 IfExpr ‖ accept ‖ let a = if x { 1 } else if y { 2 } else { 3 } ‖ (let a (if x 1 (if y 2 3)))
 IfExpr ‖ reject ‖ let a = if x { 1 } ‖ error: a value `if` needs an `else`
+ComptimeExpr ‖ accept ‖ let a = comptime { 1 + 2 } ‖ (let a (comptime (block (+ 1 2))))
+ComptimeExpr ‖ reject ‖ let a = comptime ‖ error: expected `if` or `{`, found the end of the file
+ComptimeIfExpr ‖ accept ‖ let a = comptime if x { 1 } else { 2 } ‖ (let a (comptime-if x 1 2))
+ComptimeIfExpr ‖ reject ‖ let a = comptime if x { 1 } ‖ error: a value `if` needs an `else`
 MatchExpr ‖ accept ‖ let a = match x { 1 => 2, _ => 3 } ‖ (let a (match x (1 => 2) (_ => 3)))
 MatchExpr ‖ reject ‖ let a = match x { 1 => } ‖ error: expected an expression, found `}`
 ValueArm ‖ accept ‖ let a = match x { n if n > 1 => 2, _ => 3 } ‖ (let a (match x (n if (> n 1) => 2) (_ => 3)))

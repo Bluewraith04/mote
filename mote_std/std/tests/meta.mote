@@ -1,0 +1,135 @@
+// Static reflection: @type_info, @type_name, @fields, @variants, @has_field, @field, @set_field, @construct and std.reflect.
+import { assert, assert_eq } from std.test
+import { Kind, Shape } from std.reflect
+
+/// A point on the plane.
+struct Point {
+    pub var x: Int
+    y: Int = 0
+}
+
+class Counter {
+    var count: Int
+
+    pub fn bump(var self) { self.count += 1 }
+    fn peek(self) -> Int { return self.count }
+}
+
+enum Shapely {
+    /// Nothing.
+    Empty
+    Circle(Float)
+    Rect { width: Float, height: Float }
+}
+
+struct Pair<A, B> {
+    first: A
+    second: B
+}
+
+fn name_of<T>() -> String {
+    return @type_name(T)
+}
+
+test "the built in types have their kind and name" {
+    assert(@type_info(Int).kind == Kind.Int, "Int")
+    assert_eq(@type_name(Int), "Int")
+    assert(@type_info(String).kind == Kind.String, "String")
+    assert(@type_info(Bool).kind == Kind.Bool, "Bool")
+    assert(@type_info(Float).kind == Kind.Float, "Float")
+    assert(@type_info(List<Int>).kind == Kind.List, "List")
+    assert_eq(@type_name(List<Int>), "List<Int>")
+    assert(@type_info([Int; 4]).kind == Kind.FixedArray, "FixedArray")
+    assert(@type_info(Int?).kind == Kind.Optional, "Optional")
+    assert(@type_info((Int, String)).kind == Kind.Tuple, "Tuple")
+    assert(@type_info(Int | String).kind == Kind.Union, "Union")
+    assert(@size_of(Int) > 0, "size_of Int")
+    assert(@align_of(Int) > 0, "align_of Int")
+}
+
+test "a struct lists its fields in order" {
+    const point = @type_info(Point)
+    assert(point.kind == Kind.Struct, "Struct")
+    assert(point.name.ends_with("Point"), "Point name")
+    assert_eq(point.field_count, 2)
+    let fields = @fields(Point)
+    assert_eq(fields.len(), 2)
+    assert_eq(fields[0].name, "x")
+    assert_eq(fields[0].type_name, "Int")
+    assert(fields[0].is_var, "x is var")
+    assert(fields[0].is_pub, "x is pub")
+    assert(!fields[0].has_default, "x has no default")
+    assert_eq(fields[1].name, "y")
+    assert(!fields[1].is_var, "y is not var")
+    assert(!fields[1].is_pub, "y is not pub")
+    assert(fields[1].has_default, "y has a default")
+    assert(@has_field(Point, "x"), "has x")
+    assert(!@has_field(Point, "z"), "no z")
+}
+
+test "a class is a class" {
+    const counter = @type_info(Counter)
+    assert(counter.kind == Kind.Class, "Class")
+    assert_eq(counter.field_count, 1)
+    assert_eq(@fields(Counter).len(), 1)
+}
+
+test "an enum lists its variants with their shape" {
+    const variants = @variants(Shapely)
+    assert(@type_info(Shapely).kind == Kind.Enum, "Enum")
+    assert_eq(variants.len(), 3)
+    assert_eq(variants[0].name, "Empty")
+    assert(variants[0].shape == Shape.Unit, "Empty is unit")
+    assert(variants[1].shape == Shape.Tuple, "Circle is a tuple")
+    assert_eq(variants[1].field_count, 1)
+    assert(variants[2].shape == Shape.Named, "Rect is named")
+    assert_eq(variants[2].field_count, 2)
+}
+
+test "a generic type is described at the arguments it is used with" {
+    const pair = @type_info(Pair<Int, String>)
+    assert(pair.name.ends_with("Pair<Int, String>"), "the name holds the arguments")
+    let fields = @fields(Pair<Int, String>)
+    assert_eq(fields.len(), 2)
+    assert_eq(fields[0].name, "first")
+    assert_eq(fields[0].type_name, "Int")
+    assert_eq(fields[1].name, "second")
+    assert_eq(fields[1].type_name, "String")
+}
+
+test "a generic function describes the type it was called with" {
+    assert_eq(name_of<Int>(), "Int")
+    assert_eq(name_of<List<String>>(), "List<String>")
+    assert(name_of<Point>().ends_with("Point"), "a struct is named by its path")
+}
+
+test "field read, write, construct, and comptime iteration work on structs" {
+    var p = @construct<Point>(x = 3, y = 4)
+    assert_eq(@field(p, "x"), 3)
+    @set_field(p, "x", 10)
+    assert_eq(p.x, 10)
+    var names: List<String> = []
+    comptime for f in @fields(Point) {
+        names.push(f.name)
+    }
+    assert_eq(names.len(), 2)
+    assert_eq(names[0], "x")
+    assert_eq(names[1], "y")
+    let q: @typeof(p) = Point { x: 1, y: 2 }
+    assert_eq(q.y, 2)
+}
+
+test "typeof gives the type of a value to the reflection builtins" {
+    let p = Point { x: 1, y: 2 }
+    const t = @typeof(p)
+    assert_eq(@type_name(t), @type_name(Point))
+    assert_eq(@type_info(@typeof(p)).field_count, 2)
+    assert(@type_info(@typeof(p)).kind == Kind.Struct, "Struct")
+    assert_eq(@fields(@typeof(p)).len(), 2)
+    assert_eq(name_of_value(Counter { count: 0 }), @type_name(Counter))
+    assert_eq(name_of_value([1, 2]), "List<Int>")
+}
+
+fn name_of_value<T>(value: T) -> String {
+    return @type_name(@typeof(value))
+}

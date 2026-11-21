@@ -1,58 +1,24 @@
 # Compiler and runtime contract
 
-## Lang items
+## Universal builtins and intrinsics
 
-* A `std` declaration marked `@lang("name")` is one the compiler looks up by that name. <!-- test: lang_items_are_std_only_and_register_once, a_lang_declaration_stands_for_its_built_in_type, every_lang_item_is_declared -->
-* A handle is Sendable and does not change inside: a task may capture one and a `Once` may hold one. <!-- test: a_handle_is_sendable_and_does_not_change_inside_so_a_once_may_hold_one, a_mutex_and_a_once_are_sendable_handles -->
-* The names are these, and `yes` marks a handle. <!-- test: tables_every_generated_table_in_the_documents_is_what_the_code_says -->
+* Builtin types (`List`, `Array`, `Map`, `Set`, `Range`, `Stream`, `Option`, `Result`, `Error`, `ErrorKind`, `Pointer`, `Task`, `Sender`, `Receiver`, `Mutex`, `Once`, `PortEnd`, `AtomicInt`, `AtomicBool`) live in the universal scope and do not need `@lang` attributes. <!-- test: universal_builtin_types_resolve_without_import -->
+* A compiler builtin `@name(...)` (or `@__name(...)`) invokes a compiler intrinsic or compile-time reflection operation directly in any module. <!-- block -->
 
-<!-- table: lang-items -->
-| `@lang` name | Handle |
-|---|---|
-| `bool` | no |
-| `string` | no |
-| `int8` | no |
-| `int16` | no |
-| `int32` | no |
-| `int` | no |
-| `uint8` | no |
-| `uint16` | no |
-| `uint32` | no |
-| `uint64` | no |
-| `float32` | no |
-| `float` | no |
-| `option` | no |
-| `result` | no |
-| `list` | no |
-| `array` | no |
-| `map` | no |
-| `set` | no |
-| `range` | no |
-| `stream` | no |
-| `task` | yes |
-| `sender` | yes |
-| `receiver` | yes |
-| `mutex` | yes |
-| `once` | yes |
-| `atomic_int` | yes |
-| `atomic_bool` | yes |
-| `port_end` | yes |
-| `pointer` | no |
-| `display` | no |
-| `debug` | no |
-| `eq` | no |
-| `ord` | no |
-| `clone` | no |
-| `closeable` | no |
-| `key` | no |
-| `error` | no |
-| `error_kind` | no |
-<!-- /table -->
+```mote
+fn main() {
+    println(@type_name(Int))
+}
+```
+
+```output
+Int
+```
 
 ## Intrinsics
 
-* A `native fn` in `std` marked `@intrinsic("name")` is an operation the compiler or runtime provides. <!-- test: an_intrinsic_is_a_generic_native_function_in_std -->
-* The operations are these, each with the number of its arguments and its effects. <!-- test: tables_every_generated_table_in_the_documents_is_what_the_code_says, tables_intrinsic_effects_are_named_in_a_fixed_order -->
+* Compiler builtins and runtime intrinsics are operations provided directly by the compiler or runtime via `@name(...)`. <!-- test: tables_every_generated_table_in_the_documents_is_what_the_code_says -->
+* The runtime operations are these, each with the number of its arguments and its effects. <!-- test: tables_every_generated_table_in_the_documents_is_what_the_code_says, tables_intrinsic_effects_are_named_in_a_fixed_order -->
 
 <!-- table: intrinsics -->
 | Intrinsic | Arguments | Effects |
@@ -65,8 +31,9 @@
 | `sys_args` | 0 | reads |
 | `sys_exit` | 1 | io |
 | `sys_now` | 0 | io |
-| `typeof` | 1 | pure |
+| `type_tag` | 1 | pure |
 | `fault` | 1 | faults |
+| `index_out_of_range` | 0 | faults |
 | `port_open` | 1 | writes |
 | `float_is_nan` | 1 | pure |
 | `float_is_infinite` | 1 | pure |
@@ -114,6 +81,8 @@
 | `string_concat` | 2 | pure |
 | `string_replace` | 3 | pure |
 | `string_slice` | 3 | faults |
+| `string_byte_at` | 2 | faults |
+| `string_is_boundary` | 2 | pure |
 | `string_to_upper` | 1 | pure |
 | `string_to_lower` | 1 | pure |
 | `string_trim` | 1 | pure |
@@ -144,6 +113,43 @@
 | `array_contains` | 2 | reads |
 | `array_slice` | 3 | reads, faults |
 | `array_clone` | 1 | reads |
+| `mask_all` | 1 | pure |
+| `mask_any` | 1 | pure |
+| `mask_none` | 1 | pure |
+| `array_all_by` | 2 | reads |
+| `array_any_by` | 2 | reads |
+| `array_none_by` | 2 | reads |
+| `array_count` | 2 | reads |
+| `array_count_by` | 2 | reads |
+| `array_sum` | 1 | pure |
+| `array_product` | 1 | pure |
+| `array_mean` | 1 | pure |
+| `array_min` | 1 | reads |
+| `array_max` | 1 | reads |
+| `array_argmin` | 1 | reads |
+| `array_argmax` | 1 | reads |
+| `array_dot` | 2 | reads, faults |
+| `array_norm_sq` | 1 | pure |
+| `array_fold` | 3 | reads |
+| `array_reduce` | 2 | reads |
+| `array_scan` | 3 | reads |
+| `array_find` | 2 | reads |
+| `array_find_index` | 2 | reads |
+| `array_index_of` | 2 | reads |
+| `array_select` | 3 | reads, faults |
+| `array_map` | 2 | reads |
+| `array_zip_with` | 3 | reads |
+| `array_reverse` | 1 | reads |
+| `array_clamp` | 3 | reads |
+| `array_filter` | 2 | reads |
+| `array_zip` | 2 | reads |
+| `array_enumerate` | 1 | reads |
+| `array_concat` | 2 | reads |
+| `array_take` | 2 | reads |
+| `array_drop` | 2 | reads |
+| `array_flatten` | 1 | reads |
+| `array_sort` | 1 | reads |
+| `array_sort_by` | 2 | reads |
 | `stream_next` | 1 | writes, parks |
 | `task_await` | 1 | parks |
 | `task_await_timeout` | 2 | parks |
@@ -183,20 +189,17 @@
 | `atomic_bool_store` | 2 | writes |
 | `atomic_bool_swap` | 2 | writes |
 | `atomic_bool_compare_exchange` | 3 | writes |
-| `type_id` | 0 | pure |
-| `meta_ints` | 0 | pure |
-| `meta_texts` | 0 | pure |
-| `dyn_of` | 2 | pure |
-| `dyn_type` | 1 | reads |
-| `dyn_to` | 2 | reads |
-| `dyn_len` | 1 | reads |
-| `dyn_tag` | 1 | reads |
-| `dyn_get` | 2 | reads, faults |
-| `dyn_set` | 3 | writes, faults |
-| `dyn_show` | 2 | reads |
-| `require` | 2 | faults |
-| `dyn_build` | 3 | reads, faults |
-| `dyn_make` | 3 | reads, faults |
+| `ptr_null` | 0 | pure |
+| `ptr_from_addr` | 1 | pure |
+| `ptr_alloc` | 1 | writes, faults |
+| `ptr_realloc` | 2 | writes, faults |
+| `ptr_free` | 1 | writes |
+| `ptr_offset` | 2 | faults |
+| `ptr_load` | 2 | reads, faults |
+| `ptr_store` | 3 | writes, faults |
+| `ptr_copy` | 3 | writes, faults |
+| `ptr_zero` | 2 | writes, faults |
+| `ptr_cast` | 1 | pure |
 <!-- /table -->
 
 ## Faults
@@ -211,7 +214,7 @@
 | `ShiftOutOfRange` | shift out of range |
 | `IndexOutOfRange` | index out of range |
 | `UnwrapFailed` | unwrapped a missing value |
-| `NullPointer` | native returned a null pointer |
+| `NullPointer` | external library returned a null pointer |
 | `Raised` | the message the program gives |
 | `MemoryLimit` | memory limit reached |
 | `StackDepth` | call stack too deep |

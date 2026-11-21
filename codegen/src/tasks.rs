@@ -7,7 +7,6 @@ use cranelift_frontend::FunctionBuilder;
 use cranelift_module::FuncId as ClifFunc;
 use mote_abi::{closure_signature, signature, HandleKind, Kind, TypeId, TypeTable, BOX_VALUE_OFFSET, CLOSURE_CODE_OFFSET, TASK_CONVERT_OFFSET, TASK_DONE, TASK_FAULTED, TASK_NUMBER_OFFSET, TASK_PENDING};
 use mote_ir::{FuncId, Inst, Operand, RegId};
-use mote_semantics::LangItem;
 
 use crate::function::{abi_params, clif_type, Lowering};
 use crate::scalar::Num;
@@ -288,7 +287,7 @@ impl Lowering<'_, '_, '_> {
 
     /// The position of a variant of `ErrorKind`.
     fn error_kind(&self, name: &str) -> Result<i64, CompileError> {
-        let def = *self.env.program.lang.get(&LangItem::ErrorKind).ok_or_else(|| internal("no ErrorKind"))?;
+        let def = self.env.program.std.error_kind.ok_or_else(|| internal("no ErrorKind"))?;
         let item = self.env.program.defs[def].enum_def().ok_or_else(|| internal("an ErrorKind that is not an enum"))?;
         item.variants.iter().position(|variant| self.env.interner.resolve(variant.name) == name).map(|at| at as i64).ok_or_else(|| internal("an ErrorKind without the variant"))
     }

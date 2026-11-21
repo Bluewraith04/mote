@@ -1,0 +1,28 @@
+// The colours, fonts, spaces and text sizes the elements start from.
+
+/// The embedded DejaVu typeface set selectable via `.font(...)` or `font="..."`.
+pub enum Font {
+    Sans
+    Bold
+    Serif
+    Mono
+}
+
+pub let ACCENT = 0x2563ebff
+pub let INK = 0x111827ff
+pub let MUTED = 0x6b7280ff
+pub let SURFACE = 0xf3f4f6ff
+pub let LINE = 0xd1d5dbff
+pub let WHITE = 0xffffffff
+pub let GOOD = 0x16a34aff
+pub let BAD = 0xdc2626ff
+
+/// `steps` steps of 4 pixels.
+pub fn space(steps: Int) -> Int { return steps * 4 }
+
+/// A text height: 16 pixels at step 0, and 1.25 times more for each step up.
+pub fn type_size(step: Int) -> Int {
+    var size = 16.0
+    for _ in 0..step { size = size * 1.25 }
+    return size as Int
+}

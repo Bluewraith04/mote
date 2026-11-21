@@ -1,0 +1,97 @@
+// Reflex-style direct tree composition: `doc.el("ul", [doc.li(["one"]), doc.li(["two"])], class_name="tidy")`.
+import Node from .tree
+
+/// Creates an element node with optional children (nodes or plain strings), attribute pairs, `id`, and `class_name`, with no `Doc` object needed.
+pub fn el(
+    tag: String,
+    children: List<Node | String> = [],
+    attrs: List<(String, String)> = [],
+    id: String = "",
+    class_name: String = ""
+) -> Node {
+    var node = Node.element(tag)
+    if class_name != "" {
+        var _ = node.set_attr("class", class_name)
+    }
+    if id != "" {
+        var _ = node.set_attr("id", id)
+    }
+    for pair in attrs {
+        var _ = node.set_attr(pair.0, pair.1)
+    }
+    for item in children {
+        var child = if item is String { Node.text_node(item) } else { item }
+        if child.parent() != null {
+            child = child.copy()
+        }
+        var _ = node.append(child)
+    }
+    return node
+}
+
+/// A text node.
+pub fn text(content: String) -> Node { return Node.text_node(content) }
+
+/// A comment node.
+pub fn comment(content: String) -> Node { return Node.comment_node(content) }
+
+/// A raw HTML node that `to_html` writes unescaped.
+pub fn raw(html: String) -> Node { return Node.raw_node(html) }
+
+/// A document fragment holding top-level children.
+pub fn fragment(children: List<Node | String> = []) -> Node {
+    var root = Node.document()
+    for item in children {
+        var child = if item is String { Node.text_node(item) } else { item }
+        if child.parent() != null {
+            child = child.copy()
+        }
+        var _ = root.append(child)
+    }
+    return root
+}
+
+pub fn div(children: List<Node | String> = [], attrs: List<(String, String)> = [], id: String = "", class_name: String = "") -> Node { return el("div", children, attrs, id, class_name) }
+pub fn span(children: List<Node | String> = [], attrs: List<(String, String)> = [], id: String = "", class_name: String = "") -> Node { return el("span", children, attrs, id, class_name) }
+pub fn p(children: List<Node | String> = [], attrs: List<(String, String)> = [], id: String = "", class_name: String = "") -> Node { return el("p", children, attrs, id, class_name) }
+pub fn h1(children: List<Node | String> = [], attrs: List<(String, String)> = [], id: String = "", class_name: String = "") -> Node { return el("h1", children, attrs, id, class_name) }
+pub fn h2(children: List<Node | String> = [], attrs: List<(String, String)> = [], id: String = "", class_name: String = "") -> Node { return el("h2", children, attrs, id, class_name) }
+pub fn h3(children: List<Node | String> = [], attrs: List<(String, String)> = [], id: String = "", class_name: String = "") -> Node { return el("h3", children, attrs, id, class_name) }
+pub fn h4(children: List<Node | String> = [], attrs: List<(String, String)> = [], id: String = "", class_name: String = "") -> Node { return el("h4", children, attrs, id, class_name) }
+pub fn ul(children: List<Node | String> = [], attrs: List<(String, String)> = [], id: String = "", class_name: String = "") -> Node { return el("ul", children, attrs, id, class_name) }
+pub fn ol(children: List<Node | String> = [], attrs: List<(String, String)> = [], id: String = "", class_name: String = "") -> Node { return el("ol", children, attrs, id, class_name) }
+pub fn li(children: List<Node | String> = [], attrs: List<(String, String)> = [], id: String = "", class_name: String = "") -> Node { return el("li", children, attrs, id, class_name) }
+pub fn a(children: List<Node | String> = [], attrs: List<(String, String)> = [], id: String = "", class_name: String = "", href: String = "") -> Node {
+    var all = attrs
+    if href != "" { all.push(("href", href)) }
+    return el("a", children, all, id, class_name)
+}
+pub fn br(attrs: List<(String, String)> = [], id: String = "", class_name: String = "") -> Node { return el("br", [], attrs, id, class_name) }
+pub fn hr(attrs: List<(String, String)> = [], id: String = "", class_name: String = "") -> Node { return el("hr", [], attrs, id, class_name) }
+pub fn img(src: String = "", alt: String = "", attrs: List<(String, String)> = [], id: String = "", class_name: String = "") -> Node {
+    var all: List<(String, String)> = []
+    if src != "" { all.push(("src", src)) }
+    if alt != "" { all.push(("alt", alt)) }
+    for pair in attrs { all.push(pair) }
+    return el("img", [], all, id, class_name)
+}
+pub fn strong(children: List<Node | String> = [], attrs: List<(String, String)> = [], id: String = "", class_name: String = "") -> Node { return el("strong", children, attrs, id, class_name) }
+pub fn em(children: List<Node | String> = [], attrs: List<(String, String)> = [], id: String = "", class_name: String = "") -> Node { return el("em", children, attrs, id, class_name) }
+pub fn code(children: List<Node | String> = [], attrs: List<(String, String)> = [], id: String = "", class_name: String = "") -> Node { return el("code", children, attrs, id, class_name) }
+pub fn pre(children: List<Node | String> = [], attrs: List<(String, String)> = [], id: String = "", class_name: String = "") -> Node { return el("pre", children, attrs, id, class_name) }
+pub fn table(children: List<Node | String> = [], attrs: List<(String, String)> = [], id: String = "", class_name: String = "") -> Node { return el("table", children, attrs, id, class_name) }
+pub fn thead(children: List<Node | String> = [], attrs: List<(String, String)> = [], id: String = "", class_name: String = "") -> Node { return el("thead", children, attrs, id, class_name) }
+pub fn tbody(children: List<Node | String> = [], attrs: List<(String, String)> = [], id: String = "", class_name: String = "") -> Node { return el("tbody", children, attrs, id, class_name) }
+pub fn tr(children: List<Node | String> = [], attrs: List<(String, String)> = [], id: String = "", class_name: String = "") -> Node { return el("tr", children, attrs, id, class_name) }
+pub fn th(children: List<Node | String> = [], attrs: List<(String, String)> = [], id: String = "", class_name: String = "") -> Node { return el("th", children, attrs, id, class_name) }
+pub fn td(children: List<Node | String> = [], attrs: List<(String, String)> = [], id: String = "", class_name: String = "") -> Node { return el("td", children, attrs, id, class_name) }
+pub fn button(children: List<Node | String> = [], attrs: List<(String, String)> = [], id: String = "", class_name: String = "") -> Node { return el("button", children, attrs, id, class_name) }
+pub fn input(attrs: List<(String, String)> = [], id: String = "", class_name: String = "") -> Node { return el("input", [], attrs, id, class_name) }
+pub fn form(children: List<Node | String> = [], attrs: List<(String, String)> = [], id: String = "", class_name: String = "") -> Node { return el("form", children, attrs, id, class_name) }
+pub fn label(children: List<Node | String> = [], attrs: List<(String, String)> = [], id: String = "", class_name: String = "") -> Node { return el("label", children, attrs, id, class_name) }
+pub fn section(children: List<Node | String> = [], attrs: List<(String, String)> = [], id: String = "", class_name: String = "") -> Node { return el("section", children, attrs, id, class_name) }
+pub fn header(children: List<Node | String> = [], attrs: List<(String, String)> = [], id: String = "", class_name: String = "") -> Node { return el("header", children, attrs, id, class_name) }
+pub fn footer(children: List<Node | String> = [], attrs: List<(String, String)> = [], id: String = "", class_name: String = "") -> Node { return el("footer", children, attrs, id, class_name) }
+pub fn nav(children: List<Node | String> = [], attrs: List<(String, String)> = [], id: String = "", class_name: String = "") -> Node { return el("nav", children, attrs, id, class_name) }
+pub fn main(children: List<Node | String> = [], attrs: List<(String, String)> = [], id: String = "", class_name: String = "") -> Node { return el("main", children, attrs, id, class_name) }
+pub fn blockquote(children: List<Node | String> = [], attrs: List<(String, String)> = [], id: String = "", class_name: String = "") -> Node { return el("blockquote", children, attrs, id, class_name) }

@@ -1,4 +1,4 @@
-//! Lowers the calls of native functions: the C signature, the conversion of each argument and result, and `var` parameters.
+//! Lowers calls to external library functions: the C signature, the conversion of each argument and result, and `var` parameters.
 
 use cranelift_codegen::ir::condcodes::IntCC;
 use cranelift_codegen::ir::{types, AbiParam, InstBuilder, MemFlags, Signature, Value};
@@ -8,7 +8,7 @@ use cranelift_module::{DataId, Module as ClifModule};
 use mote_abi::{CType, FaultKind, NativeSig, Scalar, ELEMENTS_OFFSET, LENGTH_OFFSET};
 use mote_base::Span;
 use mote_ir::{Inst, Operand, RegId};
-use mote_semantics::{DefId, TyId};
+use mote_semantics::{DefId, TyId, TyKind};
 
 use crate::function::{clif_type, Lowering};
 use mote_runtime::loader::native;
@@ -16,11 +16,11 @@ use crate::scalar::Num;
 use crate::values::{emit_store, internal, Addr};
 use crate::CompileError;
 
-/// The C signature of a native function; a narrow integer is widened by sign or by zero as the type says.
+/// The C signature of an extern function; a narrow integer is widened by sign or by zero as the type says.
 pub(crate) fn c_signature(sig: &NativeSig, call_conv: CallConv) -> Signature {
     let mut params = Vec::new();
     for param in &sig.params {
-        if param.by_ref {
+        if param.by_ref && param.ty != CType::FixedArray {
             params.push(AbiParam::new(types::I64));
             continue;
         }
@@ -63,7 +63,7 @@ fn from_bits(b: &mut FunctionBuilder, bits: Value, scalar: Scalar) -> Value {
     }
 }
 
-/// The function that calls the native at `index` of the table with its arguments and result in a block of 64-bit words, for a call that runs on a helper thread.
+/// The function that calls the external function at `index` of the table with its arguments and result in a block of 64-bit words, for a call that runs on a helper thread.
 pub(crate) fn thunk(b: &mut FunctionBuilder, jit: &dyn ClifModule, sig: &NativeSig, slots: DataId, index: usize, call_conv: CallConv) {
     let entry = b.create_block();
     b.append_block_params_for_function_params(entry);
@@ -101,9 +101,9 @@ struct ByRef {
 
 impl Lowering<'_, '_, '_> {
     pub(crate) fn native_call(&mut self, inst: &Inst, def: DefId, args: &[Operand], outs: &[RegId]) -> Result<(), CompileError> {
-        let index = *self.env.natives.get(&def).ok_or_else(|| CompileError::internal("a native with no C signature"))?;
+        let index = *self.env.natives.get(&def).ok_or_else(|| CompileError::internal("an extern fn with no C signature"))?;
         let sig = self.env.link.functions[index].sig.clone();
-        let function = self.env.program.defs[def].function().ok_or_else(|| internal("a native that is not a function"))?;
+        let function = self.env.program.defs[def].function().ok_or_else(|| internal("an extern entry that is not a function"))?;
         let (declared, ret): (Vec<TyId>, TyId) = (function.params.iter().map(|param| param.ty).collect(), function.ret);
 
         let mut values = Vec::new();
@@ -111,23 +111,36 @@ impl Lowering<'_, '_, '_> {
         let mut copies = Vec::new();
         let mut outs = outs.iter();
         for ((param, &ty), arg) in sig.params.iter().zip(&declared).zip(args) {
-            let converted = self.c_arguments(param.ty, ty, arg, &mut owned)?;
             if param.by_ref {
-                let at = self.temp(8);
-                self.store(converted[0], at);
-                values.push(self.address(at));
                 let out = *outs.next().ok_or_else(|| internal("a var parameter with no result"))?;
-                copies.push(ByRef { out, ctype: param.ty, ty, at });
+                if param.ty == CType::FixedArray {
+                    let (at, ptr, length) = self.fixed_array_pair(ty, arg)?;
+                    values.push(ptr);
+                    values.push(length);
+                    copies.push(ByRef { out, ctype: param.ty, ty, at });
+                } else {
+                    let converted = self.c_arguments(param.ty, ty, arg, &mut owned)?;
+                    let at = self.temp(8);
+                    self.store(converted[0], at);
+                    values.push(self.address(at));
+                    copies.push(ByRef { out, ctype: param.ty, ty, at });
+                }
             } else {
+                let converted = self.c_arguments(param.ty, ty, arg, &mut owned)?;
                 values.extend(converted);
             }
         }
 
         let results = if sig.blocking { self.blocking_call(index, &sig, &values)? } else { self.direct_call(index, &sig, &values)? };
         for copy in copies {
-            let scalar = copy.ctype.scalars()[0];
-            let value = self.load(clif_type(scalar), copy.at);
-            self.take_c(copy.ctype, copy.ty, value, Some(copy.out), None)?;
+            if copy.ctype == CType::FixedArray {
+                let id = self.env.types.id(copy.ty);
+                self.read_into(Some(copy.out), copy.at, id)?;
+            } else {
+                let scalar = copy.ctype.scalars()[0];
+                let value = self.load(clif_type(scalar), copy.at);
+                self.take_c(copy.ctype, copy.ty, value, Some(copy.out), None)?;
+            }
         }
         if let Some(&result) = results.first() {
             self.take_c(sig.ret, ret, result, inst.dest, Some(inst.span))?;
@@ -147,9 +160,9 @@ impl Lowering<'_, '_, '_> {
         self.b.inst_results(result)[0]
     }
 
-    /// The address of the native at `index`, read from the table the loader fills.
+    /// The address of the external function at `index`, read from the table the loader fills.
     fn native_target(&mut self, index: usize) -> Result<Value, CompileError> {
-        let slots = self.env.native_slots.ok_or_else(|| internal("natives with no table"))?;
+        let slots = self.env.native_slots.ok_or_else(|| internal("external calls with no table"))?;
         let table = self.env.clif.declare_data_in_func(slots, self.b.func);
         let base = self.b.ins().symbol_value(types::I64, table);
         Ok(self.load(types::I64, Addr { base, offset: (index * 8) as i32 }))
@@ -162,8 +175,8 @@ impl Lowering<'_, '_, '_> {
         Ok(self.b.inst_results(call).to_vec())
     }
 
-    fn blocking_call(&mut self, index: usize, sig: &NativeSig, values: &[Value]) -> Result<Vec<Value>, CompileError> {
-        let thunk = *self.env.thunks.get(&index).ok_or_else(|| internal("a blocking native with no thunk"))?;
+        fn blocking_call(&mut self, index: usize, sig: &NativeSig, values: &[Value]) -> Result<Vec<Value>, CompileError> {
+        let thunk = *self.env.thunks.get(&index).ok_or_else(|| internal("a blocking extern fn with no thunk"))?;
         let buffer = self.temp(8 * values.len().max(1) as u32);
         for (position, &value) in values.iter().enumerate() {
             let bits = to_bits(&mut self.b, value);
@@ -177,6 +190,19 @@ impl Lowering<'_, '_, '_> {
         let Some(&scalar) = sig.result_scalars().first() else { return Ok(Vec::new()) };
         let bits = self.load(types::I64, buffer);
         Ok(vec![from_bits(&mut self.b, bits, scalar)])
+    }
+
+    /// Spills a fixed-size array argument to a stack slot and returns its slot address, element pointer, and element count.
+    fn fixed_array_pair(&mut self, ty: TyId, arg: &Operand) -> Result<(Addr, Value, Value), CompileError> {
+        let id = self.env.types.id(ty);
+        let at = self.spill_as(arg, id)?;
+        let ptr = self.address(at);
+        let count = match self.env.program.types.kind(ty) {
+            TyKind::FixedArray(_, count) => count.as_u32().ok_or_else(|| internal("an unresolved fixed array length"))?,
+            _ => return Err(internal("a fixed array C parameter that is not a fixed array")),
+        };
+        let length = self.b.ins().iconst(types::I64, i64::from(count));
+        Ok((at, ptr, length))
     }
 
     /// The machine values an argument of the C type is passed as; a copy of a string is added to `owned` to be freed after the call.
@@ -198,6 +224,10 @@ impl Lowering<'_, '_, '_> {
                 let length = self.load(types::I64, Addr { base: array, offset: LENGTH_OFFSET as i32 });
                 let elements = self.b.ins().iadd_imm(array, i64::from(ELEMENTS_OFFSET));
                 vec![elements, length]
+            }
+            CType::FixedArray => {
+                let (_, ptr, length) = self.fixed_array_pair(ty, arg)?;
+                vec![ptr, length]
             }
             CType::Pointer => {
                 let id = self.env.types.id(ty);

@@ -1,0 +1,356 @@
+import { assert, assert_eq } from std.test
+import { Database, PreparedStatement, Row, SqlValue, Transaction, TransactionMode, Value } from sqlite
+import get as env_get from env
+import remove_all from fs
+
+fn people() -> Database {
+    let db = Database.memory()!
+    db.execute_batch("CREATE TABLE person (id INTEGER PRIMARY KEY, name TEXT NOT NULL, age INTEGER, score REAL, photo BLOB)")!
+    return db
+}
+
+test "rows are inserted and read back with every kind of value" {
+    let db = people()
+    let photo: [UInt8] = [0, 1, 2, 255]
+    let changed = db.execute("INSERT INTO person (name, age, score, photo) VALUES (?, ?, ?, ?)", [Value.Text("Ada"), Value.Integer(36), Value.Real(9.5), Value.Blob(photo)])!
+    assert_eq(changed, 1)
+    assert_eq(db.last_insert_id(), 1)
+    let rows = db.query("SELECT id, name, age, score, photo FROM person")!
+    assert_eq(rows.len(), 1)
+    let row = rows.get(0)
+    assert_eq(row.len(), 5)
+    assert_eq(row.get(0).as_int()!, 1)
+    assert_eq(row.get(1).as_text()!, "Ada")
+    assert_eq(row.get(2).as_int()!, 36)
+    assert_eq(row.get(3).as_float()!, 9.5)
+    assert_eq(row.get(4).as_blob()!.len(), 4)
+    assert_eq(row.get(4).as_blob()![3] as Int, 255)
+    db.close()!
+}
+
+test "columns are read by name" {
+    let db = people()
+    db.execute("INSERT INTO person (name, age) VALUES (?, ?)", [Value.Text("Bo"), Value.Null])!
+    let row = db.query_row("SELECT name, age AS years FROM person")!!
+    assert_eq(row.columns().get(1), "years")
+    assert_eq(row.named("name")!.as_text()!, "Bo")
+    assert(row.named("years")!.is_null(), "null")
+    assert(row.named("missing") == null, "missing")
+}
+
+test "a query with no rows is empty and query_row is null" {
+    let db = people()
+    assert_eq(db.query("SELECT * FROM person")!.len(), 0)
+    assert(db.query_row("SELECT * FROM person")! == null, "none")
+}
+
+test "parameters keep quotes in the data" {
+    let db = people()
+    let name = "Robert'); DROP TABLE person;--"
+    db.execute("INSERT INTO person (name) VALUES (?)", [Value.Text(name)])!
+    let row = db.query_row("SELECT name FROM person WHERE name = ?", [Value.Text(name)])!!
+    assert_eq(row.get(0).as_text()!, name)
+    assert_eq(db.query("SELECT count(*) FROM person")!.get(0).get(0).as_int()!, 1)
+}
+
+test "text keeps its unicode and an empty string stays text" {
+    let db = people()
+    db.execute("INSERT INTO person (name) VALUES (?)", [Value.Text("héllo 😀")])!
+    db.execute("INSERT INTO person (name) VALUES (?)", [Value.Text("")])!
+    let rows = db.query("SELECT name FROM person ORDER BY id")!
+    assert_eq(rows.get(0).get(0).as_text()!, "héllo 😀")
+    assert_eq(rows.get(1).get(0).as_text()!, "")
+}
+
+test "update and delete report the rows they changed" {
+    let db = people()
+    for name in ["a", "b", "c"] {
+        db.execute("INSERT INTO person (name, age) VALUES (?, 1)", [Value.Text(name)])!
+    }
+    assert_eq(db.execute("UPDATE person SET age = 2 WHERE name <> ?", [Value.Text("a")])!, 2)
+    assert_eq(db.execute("DELETE FROM person")!, 3)
+}
+
+test "a mistake in the statement is an error that names it" {
+    let db = people()
+    let broken = db.execute("INSERT INTO nowhere VALUES (1)")
+    assert(broken.is_err(), "no table")
+    let message = match broken {
+        Err(error) => error.message
+        Ok(_) => ""
+    }
+    assert(message.contains("nowhere"), "names the table")
+    db.execute("INSERT INTO person (name) VALUES (?)", [Value.Text("x")])!
+    db.execute_batch("CREATE UNIQUE INDEX person_name ON person (name)")!
+    assert(db.execute("INSERT INTO person (name) VALUES (?)", [Value.Text("x")]).is_err(), "unique")
+    assert(db.execute("INSERT INTO person (name) VALUES (NULL)").is_err(), "not null")
+}
+
+test "a transaction commits on Ok and rolls back on Err" {
+    let db = people()
+    let kept = db.transaction(|tx: Database| -> Result<Int, Error> {
+        return tx.execute("INSERT INTO person (name) VALUES ('kept')")
+    })
+    assert_eq(kept!, 1)
+    let lost = db.transaction(|tx: Database| -> Result<Int, Error> {
+        tx.execute("INSERT INTO person (name) VALUES ('lost')")?
+        return Err(Error.new(ErrorKind.Other, "stop"))
+    })
+    assert(lost.is_err(), "error passes through")
+    let rows = db.query("SELECT name FROM person")!
+    assert_eq(rows.len(), 1)
+    assert_eq(rows.get(0).get(0).as_text()!, "kept")
+}
+
+test "begin and rollback undo by hand" {
+    let db = people()
+    db.begin()!
+    db.execute("INSERT INTO person (name) VALUES ('x')")!
+    db.rollback()!
+    assert_eq(db.query("SELECT * FROM person")!.len(), 0)
+}
+
+test "a database in a file keeps its rows across opens" {
+    let path = (env_get("TEMP") ?? env_get("TMP") ?? "/tmp") + "/mote-sqlite-test.db"
+    remove_all(path).is_err()
+    let first = Database.open(path)!
+    first.execute_batch("CREATE TABLE note (body TEXT)")!
+    first.execute("INSERT INTO note VALUES (?)", [Value.Text("kept")])!
+    first.close()!
+    let second = Database.open(path)!
+    assert_eq(second.query("SELECT body FROM note")!.get(0).get(0).as_text()!, "kept")
+    second.close()!
+    remove_all(path)!
+}
+
+test "a database that cannot be opened is an error" {
+    assert(Database.open("/nonexistent-dir/x.db").is_err(), "missing directory")
+}
+
+test "a closed database is closed once" {
+    let db = people()
+    assert(db.close().is_ok(), "first")
+    assert(db.close().is_err(), "second")
+}
+
+test "tasks share one database" {
+    let db = people()
+    let first = spawn {
+        for n in 0..100 {
+            db.execute("INSERT INTO person (name) VALUES (?)", [Value.Text("a${n}")])!
+        }
+        return 0
+    }
+    let second = spawn {
+        for n in 0..100 {
+            db.execute("INSERT INTO person (name) VALUES (?)", [Value.Text("b${n}")])!
+        }
+        return 0
+    }
+    first.await()!
+    second.await()!
+    assert_eq(db.query("SELECT count(*) FROM person")!.get(0).get(0).as_int()!, 200)
+}
+
+test "many rows come back in order" {
+    let db = people()
+    db.transaction(|tx: Database| -> Result<Int, Error> {
+        for n in 0..500 {
+            tx.execute("INSERT INTO person (name, age) VALUES (?, ?)", [Value.Text("n${n}"), Value.Integer(n)])?
+        }
+        return Ok(500)
+    })!
+    let rows = db.query("SELECT age FROM person ORDER BY age DESC LIMIT 3")!
+    assert_eq(rows.get(0).get(0).as_int()!, 499)
+    assert_eq(rows.get(2).get(0).as_int()!, 497)
+    assert_eq(db.query("SELECT sum(age) FROM person")!.get(0).get(0).as_int()!, 124750)
+}
+
+test "begin_transaction commits with with-block when committed" {
+    let db = people()
+    with tx = db.begin_transaction(TransactionMode.Immediate)! {
+        tx.execute("INSERT INTO person (name) VALUES ('committed')")!
+        tx.commit()!
+    }
+    let rows = db.query("SELECT name FROM person")!
+    assert_eq(rows.len(), 1)
+    assert_eq(rows.get(0).get(0).as_text()!, "committed")
+}
+
+test "begin_transaction rolls back when uncommitted in with-block" {
+    let db = people()
+    with tx = db.begin_transaction()! {
+        tx.execute("INSERT INTO person (name) VALUES ('uncommitted')")!
+    }
+    let rows = db.query("SELECT name FROM person")!
+    assert_eq(rows.len(), 0)
+}
+
+test "prepared statement executes and queries repeatedly" {
+    let db = people()
+    with stmt = db.prepare("INSERT INTO person (name, age) VALUES (?, ?)")! {
+        stmt.execute([Value.Text("Alice"), Value.Integer(30)])!
+        stmt.execute([Value.Text("Bob"), Value.Integer(25)])!
+    }
+    with q = db.prepare("SELECT name, age FROM person WHERE age > ? ORDER BY age")! {
+        let rows = q.query([Value.Integer(20)])!
+        assert_eq(rows.len(), 2)
+        assert_eq(rows.get(0).get(0).as_text()!, "Bob")
+        assert_eq(rows.get(1).get(0).as_text()!, "Alice")
+        let first = q.query_row([Value.Integer(28)])!!
+        assert_eq(first.get(0).as_text()!, "Alice")
+    }
+}
+
+test "prepared statement executes batch parameters in single call" {
+    let db = people()
+    with stmt = db.prepare("INSERT INTO person (name, age) VALUES (?, ?)")! {
+        var batch: List<List<SqlValue>> = []
+        for i in 0..50 {
+            batch.push(["person${i}", i])
+        }
+        let changed = stmt.execute_batch_params(batch)!
+        assert_eq(changed, 50)
+    }
+    let count_row = db.query_row("SELECT count(*) FROM person")!!
+    assert_eq(count_row.get(0).as_int()!, 50)
+}
+
+test "parameters accept direct primitive literals and booleans" {
+    let db = people()
+    let photo: [UInt8] = [1, 2, 3]
+    db.execute("INSERT INTO person (name, age, score, photo) VALUES (?, ?, ?, ?)", ["Grace", 42, 8.75, photo])!
+    let row = db.query_row("SELECT name, age, score FROM person WHERE name = ?", ["Grace"])!!
+    assert_eq(row.get(0).as_text()!, "Grace")
+    assert_eq(row.get(1).as_int()!, 42)
+    assert_eq(row.get(2).as_float()!, 8.75)
+
+    with stmt = db.prepare("INSERT INTO person (name, age) VALUES (?, ?)")! {
+        stmt.execute(["Linus", 50])!
+        stmt.execute(["Ada", null])!
+    }
+    let rows = db.query("SELECT name FROM person WHERE age IS NULL")!
+    assert_eq(rows.len(), 1)
+    assert_eq(rows.get(0).get(0).as_text()!, "Ada")
+}
+
+struct PersonRecord {
+    id: Int
+    name: String
+    age: Int?
+    score: Float?
+}
+
+test "query_as and query_row_as decode into typed structs using reflection" {
+    let db = people()
+    db.execute("INSERT INTO person (name, age, score) VALUES (?, ?, ?)", ["Alice", 30, 9.5])!
+    db.execute("INSERT INTO person (name, age, score) VALUES (?, ?, ?)", ["Bob", null, null])!
+
+    let all: List<PersonRecord> = db.query_as<PersonRecord>("SELECT id, name, age, score FROM person ORDER BY id")!
+    assert_eq(all.len(), 2)
+    assert_eq(all.get(0).name, "Alice")
+    assert_eq(all.get(0).age!, 30)
+    assert_eq(all.get(0).score!, 9.5)
+    assert_eq(all.get(1).name, "Bob")
+    assert(all.get(1).age == null, "bob age null")
+    assert(all.get(1).score == null, "bob score null")
+
+    let raw_row = db.query_row("SELECT id, name, age, score FROM person WHERE name = ?", ["Alice"])!!
+    assert_eq(raw_row[1]!.as_text()!, "Alice")
+    assert_eq(raw_row["name"]!.as_text()!, "Alice")
+    assert(raw_row["missing"] == null, "missing col via []")
+    assert_eq(raw_row.decode<PersonRecord>()!.name, "Alice")
+
+    let single: PersonRecord? = db.query_row_as<PersonRecord>("SELECT id, name, age, score FROM person WHERE name = ?", ["Alice"])!
+    assert(single != null, "alice found")
+    assert_eq(single!.name, "Alice")
+
+    let missing: PersonRecord? = db.query_row_as<PersonRecord>("SELECT id, name, age, score FROM person WHERE name = ?", ["Nobody"])!
+    assert(missing == null, "nobody is null")
+
+    with stmt = db.prepare("SELECT id, name, age, score FROM person WHERE id = ?")! {
+        let from_stmt: PersonRecord? = stmt.query_row_as<PersonRecord>([1])!
+        assert_eq(from_stmt!.name, "Alice")
+        let list_stmt: List<PersonRecord> = stmt.query_as<PersonRecord>([1])!
+        assert_eq(list_stmt.len(), 1)
+    }
+
+    with tx = db.begin_transaction()! {
+        let from_tx: List<PersonRecord> = tx.query_as<PersonRecord>("SELECT id, name, age, score FROM person WHERE name = ?", ["Alice"])!
+        assert_eq(from_tx.len(), 1)
+        assert_eq(from_tx.get(0).name, "Alice")
+        let row_tx: PersonRecord? = tx.query_row_as<PersonRecord>("SELECT id, name, age, score FROM person WHERE name = ?", ["Alice"])!
+        assert(row_tx != null, "row_tx found")
+        assert_eq(row_tx!.name, "Alice")
+    }
+}
+
+test "interrupt cancels execution" {
+    let db = people()
+    db.interrupt()
+    let rows = db.query("SELECT count(*) FROM person")!
+    assert_eq(rows.len(), 1)
+}
+
+test "Row is Sendable across spawned tasks" {
+    let db = people()
+    let photo: [UInt8] = [10, 20, 30]
+    db.execute("INSERT INTO person (name, age, score, photo) VALUES (?, ?, ?, ?)", ["Ada", 36, 9.5, photo])!
+    let row = db.query_row("SELECT id, name, age, score, photo FROM person WHERE name = 'Ada'")!!
+    let task = spawn {
+        assert_eq(row.named("name")!.as_text()!, "Ada")
+        assert_eq(row.named("age")!.as_int()!, 36)
+        assert_eq(row.named("score")!.as_float()!, 9.5)
+        let b = row.named("photo")!.as_blob()!
+        assert_eq(b.len(), 3)
+        assert_eq(b.get(0), 10 as UInt8)
+        return row.get(1).as_text()!
+    }
+    let res = task.await()!
+    assert_eq(res, "Ada")
+}
+
+test "stream and stream_as lazily yield rows and typed records" {
+    let db = people()
+    for i in 0..10 {
+        db.execute("INSERT INTO person (name, age, score) VALUES (?, ?, ?)", ["person${i}", 20 + i, 5.0 + (i as Float)])!
+    }
+
+    // 1. db.stream yields Row
+    var count = 0
+    for row in db.stream("SELECT name, age FROM person ORDER BY age")! {
+        assert_eq(row.get(0).as_text()!, "person${count}")
+        assert_eq(row.get(1).as_int()!, 20 + count)
+        count += 1
+    }
+    assert_eq(count, 10)
+
+    // 2. db.stream_as<PersonRecord> yields typed structs
+    var typed_count = 0
+    for p in db.stream_as<PersonRecord>("SELECT id, name, age, score FROM person ORDER BY age")! {
+        assert_eq(p.name, "person${typed_count}")
+        assert_eq(p.age!, 20 + typed_count)
+        typed_count += 1
+    }
+    assert_eq(typed_count, 10)
+
+    // 3. PreparedStatement.stream and PreparedStatement.stream_as
+    with stmt = db.prepare("SELECT id, name, age, score FROM person WHERE age >= ? ORDER BY age")! {
+        var from_stmt_count = 0
+        for row in stmt.stream([25]) {
+            assert(row[2]!.as_int()! >= 25, "age >= 25")
+            from_stmt_count += 1
+        }
+        assert_eq(from_stmt_count, 5)
+        var typed_stmt_count = 0
+        for p in stmt.stream_as<PersonRecord>([25]) {
+            assert(p.age! >= 25, "typed age >= 25")
+            typed_stmt_count += 1
+        }
+        assert_eq(typed_stmt_count, 5)
+    }
+}
+
+
+
+

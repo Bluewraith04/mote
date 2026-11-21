@@ -216,8 +216,7 @@ fn main() {
 | a `Stream` | each yielded value |
 
 ```mote
-import { Stream } from std.collections
-import { Channel } from std.sync
+import Channel from std.sync
 
 fn count(n: Int) -> Stream<Int> {
     for i in 0..n {
@@ -599,8 +598,6 @@ fn main() {
 * `yield e` produces the next element of a function declared `-> Stream<T>`. See [functions.md](functions.md). <!-- block -->
 
 ```mote
-import { Stream } from std.collections
-
 fn count(n: Int) -> Stream<Int> {
     for i in 0..n {
         yield i
@@ -766,8 +763,6 @@ with a = Res(), b = Res() { // error
 * `scope { … }` ends only when every task spawned inside it has finished. See [concurrency.md](concurrency.md). <!-- block -->
 
 ```mote
-import { Mutex } from std.sync
-
 fn main() {
     let hits = Mutex(0)
     scope {

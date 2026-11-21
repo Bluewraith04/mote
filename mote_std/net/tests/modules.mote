@@ -1,0 +1,8 @@
+import net
+import assert_eq from std.test
+
+test "modules the library reaches its modules by name" {
+    assert_eq(net.http.url_encode("a b"), "a%20b")
+    assert_eq(net.http.url_decode("a%20b"), "a b")
+    assert_eq(net.http.Options().timeout_ms, 30000)
+}

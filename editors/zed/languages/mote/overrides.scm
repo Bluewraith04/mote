@@ -2,6 +2,7 @@
   (line_comment)
   (doc_comment)
   (block_comment)
-] @comment
+] @comment.inclusive
 
 (string_literal) @string
+(interpolation) @interpolation

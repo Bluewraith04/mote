@@ -623,6 +623,30 @@ impl Lowering<'_, '_, '_> {
             Op::Convert { conversion, operand } => self.convert(inst, *conversion, operand, &mismatch),
             Op::IsType { operand, ty } => {
                 let reg = Self::reg_of(operand)?;
+                if matches!(self.env.program.types.kind(self.function.regs[reg].ty), TyKind::Any) {
+                    let result = match self.env.program.types.kind(*ty).clone() {
+                        TyKind::Any => self.b.ins().iconst(types::I8, 1),
+                        TyKind::Union(ms) => {
+                            let at = self.reg_addr(reg)?;
+                            let word = self.load(types::I64, at);
+                            let mut result = self.b.ins().iconst(types::I8, 0);
+                            for m in ms {
+                                let id = self.env.types.id(m);
+                                let is = self.b.ins().icmp_imm(IntCC::Equal, word, i64::from(id.raw()));
+                                result = self.b.ins().bor(result, is);
+                            }
+                            result
+                        }
+                        _ => {
+                            let at = self.reg_addr(reg)?;
+                            let word = self.load(types::I64, at);
+                            let id = self.env.types.id(*ty);
+                            self.b.ins().icmp_imm(IntCC::Equal, word, i64::from(id.raw()))
+                        }
+                    };
+                    self.set(inst.dest, Some(result));
+                    return Ok(());
+                }
                 let members = self.union_members(reg, &mismatch)?;
                 let fitting: Vec<TypeId> = members.iter().filter(|&&member| self.fits(member, *ty)).map(|&member| self.env.types.id(member)).collect();
                 let result = if fitting.len() == members.len() {
@@ -642,10 +666,12 @@ impl Lowering<'_, '_, '_> {
             }
             Op::UnionPayload { operand, ty } => {
                 let reg = Self::reg_of(operand)?;
-                self.union_members(reg, &mismatch)?;
+                if !matches!(self.env.program.types.kind(self.function.regs[reg].ty), TyKind::Any) {
+                    self.union_members(reg, &mismatch)?;
+                }
                 let dest = Self::dest_reg(inst)?;
                 let to = self.env.types.id(*ty);
-                if matches!(self.env.program.types.kind(*ty), TyKind::Union(_)) {
+                if matches!(self.env.program.types.kind(*ty), TyKind::Union(_) | TyKind::Any) {
                     let (from, into) = (self.reg_addr(reg)?, self.reg_addr(dest)?);
                     self.copy_mem(into, from, 16);
                     return Ok(());
@@ -757,10 +783,15 @@ impl Lowering<'_, '_, '_> {
         Ok(members.clone())
     }
 
-    /// The name of the type a union value holds, as the string object of that type.
+    /// The name of the type a union or `Any` value holds, as the string object of that type.
     pub(crate) fn union_type_name(&mut self, operand: &Operand) -> Result<Value, CompileError> {
         let reg = Self::reg_of(operand)?;
-        let members = self.union_members(reg, &|| CompileError::internal("typeof this value"))?;
+        let members = if matches!(self.env.program.types.kind(self.function.regs[reg].ty), TyKind::Any) {
+            // What an `Any` was made from, and `Any` itself for a value no boxing site explains.
+            self.env.any_members.iter().copied().chain([TyId::ANY]).collect()
+        } else {
+            self.union_members(reg, &|| CompileError::internal("type_tag this value"))?
+        };
         let at = self.reg_addr(reg)?;
         let word = self.load(types::I64, at);
         let name = |this: &mut Self, member: TyId| -> Result<Value, CompileError> {
@@ -784,6 +815,7 @@ impl Lowering<'_, '_, '_> {
             return true;
         }
         match (self.env.program.types.kind(expected), self.env.program.types.kind(actual)) {
+            (TyKind::Any, _) => true,
             (TyKind::Union(members), _) => members.iter().any(|&member| self.fits(actual, member)),
             (TyKind::Optional(inner), _) => actual == TyId::UNIT || self.fits(actual, *inner),
             _ => false,
@@ -889,7 +921,7 @@ impl Lowering<'_, '_, '_> {
                     return Err(mismatch());
                 }
                 let held = self.ty_of(operand);
-                if matches!(self.env.program.types.kind(held), TyKind::Union(_)) {
+                if matches!(self.env.program.types.kind(held), TyKind::Union(_) | TyKind::Any) {
                     return self.copy_value(dest, operand);
                 }
                 let held_id = self.env.types.id(held);
@@ -909,7 +941,7 @@ impl Lowering<'_, '_, '_> {
                 self.built(building);
                 Ok(())
             }
-            Conversion::Narrow | Conversion::Adapt => Err(internal(&format!("the conversion {conversion:?}, which the lowering expands"))),
+            Conversion::Narrow | Conversion::Adapt | Conversion::ToView => Err(internal(&format!("the conversion {conversion:?}, which the lowering expands"))),
         }
     }
 }

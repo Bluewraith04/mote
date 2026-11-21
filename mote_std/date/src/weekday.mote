@@ -1,0 +1,38 @@
+// The day of the week.
+import Display from std.traits
+
+pub enum Weekday: (Display) {
+    Monday
+    Tuesday
+    Wednesday
+    Thursday
+    Friday
+    Saturday
+    Sunday
+
+    /// 1 for Monday to 7 for Sunday.
+    pub fn number(self) -> Int {
+        return match self {
+            Monday => 1
+            Tuesday => 2
+            Wednesday => 3
+            Thursday => 4
+            Friday => 5
+            Saturday => 6
+            Sunday => 7
+        }
+    }
+
+    pub fn to_string(self) -> String {
+        return match self {
+            Monday => "Monday"
+            Tuesday => "Tuesday"
+            Wednesday => "Wednesday"
+            Thursday => "Thursday"
+            Friday => "Friday"
+            Saturday => "Saturday"
+            Sunday => "Sunday"
+        }
+    }
+}
+

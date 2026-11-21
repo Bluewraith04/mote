@@ -1,0 +1,9 @@
+// Reading one event from bytes.
+import Event from .event
+import decode from ._decode
+
+/// The first event in the bytes and how many bytes it took; the count is 0 when the bytes end inside a sequence, and the event is null for a sequence that means nothing.
+pub fn decode_input(bytes: [UInt8]) -> (Event?, Int) {
+    let step = decode(bytes, 0, false)
+    return (step.event, step.used)
+}

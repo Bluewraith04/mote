@@ -92,7 +92,7 @@ pub fn analyzed(packages: &crate::package::Packages) -> Built {
         let module = program.modules.iter().nth(entry).map(|(id, _)| id).expect("the entry module");
         let main = interner.get("main").and_then(|name| program.modules[module].scope.get(&name).copied());
         if let Some(Resolved::Def(def)) = main {
-            mote_semantics::instantiate(&mut program, &interner, &mut sink, &[Instance { def, args: Vec::new() }]);
+            mote_semantics::instantiate(&mut program, &mut interner, &mut sink, &[Instance { def, args: Vec::new() }]);
         }
     }
     let errors = sink.iter().filter(|diagnostic| diagnostic.severity == Severity::Error).map(|diagnostic| diagnostic.message.clone()).collect();
@@ -100,5 +100,5 @@ pub fn analyzed(packages: &crate::package::Packages) -> Built {
 }
 
 pub fn std_package() -> Package {
-    Package::load(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../std")).unwrap()
+    Package::load(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../mote_std/std")).unwrap()
 }

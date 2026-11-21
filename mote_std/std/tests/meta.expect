@@ -1,0 +1,17 @@
+start
+test "the built in types have their kind and name"
+passed
+test "a struct lists its fields in order"
+passed
+test "a class is a class"
+passed
+test "an enum lists its variants with their shape"
+passed
+test "a generic type is described at the arguments it is used with"
+passed
+test "a generic function describes the type it was called with"
+passed
+test "field read, write, construct, and comptime iteration work on structs"
+passed
+test "typeof gives the type of a value to the reflection builtins"
+passed

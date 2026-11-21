@@ -20,7 +20,7 @@ fn tuples_lists_arrays_and_maps_are_built_from_their_items_in_order() {
 
 #[test]
 fn a_range_expression_builds_a_range_value() {
-    expect("import { Range } from std.collections\nfn f(n: Int) -> Range<Int> {\n return 0..n\n}", &["  b0:", "    r1 = range 0, r0", "    return r1"]);
+    expect("fn f(n: Int) -> Range<Int> {\n return 0..n\n}", &["  b0:", "    r1 = range 0, r0", "    return r1"]);
 }
 
 #[test]
@@ -42,8 +42,11 @@ fn a_variant_lists_its_payload_in_declaration_order() {
 
 #[test]
 fn slices_copy_a_range_and_an_assigned_slice_writes_the_list() {
-    expect("fn f(xs: List<Int>, a: Int) -> List<Int> {\n return xs[a..]\n}", &["  b0:", "    r2 = slice r0[r1..]", "    return r2"]);
-    expect("fn f(xs: List<Int>) -> List<Int> {\n return xs[0..8..2]\n}", &["  b0:", "    r1 = slice r0[0..8..2]", "    return r1"]);
+    expect("fn f(xs: [Int; 4], a: Int) -> [Int] {\n return xs[a..]\n}", &["  b0:", "    r2 = slice r0[r1..]", "    return r2"]);
+    expect("fn f(xs: [Int; 8]) -> [Int] {\n return xs[0..8..2]\n}", &["  b0:", "    r1 = slice r0[0..8..2]", "    return r1"]);
+    let (compiled, lowered) = lowered("fn f(xs: List<Int>, a: Int) -> Span<Int> {\n return xs[a..]\n}");
+    assert_eq!(lowered.unsupported, []);
+    assert!(code(&compiled, &lowered, "f").contains("call "), "expected __slice__ call for List");
     expect("fn f(var xs: List<Int>) {\n xs[1..3] = [7, 8]\n}", &["  b0:", "    r1 = copy r0", "    r2 = list 7, 8", "    set_slice r1[1..3], r2", "    return _"]);
     expect("fn f(var xs: List<Int>) {\n xs[1..3] = 0\n}", &["  b0:", "    r1 = copy r0", "    set_slice r1[1..3], 0", "    return _"]);
 }
@@ -97,4 +100,40 @@ fn propagating_a_result_returns_the_error_in_the_function_s_result_type() {
 #[test]
 fn coalesce_assignment_wraps_the_new_value_as_an_optional() {
     expect("fn f(var a: Int?) {\n a ??= 5\n}", &["  b0:", "    r1 = copy r0", "    r2 = is_some r1", "    branch r2, b2, b1", "  b1:", "    r3 = to_optional 5", "    r0 = copy r3", "    jump b2", "  b2:", "    return _"]);
+}
+
+#[test]
+fn small_sized_array_ops_unroll_and_large_ones_loop() {
+    expect(
+        "fn f(a: [Int; 2], b: [Int; 2]) -> [Int; 2] {\n return a + b\n}",
+        &[
+            "  b0:",
+            "    r2 = index r0[0]",
+            "    r3 = index r1[0]",
+            "    r4 = add r2, r3",
+            "    r5 = index r0[1]",
+            "    r6 = index r1[1]",
+            "    r7 = add r5, r6",
+            "    r8 = array r4, r7",
+            "    return r8",
+        ],
+    );
+    expect(
+        "fn f(a: [Int; 2]) -> Bool {\n return @__mask_all(a > 0)\n}",
+        &[
+            "  b0:",
+            "    r1 = index r0[0]",
+            "    r2 = gt r1, 0",
+            "    r3 = index r0[1]",
+            "    r4 = gt r3, 0",
+            "    r5 = array r2, r4",
+            "    r6 = index r5[0]",
+            "    r7 = index r5[1]",
+            "    r8 = and r6, r7",
+            "    return r8",
+        ],
+    );
+    let (compiled, out) = lowered("fn f(a: [Int; 40], b: [Int; 40]) -> [Int; 40] {\n return a + b\n}");
+    let large = code(&compiled, &out, "f");
+    assert!(large.contains("array_repeat") && large.contains("set_index") && large.contains("lt r3, 40"), "{large}");
 }

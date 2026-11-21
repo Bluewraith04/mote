@@ -1,0 +1,147 @@
+// Laying out a view: the draw list and the areas of its elements.
+import { Node, NodeKind } from doc
+import { BOX_WIDTH, CMD_WIDTH, pane_layout, pane_present } from ._lib
+import { Encoder, Style, put_element } from ._encode
+import Font from .theme
+
+/// What one draw command paints.
+pub enum DrawKind {
+    Rect
+    Text
+    Border
+    Clip
+    Unclip
+}
+
+/// One command of a draw list, in paint order. `color` is 0xRRGGBBAA; `radius` rounds a rectangle or border; `border` is the width of a border; `text`, `size` and `font` are for text.
+pub struct Draw {
+    pub kind: DrawKind
+    pub x: Int
+    pub y: Int
+    pub w: Int
+    pub h: Int
+    pub color: Int
+    pub radius: Int
+    pub border: Int
+    pub text: String
+    pub size: Int
+    pub font: Font
+}
+
+/// Where an element with an `id` was laid out.
+pub struct Area {
+    pub id: String
+    pub x: Int
+    pub y: Int
+    pub w: Int
+    pub h: Int
+}
+
+/// The result of laying out a view: the draw list and the area of every element with an `id`, in document order.
+pub class Layout {
+    pub width: Int
+    pub height: Int
+    pub draws: List<Draw>
+    pub areas: List<Area>
+    commands: [Int]
+    texts: [UInt8]
+    count: Int
+
+    /// Draws the layout in the OS window with the handle.
+    pub fn paint(self, handle: Int) { pane_present(handle, self.commands, self.texts, self.count) }
+
+    /// The area of the element with an id.
+    pub fn area(self, id: String) -> Area? {
+        for each in self.areas {
+            if each.id == id { return each }
+        }
+        return null
+    }
+
+    /// The id of the element at a point: the last in document order whose area holds it, which is the one painted on top.
+    pub fn at(self, x: Int, y: Int) -> String? {
+        var found: String? = null
+        for each in self.areas {
+            if x >= each.x && x < each.x + each.w && y >= each.y && y < each.y + each.h { found = each.id }
+        }
+        return found
+    }
+}
+
+fn draw_kind(code: Int) -> DrawKind {
+    if code == 2 { return DrawKind.Text }
+    if code == 3 { return DrawKind.Border }
+    if code == 4 { return DrawKind.Clip }
+    if code == 5 { return DrawKind.Unclip }
+    return DrawKind.Rect
+}
+
+fn draw_font(code: Int) -> Font {
+    if code == 1 { return Font.Bold }
+    if code == 2 { return Font.Serif }
+    if code == 3 { return Font.Mono }
+    return Font.Sans
+}
+
+/// Lays out a view in a window of `width` by `height` pixels. The view is the top element of the document node (or all its elements, in a column), made of `row`, `column`, `box`, `spacer` and `text`; the attributes are `width` and `height` (`grow`, `fit`, pixels or a percent), `padding`, `gap`, `align-x`, `align-y`, `background`, `radius`, `border`, `clip`, `id`, and `color`, `size` and `font` (`sans`, `bold`, `serif`, `mono`) for the text under an element. A text is `size` pixels high and measured using the selected embedded DejaVu face. An unknown element, a bad attribute or an id used twice is an `Err`.
+pub fn layout(view: Node, width: Int, height: Int) -> Result<Layout, Error> {
+    var enc = Encoder { ops: [], strings: [], ids: [] }
+    let style = Style { color: 0x000000ff, size: 16, font: 0 }
+    var tops: List<Node> = []
+    if view.kind() == NodeKind.Document {
+        for child in view.children() {
+            if child.kind() == NodeKind.Element { tops.push(child) }
+        }
+    } else {
+        tops.push(view)
+    }
+    if tops.len() == 1 {
+        put_element(enc, tops[0], style, true)?
+    } else {
+        enc.record([1, 1, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0 - 1, 0, 0, 0, 0, 0, 0])
+        for each in tops { put_element(enc, each, style, false)? }
+        enc.record([3])
+    }
+    let ops = enc.ops.to_array()
+    let strings = enc.strings.to_array()
+    var commands: [Int] = [0; CMD_WIDTH * 256]
+    var texts: [UInt8] = [0; 8192]
+    var boxes: [Int] = [0; BOX_WIDTH * 64]
+    var info: [Int] = [0; 4]
+    var code = pane_layout(ops, strings, width, height, commands, texts, boxes, info)
+    if code >= 0 && (info[0] * CMD_WIDTH > commands.len() || info[1] > texts.len() || info[2] * BOX_WIDTH > boxes.len()) {
+        commands = [0; info[0] * CMD_WIDTH]
+        texts = [0; info[1] + 1]
+        boxes = [0; info[2] * BOX_WIDTH + BOX_WIDTH]
+        code = pane_layout(ops, strings, width, height, commands, texts, boxes, info)
+    }
+    if code < 0 {
+        let message = String.from_bytes(texts.slice(0, -code - 1))
+        return Err(Error.new(ErrorKind.InvalidData, "pane: " + (if message == null { "layout failed" } else { message })))
+    }
+    var draws: List<Draw> = []
+    for index in 0..info[0] {
+        let at = index * CMD_WIDTH
+        let text = String.from_bytes(texts.slice(commands[at + 8], commands[at + 8] + commands[at + 9]))
+        draws.push(Draw {
+            kind: draw_kind(commands[at]),
+            x: commands[at + 1],
+            y: commands[at + 2],
+            w: commands[at + 3],
+            h: commands[at + 4],
+            color: commands[at + 5],
+            radius: commands[at + 6],
+            border: commands[at + 7],
+            text: if text == null { "" } else { text },
+            size: commands[at + 10],
+            font: draw_font(commands[at + 11])
+        })
+    }
+    var areas: List<Area> = []
+    for index in 0..info[2] {
+        let at = index * BOX_WIDTH
+        let name = String.from_bytes(strings.slice(boxes[at], boxes[at] + boxes[at + 1]))
+        areas.push(Area { id: if name == null { "" } else { name }, x: boxes[at + 2], y: boxes[at + 3], w: boxes[at + 4], h: boxes[at + 5] })
+    }
+    return Ok(Layout { width: width, height: height, draws: draws, areas: areas, commands: commands, texts: texts, count: info[0] })
+}

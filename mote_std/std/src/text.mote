@@ -1,0 +1,44 @@
+// Methods and trait conformances for String; lengths and offsets count UTF-8 bytes.
+import { Clone, Debug, Display, Eq, Ord } from std.traits
+import Span from std.collections
+import StrView from std.string
+
+extend String: (Display, Debug, Eq, Ord, Clone) {
+    pub fn eq(self, other: String) -> Bool { return self == other }
+    pub fn compare(self, other: String) -> Int {
+        if self < other { return -1 }
+        if self > other { return 1 }
+        return 0
+    }
+    pub fn clone(self) -> String { return self }
+    pub fn debug(self) -> String { return self }
+    pub fn len(self) -> Int { return @__string_len(self) }
+    pub fn is_empty(self) -> Bool { return @__string_len(self) == 0 }
+    pub fn concat(self, other: String) -> String { return @__string_concat(self, other) }
+    pub fn replace(self, target: String, replacement: String) -> String { return @__string_replace(self, target, replacement) }
+    pub fn slice(self, start: Int, end: Int) -> StrView { return StrView.slice_of(self, start, end) }
+    pub fn __slice__(self, start: Int?, end: Int?, inclusive: Bool, step: Int?) -> StrView { return self.view().__slice__(start, end, inclusive, step) }
+    pub fn to_upper(self) -> String { return @__string_to_upper(self) }
+    pub fn to_lower(self) -> String { return @__string_to_lower(self) }
+    pub fn trim(self) -> String { return @__string_trim(self) }
+    pub fn repeat(self, count: Int) -> String { return @__string_repeat(self, count) }
+    pub fn contains(self, needle: String) -> Bool { return @__string_find(self, needle) != null }
+    pub fn starts_with(self, prefix: String) -> Bool { return @__string_find(self, prefix) == 0 }
+    pub fn ends_with(self, suffix: String) -> Bool {
+        let at = @__string_rfind(self, suffix)
+        if at == null { return false }
+        return at + @__string_len(suffix) == @__string_len(self)
+    }
+    pub fn split(self, separator: String) -> List<String> { return @__string_split(self, separator) }
+    pub fn find(self, needle: String) -> Int? { return @__string_find(self, needle) }
+    pub fn rfind(self, needle: String) -> Int? { return @__string_rfind(self, needle) }
+    pub fn byte_at(self, index: Int) -> UInt8 { return @__string_byte_at(self, index) }
+    pub fn view(self) -> StrView { return StrView.of(self) }
+    pub fn byte_span(self) -> Span<UInt8> { return Span<UInt8>.from_string_bytes(self, 0, @__string_len(self)) }
+    pub fn bytes(self) -> [UInt8] { return @__string_bytes(self) }
+    pub fn to_string(self) -> String { return self }
+    pub fn from_bytes(bytes: Span<UInt8>) -> String? { return @__string_from_bytes(bytes.to_array()) }
+    pub fn from(x: Int) -> String { return x.to_string() }
+    pub fn from(x: Float) -> String { return x.to_string() }
+    pub fn from(x: Bool) -> String { return x.to_string() }
+}

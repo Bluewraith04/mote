@@ -1,0 +1,59 @@
+// Methods and trait conformances for floating-point types.
+import std.numeric as n
+import { Clone, Debug, Display, Eq, Ord } from std.traits
+
+extend Float: (Display, Debug, Eq, Ord, Clone) {
+    pub fn eq(self, other: Float) -> Bool { return self == other }
+    pub fn compare(self, other: Float) -> Int {
+        if self < other { return -1 }
+        if self > other { return 1 }
+        return 0
+    }
+    pub fn clone(self) -> Float { return self }
+    pub fn debug(self) -> String { return n.to_string(self) }
+    pub fn abs(self) -> Float {
+        if self < 0.0 { return -self }
+        return self
+    }
+    pub fn min(self, other: Float) -> Float {
+        if other < self { return other }
+        return self
+    }
+    pub fn max(self, other: Float) -> Float {
+        if other > self { return other }
+        return self
+    }
+    pub fn to_string(self) -> String { return n.to_string(self) }
+    pub fn is_nan(self) -> Bool { return @__float_is_nan(self) }
+    pub fn is_infinite(self) -> Bool { return @__float_is_infinite(self) }
+    pub fn from(x: Int) -> Float { return x as Float }
+    pub fn from(x: Float32) -> Float { return x as Float }
+}
+
+extend Float32: (Display, Debug, Eq, Ord, Clone) {
+    pub fn eq(self, other: Float32) -> Bool { return self == other }
+    pub fn compare(self, other: Float32) -> Int {
+        if self < other { return -1 }
+        if self > other { return 1 }
+        return 0
+    }
+    pub fn clone(self) -> Float32 { return self }
+    pub fn debug(self) -> String { return n.to_string(self) }
+    pub fn abs(self) -> Float32 {
+        if self < 0.0 { return -self }
+        return self
+    }
+    pub fn min(self, other: Float32) -> Float32 {
+        if other < self { return other }
+        return self
+    }
+    pub fn max(self, other: Float32) -> Float32 {
+        if other > self { return other }
+        return self
+    }
+    pub fn to_string(self) -> String { return n.to_string(self) }
+    pub fn is_nan(self) -> Bool { return @__float_is_nan(self) }
+    pub fn is_infinite(self) -> Bool { return @__float_is_infinite(self) }
+    pub fn from(x: Int) -> Float32 { return x as Float32 }
+    pub fn from(x: Float) -> Float32 { return x as Float32 }
+}

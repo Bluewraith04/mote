@@ -2,6 +2,7 @@
 
 use std::arch::global_asm;
 
+#[cfg(target_os = "linux")]
 global_asm!(
     ".text",
     ".p2align 4",
@@ -42,6 +43,95 @@ global_asm!(
     "ret",
 );
 
+#[cfg(target_os = "windows")]
+global_asm!(
+    ".text",
+    ".p2align 4",
+    ".global mote_sched_switch",
+    "mote_sched_switch:",
+    "push rbp",
+    "push rbx",
+    "push rdi",
+    "push rsi",
+    "push r12",
+    "push r13",
+    "push r14",
+    "push r15",
+    "mov rax, gs:[0x08]",
+    "push rax",
+    "mov rax, gs:[0x10]",
+    "push rax",
+    "sub rsp, 160",
+    "movups [rsp + 0], xmm6",
+    "movups [rsp + 16], xmm7",
+    "movups [rsp + 32], xmm8",
+    "movups [rsp + 48], xmm9",
+    "movups [rsp + 64], xmm10",
+    "movups [rsp + 80], xmm11",
+    "movups [rsp + 96], xmm12",
+    "movups [rsp + 112], xmm13",
+    "movups [rsp + 128], xmm14",
+    "movups [rsp + 144], xmm15",
+    "mov [rcx], rsp",
+    "mov rsp, rdx",
+    "movups xmm15, [rsp + 144]",
+    "movups xmm14, [rsp + 128]",
+    "movups xmm13, [rsp + 112]",
+    "movups xmm12, [rsp + 96]",
+    "movups xmm11, [rsp + 80]",
+    "movups xmm10, [rsp + 64]",
+    "movups xmm9, [rsp + 48]",
+    "movups xmm8, [rsp + 32]",
+    "movups xmm7, [rsp + 16]",
+    "movups xmm6, [rsp + 0]",
+    "add rsp, 160",
+    "pop rax",
+    "mov gs:[0x10], rax",
+    "pop rax",
+    "mov gs:[0x08], rax",
+    "pop r15",
+    "pop r14",
+    "pop r13",
+    "pop r12",
+    "pop rsi",
+    "pop rdi",
+    "pop rbx",
+    "pop rbp",
+    "ret",
+    ".p2align 4",
+    ".global mote_sched_trampoline",
+    "mote_sched_trampoline:",
+    "sub rsp, 32",
+    "mov rcx, r12",
+    "call r13",
+    "ud2",
+    ".p2align 4",
+    ".global mote_sched_call_on",
+    "mote_sched_call_on:",
+    "push rbp",
+    "mov rbp, rsp",
+    "push qword ptr gs:[0x08]",
+    "push qword ptr gs:[0x10]",
+    "mov rax, [r8 + 168]",
+    "mov gs:[0x08], rax",
+    "mov rax, [r8 + 160]",
+    "mov gs:[0x10], rax",
+    "sub r8, 256",
+    "and r8, -16",
+    "sub r8, 32",
+    "mov rax, rcx",
+    "mov rcx, rdx",
+    "mov rsp, r8",
+    "call rax",
+    "mov rax, [rbp - 8]",
+    "mov gs:[0x08], rax",
+    "mov rax, [rbp - 16]",
+    "mov gs:[0x10], rax",
+    "mov rsp, rbp",
+    "pop rbp",
+    "ret",
+);
+
 unsafe extern "C" {
     fn mote_sched_switch(save: *mut usize, load: usize);
     fn mote_sched_trampoline();
@@ -49,27 +139,53 @@ unsafe extern "C" {
 }
 
 /// Bytes `prepare` writes below the top of a stack.
+#[cfg(target_os = "linux")]
 const INITIAL_FRAME: usize = 56;
+#[cfg(target_os = "windows")]
+const INITIAL_FRAME: usize = 248;
 
-/// Lays out a stack so that the first `switch` to it calls `entry(arg)` with the frame pointer zero; the stack pointer to switch to.
+/// Lays out a stack spanning `[base, top)` so the first `switch` calls `entry(arg)` with a zero frame pointer.
 ///
 /// # Safety
-/// `top` is the 16-aligned end of writable memory of at least a page, and `entry` never returns.
-pub unsafe fn prepare(top: usize, entry: extern "C" fn(usize) -> !, arg: usize) -> usize {
+/// `top` is the 16-aligned end of writable memory of at least a page, `base < top`, and `entry` never returns.
+pub unsafe fn prepare_range(base: usize, top: usize, entry: extern "C" fn(usize) -> !, arg: usize) -> usize {
     debug_assert!(top.is_multiple_of(16));
     let sp = top - INITIAL_FRAME;
+    crate::sys::prepare_stack_window(base, sp, top);
     let words = sp as *mut usize;
     // SAFETY: the caller's promise: the frame lies inside the stack.
     unsafe {
         for at in 0..INITIAL_FRAME / 8 {
             words.add(at).write(0);
         }
-        // r15, r14, r13, r12, rbx, rbp, return address.
-        words.add(2).write(entry as usize);
-        words.add(3).write(arg);
-        words.add(6).write(mote_sched_trampoline as *const () as usize);
+        #[cfg(target_os = "linux")]
+        {
+            let _ = base;
+            // r15, r14, r13, r12, rbx, rbp, return address.
+            words.add(2).write(entry as usize);
+            words.add(3).write(arg);
+            words.add(6).write(mote_sched_trampoline as *const () as usize);
+        }
+        #[cfg(target_os = "windows")]
+        {
+            // xmm6..xmm15 (20 words), StackLimit, StackBase, r15, r14, r13, r12, rsi, rdi, rbx, rbp, return address.
+            words.add(20).write(crate::sys::initial_stack_limit(base, top));
+            words.add(21).write(top);
+            words.add(24).write(entry as usize);
+            words.add(25).write(arg);
+            words.add(30).write(mote_sched_trampoline as *const () as usize);
+        }
     }
     sp
+}
+
+/// Lays out a stack so that the first `switch` to it calls `entry(arg)` with the frame pointer zero; the stack pointer to switch to.
+///
+/// # Safety
+/// `top` is the 16-aligned end of writable memory of at least a page, and `entry` never returns.
+pub unsafe fn prepare(top: usize, entry: extern "C" fn(usize) -> !, arg: usize) -> usize {
+    // SAFETY: the caller's promise.
+    unsafe { prepare_range(top.saturating_sub(crate::stacks::TASK_STACK_BYTES), top, entry, arg) }
 }
 
 /// Saves the registers on this stack, stores its pointer in `save`, and continues on the stack at `load`.
@@ -86,9 +202,12 @@ pub unsafe fn switch(save: *mut usize, load: usize) {
 /// # Safety
 /// `os_sp` belongs to a stack that is suspended and has at least 256 bytes plus what `f` needs free below it; `f` does not switch.
 pub unsafe fn call_on(os_sp: usize, f: extern "C" fn(usize), arg: usize) {
-    let sp = (os_sp - 256) & !15;
+    #[cfg(target_os = "linux")]
+    let target = (os_sp - 256) & !15;
+    #[cfg(target_os = "windows")]
+    let target = os_sp;
     // SAFETY: the caller's promise.
-    unsafe { mote_sched_call_on(f, arg, sp) };
+    unsafe { mote_sched_call_on(f, arg, target) };
 }
 
 #[cfg(test)]
@@ -148,7 +267,7 @@ mod tests {
     fn start(slab: &Slab, entry: extern "C" fn(usize) -> !, link: &mut Link) -> crate::stacks::Stack {
         let stack = slab.acquire().unwrap();
         // SAFETY: the slot is writable memory with a 16-aligned top and the entry never returns.
-        link.task_sp = unsafe { prepare(stack.top(), entry, link as *mut Link as usize) };
+        link.task_sp = unsafe { prepare_range(stack.base(), stack.top(), entry, link as *mut Link as usize) };
         stack
     }
 
@@ -198,7 +317,10 @@ mod tests {
         assert_ne!(one.task_sp, two.task_sp);
     }
 
+    #[cfg(target_os = "linux")]
     global_asm!(".text", ".global mote_sched_probe", "mote_sched_probe:", "mov [rdi], rbp", "jmp {done}", done = sym probe_done);
+    #[cfg(target_os = "windows")]
+    global_asm!(".text", ".global mote_sched_probe", "mote_sched_probe:", "mov [rcx], rbp", "jmp {done}", done = sym probe_done);
 
     unsafe extern "C" {
         safe fn mote_sched_probe(arg: usize) -> !;

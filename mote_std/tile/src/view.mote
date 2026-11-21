@@ -1,0 +1,73 @@
+// The view tree: text, fills, rows and columns of slots, borders and padding.
+import Style from term
+
+/// How much of the main axis of a row or column a child takes: a number of cells, its content, or a share of what is left.
+pub enum Length {
+    Fixed(Int)
+    Fit
+    Flex(Int)
+}
+
+/// A child of a row or column and the room it takes.
+pub struct Slot {
+    pub length: Length
+    pub view: View
+}
+
+/// A child that takes `cells` cells along the axis.
+pub fn fixed(cells: Int, view: View) -> Slot { return Slot { length: Length.Fixed(cells), view: view } }
+
+/// A child that takes what its content needs.
+pub fn fit(view: View) -> Slot { return Slot { length: Length.Fit, view: view } }
+
+/// A child that takes `weight` shares of what the others leave.
+pub fn flex(weight: Int, view: View) -> Slot { return Slot { length: Length.Flex(weight), view: view } }
+
+pub enum Shape {
+    Empty
+    Text
+    Fill
+    Column
+    Row
+    Border
+    Pad
+}
+
+/// What is drawn: text, rows and columns of children, a titled border, padding, or a fill. A view is made by the functions of this class.
+pub class View {
+    pub shape: Shape
+    pub label: String
+    pub style: Style
+    pub children: List<Slot>
+    pub inner: View?
+    pub amount: Int
+    pub tag: String
+
+    /// Nothing at all.
+    pub fn empty() -> View { return View { shape: Shape.Empty, label: "", style: Style {}, children: [], inner: null, amount: 0, tag: "" } }
+
+    /// Lines of text in the terminal's own style; a line break starts a line and a line too long for the room is cut.
+    pub fn text(text: String) -> View { return View.styled(text, Style {}) }
+
+    pub fn styled(text: String, style: Style) -> View { return View { shape: Shape.Text, label: text, style: style, children: [], inner: null, amount: 0, tag: "" } }
+
+    /// The glyph repeated over the whole room.
+    pub fn fill(glyph: String, style: Style) -> View { return View { shape: Shape.Fill, label: glyph, style: style, children: [], inner: null, amount: 0, tag: "" } }
+
+    /// The slots one above the next.
+    pub fn column(slots: List<Slot>) -> View { return View { shape: Shape.Column, label: "", style: Style {}, children: slots, inner: null, amount: 0, tag: "" } }
+
+    /// The slots side by side.
+    pub fn row(slots: List<Slot>) -> View { return View { shape: Shape.Row, label: "", style: Style {}, children: slots, inner: null, amount: 0, tag: "" } }
+
+    /// A line around the view with the title in its top edge.
+    pub fn border(title: String, inner: View) -> View { return View { shape: Shape.Border, label: title, style: Style {}, children: [], inner: inner, amount: 1, tag: "" } }
+
+    /// Empty cells around the view.
+    pub fn pad(cells: Int, inner: View) -> View { return View { shape: Shape.Pad, label: "", style: Style {}, children: [], inner: inner, amount: cells, tag: "" } }
+
+    /// The same view named, so `render_areas` tells where it was drawn.
+    pub fn tagged(self, name: String) -> View {
+        return View { shape: self.shape, label: self.label, style: self.style, children: self.children, inner: self.inner, amount: self.amount, tag: name }
+    }
+}

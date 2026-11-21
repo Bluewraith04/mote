@@ -11,7 +11,7 @@ use mote_abi::{fault_site_raw as raw, FaultKind, FaultTable, LinkTable, CONTEXT_
 use mote_base::{Interner, Span, Symbol};
 use mote_ir::{Callee, Const, Function, FunctionKind, Op, Operand, RegId, Terminator};
 use mote_ir::{FuncId, Inst, Module};
-use mote_semantics::{BinaryOp, DefId, DefKind, FloatTy, Program, TyId, TyKind, UnaryOp};
+use mote_semantics::{BinaryOp, BuiltinTy, DefId, DefKind, FloatTy, Program, TyId, TyKind, UnaryOp};
 
 use mote_runtime::helpers::{shown, PRINT_ERROR, PRINT_NEWLINE};
 use crate::rows::{emitter, Emitter};
@@ -37,15 +37,15 @@ pub(crate) struct Env<'e> {
     pub strings: &'e HashMap<Symbol, DataId>,
     /// The static string object of the name of each type a `typeof` call names.
     pub type_names: &'e HashMap<TyId, DataId>,
-    /// The static array behind `meta_ints` and `meta_texts`, for each the program calls.
-    pub meta_tables: &'e HashMap<&'static str, DataId>,
-    /// The position in `link` of each native function the program calls.
+    /// The types an `Any` can hold, for the name of the one it holds.
+    pub any_members: &'e Vec<TyId>,
+    /// The position in `link` of each extern function the program calls.
     pub natives: &'e HashMap<DefId, usize>,
     /// The libraries and functions the loader opens before `main`.
     pub link: &'e LinkTable,
     /// The words the loader fills with the address of each linked function.
     pub native_slots: Option<DataId>,
-    /// The function that calls each blocking native on behalf of a helper thread.
+    /// The function that calls each blocking extern fn on behalf of a helper thread.
     pub thunks: &'e HashMap<usize, ClifFunc>,
     /// The function that runs the closure of each task type and stores its result in the handle.
     pub task_thunks: &'e HashMap<mote_abi::TypeId, ClifFunc>,
@@ -73,11 +73,11 @@ pub(crate) struct Imports {
     pub text: ClifFunc,
     pub system: ClifFunc,
     pub value: ClifFunc,
-    pub dynamic: ClifFunc,
     pub native: ClifFunc,
     pub fault_message: ClifFunc,
     pub poll: ClifFunc,
     pub fmod: ClifFunc,
+    pub mem: ClifFunc,
     pub task_spawn: ClifFunc,
     pub task_await: ClifFunc,
     pub task_cancel: ClifFunc,
@@ -298,12 +298,12 @@ impl<'e, 's, 'b> Lowering<'e, 's, 'b> {
         match &inst.op {
             Op::Copy(_) | Op::Unary { .. } | Op::Cast(_) | Op::Len(_) | Op::Field { .. } | Op::TupleField { .. } | Op::IsSome(_) | Op::SomePayload(_) | Op::Unwrap(_) | Op::VariantTag(_) | Op::IsVariant { .. } | Op::VariantField { .. } | Op::IsType { .. } | Op::UnionPayload { .. } | Op::LoadCell(_) | Op::LoadGlobal(_) => true,
             Op::Binary { .. } => dest_is_number,
-            Op::Index { object, .. } => matches!(self.env.program.types.kind(self.ty_of(object)), TyKind::Array(_) | TyKind::FixedArray(..) | TyKind::Adt { .. }),
+            Op::Index { object, .. } => matches!(self.env.program.types.kind(self.ty_of(object)), TyKind::Array(_) | TyKind::FixedArray(..) | TyKind::Builtin { kind: BuiltinTy::List, .. } | TyKind::Adt { .. }),
             Op::SetField { value, .. } | Op::SetIndex { value, .. } | Op::StoreCell { value, .. } | Op::StoreGlobal { value, .. } => number(self.ty_of(value)),
             Op::Call { callee: Callee::Function(_) | Callee::Value(_), .. } => true,
             Op::Call { callee: Callee::Intrinsic(name), .. } => {
                 let name = self.env.interner.resolve(*name);
-                matches!(emitter(name), Some(Emitter::Numeric | Emitter::Print)) || matches!(name, "list_len" | "array_len" | "list_get" | "array_get" | "string_len")
+                matches!(emitter(name), Some(Emitter::Numeric | Emitter::Print | Emitter::Mem)) || matches!(name, "list_len" | "array_len" | "list_get" | "array_get" | "string_len")
             }
             _ => false,
         }
@@ -533,7 +533,6 @@ impl<'e, 's, 'b> Lowering<'e, 's, 'b> {
             Some(Emitter::Numeric) => self.numeric_intrinsic(name, inst, args),
             Some(Emitter::Text) => self.text_intrinsic(name, inst, args),
             Some(Emitter::Collect) => self.collection_intrinsic(name, inst, args, outs),
-            Some(Emitter::Reflect) => self.reflect_intrinsic(name, inst, args),
             Some(Emitter::Print) => self.print_intrinsic(name, args),
             Some(Emitter::System) => self.system_intrinsic(name, inst, args),
             Some(Emitter::Task) => self.task_intrinsic(name, inst, args),
@@ -541,6 +540,7 @@ impl<'e, 's, 'b> Lowering<'e, 's, 'b> {
             Some(Emitter::Lock) => self.lock_intrinsic(name, inst, args),
             Some(Emitter::Atomic) => self.atomic_intrinsic(name, inst, args),
             Some(Emitter::Stream) => self.stream_intrinsic(name, inst, args, outs),
+            Some(Emitter::Mem) => self.mem_intrinsic(name, inst, args),
             None => Err(CompileError::internal(format!("the intrinsic `{name}`"))),
         }
     }

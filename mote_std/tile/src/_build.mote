@@ -1,0 +1,68 @@
+// An element tree as the view the renderer draws, and the handlers its clicks reach.
+import { Element, ElementKind } from .element
+import Style from term
+import { Length, Slot, View } from .view
+
+/// The handler of the element with a tag.
+pub struct Click {
+    pub tag: String
+    pub run: (Any) -> Any
+}
+
+/// What an element tree builds: the view to draw and the handlers by tag.
+pub class Built {
+    pub view: View
+    pub clicks: List<Click>
+}
+
+class Collector {
+    var clicks: List<Click>
+    var count: Int
+}
+
+// A parent's axis: 0 for a row, 1 for a column.
+fn slot_of(element: Element, axis: Int, view: View) -> Slot {
+    let cells = if axis == 1 { element.tall } else { element.wide }
+    if cells >= 0 { return Slot { length: Length.Fixed(cells), view: view } }
+    if element.weight > 0 { return Slot { length: Length.Flex(element.weight), view: view } }
+    return Slot { length: Length.Fit, view: view }
+}
+
+fn put(element: Element, parent: Style, var found: Collector) -> View {
+    let own = parent + element.style
+    var view = View.empty()
+    if element.kind == ElementKind.Text {
+        view = View.styled(element.label, own)
+    } else if element.kind == ElementKind.Fill {
+        view = View.fill(element.label, own)
+    } else if element.kind != ElementKind.Spacer {
+        let axis = if element.kind == ElementKind.Column { 1 } else { 0 }
+        var slots: List<Slot> = []
+        for kid in element.kids {
+            if element.spacing > 0 && slots.len() > 0 {
+                slots.push(Slot { length: Length.Fixed(element.spacing), view: View.empty() })
+            }
+            slots.push(slot_of(kid, axis, put(kid, own, found)))
+        }
+        view = if axis == 1 { View.column(slots) } else { View.row(slots) }
+    }
+    if element.padding > 0 { view = View.pad(element.padding, view) }
+    if element.framed { view = View.border(element.title, view) }
+    var tag = element.tag
+    if element.click != null {
+        if tag == "" {
+            tag = "~${found.count}"
+            found.count += 1
+        }
+        found.clicks.push(Click { tag: tag, run: element.click! })
+    }
+    if tag != "" { view = view.tagged(tag) }
+    return view
+}
+
+/// The view of an element tree, with the handler of every element that has one; an element with a handler and no `id` is given a tag that starts with `~`.
+pub fn build(root: Element) -> Built {
+    var found = Collector { clicks: [], count: 0 }
+    let view = put(root, Style {}, found)
+    return Built { view: view, clicks: found.clicks }
+}

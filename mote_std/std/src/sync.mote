@@ -1,0 +1,94 @@
+// Channels, Mutex and Once; the handle calls are compiler builtins, the rest is Mote.
+
+pub struct Channel<T> {
+    pub fn new(buffer: Int) -> (Sender<T>, Receiver<T>) { return @__channel_new(buffer) }
+}
+
+extend<T> Sender<T> {
+    pub fn send(self, value: T) { @__sender_send(self, value) }
+    pub fn try_send(self, value: T) -> Bool { return @__sender_try_send(self, value) }
+    pub fn close(self) { @__sender_close(self) }
+    pub fn clone(self) -> Sender<T> { return @__sender_clone(self) }
+}
+
+extend<T> Receiver<T> {
+    pub fn recv(self) -> T? { return @__receiver_recv(self) }
+    pub fn recv_timeout(self, ms: Int) -> T? { return @__receiver_recv_timeout(self, ms) }
+    pub fn try_recv(self) -> T? { return @__receiver_try_recv(self) }
+    pub fn is_closed(self) -> Bool { return @__receiver_is_closed(self) }
+    pub fn close(self) { @__receiver_close(self) }
+    pub fn clone(self) -> Receiver<T> { return @__receiver_clone(self) }
+    pub fn stream(self) -> Stream<T> {
+        while true {
+            let item = @__receiver_recv(self)
+            if item == null { return }
+            yield item
+        }
+    }
+}
+
+extend<T> Mutex<T> {
+    pub fn new(value: T) -> Mutex<T> { return @__mutex_new(@__deep_clone(value)) }
+    pub fn lock<R>(self, work: Send (var T) -> R) -> R {
+        var value = @__mutex_take(self)
+        let result = work(value)
+        @__mutex_put(self, value)
+        return @__deep_clone(result)
+    }
+    pub fn get(self) -> T {
+        let value = @__mutex_take(self)
+        let copy = @__deep_clone(value)
+        @__mutex_put(self, value)
+        return copy
+    }
+    pub fn set(self, value: T) {
+        let owned = @__deep_clone(value)
+        @__mutex_take(self)
+        @__mutex_put(self, owned)
+    }
+}
+
+extend<T> Once<T> {
+    pub fn new() -> Once<T> { return @__once_new() }
+    pub fn get_or_init(self, init: Send () -> T) -> T {
+        if @__once_begin(self) { @__once_finish(self, init()) }
+        return @__once_value(self)
+    }
+}
+
+pub fn merge<T>(rxs: List<Receiver<T>>) -> Receiver<T> {
+    let (tx, out) = Channel<T>(0)
+    for rx in rxs {
+        let mine = tx.clone()
+        spawn {
+            for item in rx { mine.send(item) }
+        }
+    }
+    tx.close()
+    return out
+}
+
+pub fn broadcast<T>(rx: Receiver<T>, n: Int) -> List<Receiver<T>> {
+    var outs: List<Receiver<T>> = []
+    var source = rx
+    var i = 0
+    while i < n {
+        let (next_tx, next_rx) = Channel<T>(0)
+        let (out_tx, out_rx) = Channel<T>(0)
+        let input = source
+        spawn {
+            for item in input {
+                out_tx.send(item)
+                next_tx.send(item)
+            }
+        }
+        outs.push(out_rx)
+        source = next_rx
+        i += 1
+    }
+    let rest = source
+    spawn {
+        for item in rest {}
+    }
+    return outs
+}

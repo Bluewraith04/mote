@@ -3,8 +3,8 @@
 use std::io::Write;
 
 use mote_abi::{
-    CodeTable, DebugTable, FaultTable, LinkImage, Meta, TaskContext, TypeImage, DIRECTORY_CODE, DIRECTORY_DEBUG, DIRECTORY_FAILURE, DIRECTORY_FAULTS, DIRECTORY_INITS, DIRECTORY_LINK, DIRECTORY_META, DIRECTORY_NATIVES, DIRECTORY_TYPES,
-    DIRECTORY_WORDS, DIRECTORY_WORDS_OF_CODE,
+    CodeTable, DebugTable, FaultTable, LinkImage, Meta, TaskContext, TypeImage, DIRECTORY_CODE, DIRECTORY_DEBUG, DIRECTORY_FAILURE, DIRECTORY_FAULTS, DIRECTORY_FLAGS, DIRECTORY_FLAG_SINGLE_THREADED, DIRECTORY_INITS,
+    DIRECTORY_LINK, DIRECTORY_META, DIRECTORY_NATIVES, DIRECTORY_TYPES, DIRECTORY_WORDS, DIRECTORY_WORDS_OF_CODE,
 };
 
 use crate::args::Args;
@@ -75,8 +75,9 @@ fn execute(args: Args) -> Result<i32, String> {
     // SAFETY: the compiler wrote a word for each library linked in.
     init_linked(unsafe { std::slice::from_raw_parts(mote_tables[DIRECTORY_INITS] as *const usize, mote_tables[DIRECTORY_INITS + 1]) });
     let failure = mote_tables[DIRECTORY_FAILURE];
+    let single_threaded = (mote_tables[DIRECTORY_FLAGS] & DIRECTORY_FLAG_SINGLE_THREADED) != 0;
     let scheduler = args.seed.map_or_else(mote_scheduler::Config::new, mote_scheduler::Config::seeded);
-    let image = Image { run: mote_run, types, faults, meta, code: map, failure: (failure != 0).then_some(failure), heap: HeapConfig::default(), scheduler, feeds: args.feeds, args: args.program, sink: Some(Box::new(std::io::stdout())) };
+    let image = Image { run: mote_run, types, faults, meta, code: map, failure: (failure != 0).then_some(failure), heap: HeapConfig::default(), scheduler, feeds: args.feeds, args: args.program, sink: Some(Box::new(std::io::stdout())), single_threaded };
     let ran = image.run();
     let _ = std::io::stdout().flush();
     Ok(match (ran.fault, ran.err) {

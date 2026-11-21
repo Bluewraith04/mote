@@ -1,5 +1,3 @@
-import { Stream } from std.collections
-
 class Holder {
     var stream: Stream<Int>?
 }

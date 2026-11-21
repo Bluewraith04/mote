@@ -1,6 +1,6 @@
 import { assert_eq } from std.test
 import { add } from ping
 
-test "the native adds" {
+test "the external library adds" {
     assert_eq(add(2, 3), 5)
 }

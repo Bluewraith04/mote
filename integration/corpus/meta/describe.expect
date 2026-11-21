@@ -9,16 +9,12 @@ ended Returned
 | A point on the plane.
 | x Int true true false
 | y Int false false true
-| bump true true true
-| peek false true false
-| Empty 0 false Nothing.
-| Circle 1 false 
-| Rect 2 true 
-| 1
-| 5
+| Empty 0 false
+| Circle 1 false
+| Rect 2 true
 | corpus.main.Pair<Int, String>
-| B
+| String
 | corpus.main.Point
 | List<String>
 | 2
-| list
+| true

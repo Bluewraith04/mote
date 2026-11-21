@@ -215,7 +215,7 @@ fn id<T>(x: T) -> T {
 let f = id // error
 ```
 
-* Type arguments are written on a call and on a type, never on a method call or a function value. <!-- block -->
+* Type arguments are written on a call, method call, or type, never on a function value. <!-- block -->
 
 ```mote
 fn id<T>(x: T) -> T {
@@ -232,7 +232,13 @@ struct Box {
     }
 }
 
-let n = Box {}.get<Int>(1) // error
+fn main() {
+    println(Box {}.get<Int>(1))
+}
+```
+
+```output
+1
 ```
 
 ## Bounds
@@ -273,7 +279,7 @@ b
 ```
 
 ```mote
-import { Ord } from std.traits
+import Ord from std.traits
 
 fn both<T: Ord + Display>(a: T) -> Int { // error
     return 1
@@ -382,7 +388,7 @@ fn main() {
 * `T: Eq` allows `==` on `T`; `T == null` needs no bound. <!-- block -->
 
 ```mote
-import { Eq } from std.traits
+import Eq from std.traits
 
 fn same<T: Eq>(a: T, b: T) -> Bool {
     return a == b
@@ -444,7 +450,7 @@ fn main() {
 * A type's own parameters take bounds too, `class Set<T: Key>`. Each use of the type checks them: an annotation, a literal, a signature, a field, a method call. <!-- block --> <!-- test: a_types_own_bounds_are_checked_where_it_is_used -->
 
 ```mote
-import { Ord } from std.traits
+import Ord from std.traits
 
 class Sorted<T: Ord> {
     items: List<T>
@@ -471,7 +477,7 @@ fn main() {
 ```
 
 ```mote
-import { Ord } from std.traits
+import Ord from std.traits
 
 class Sorted<T: Ord> {
     items: List<T>
@@ -483,7 +489,7 @@ let s: Sorted<Plain> = Sorted { items: [] } // error
 ```
 
 ```mote
-import { Ord } from std.traits
+import Ord from std.traits
 
 class Sorted<T: Ord> {
     items: List<T>
@@ -495,7 +501,7 @@ let s = Sorted { items: [Plain {}] } // error
 ```
 
 ```mote
-import { Ord } from std.traits
+import Ord from std.traits
 
 class Sorted<T: Ord> {
     items: List<T>
@@ -507,7 +513,7 @@ fn use_it(s: Sorted<Plain>) {} // error
 ```
 
 ```mote
-import { Ord } from std.traits
+import Ord from std.traits
 
 class Sorted<T: Ord> {
     items: List<T>
@@ -521,7 +527,7 @@ struct Holder {
 ```
 
 ```mote
-import { Ord } from std.traits
+import Ord from std.traits
 
 class Sorted<T: Ord> {
     items: List<T>
@@ -867,7 +873,7 @@ true
 ```
 
 ```mote
-import { Ord } from std.traits
+import Ord from std.traits
 
 fn ordered<T: Ord>(x: T) -> Int {
     return 1
@@ -909,7 +915,7 @@ let c = Plain().clone() // error
 ```
 
 ```mote
-import { Clone } from std.traits
+import Clone from std.traits
 
 class Listed: (Clone) {
     var n: Int = 1
@@ -930,7 +936,7 @@ false
 
 ## Derived methods
 
-* `Display`, `Debug` and `Clone` have default methods that read the type through `std.meta`. A type that lists one and writes none of its methods gets the default; a method it writes is kept. <!-- block -->
+* `Display`, `Debug` and `Clone` have default methods that inspect the type statically via `std.reflect` and `comptime` builtins. A type that lists one and writes none of its methods gets the default; a method it writes is kept. <!-- block -->
 
 ```mote
 import { Display, Debug, Clone } from std.traits
@@ -1020,7 +1026,7 @@ true
 * A field is shown by its own fields, whatever methods its type writes. <!-- block -->
 
 ```mote
-import { Display } from std.traits
+import Display from std.traits
 
 struct Inner: (Display) {
     n: Int
@@ -1046,7 +1052,7 @@ Outer(inner: Inner(n: 1))
 * `Eq`, `Ord` and `Closeable` have no default; a type that lists one writes it. <!-- block --> <!-- test: derive_a_trait_without_a_default_still_needs_its_method -->
 
 ```mote
-import { Eq } from std.traits
+import Eq from std.traits
 
 struct P: (Eq) { // error
     n: Int
@@ -1054,7 +1060,7 @@ struct P: (Eq) { // error
 ```
 
 ```mote
-import { Ord } from std.traits
+import Ord from std.traits
 
 struct P: (Ord) { // error
     n: Int
@@ -1062,7 +1068,7 @@ struct P: (Ord) { // error
 ```
 
 ```mote
-import { Closeable } from std.traits
+import Closeable from std.traits
 
 struct P: (Closeable) { // error
     n: Int

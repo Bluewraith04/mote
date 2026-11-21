@@ -1,5 +1,5 @@
 use mote_base::{Id, Span};
-use mote_semantics::{Block, Closure, DefId, DefKind, Expr, FnRef, LangItem, Local, Payload, TyId, TyKind};
+use mote_semantics::{Block, Closure, DefKind, Expr, FnRef, GenericArg, Local, Payload, TyId, TyKind};
 
 use super::{Cleanup, Lowering};
 use crate::ir::{Callee, FuncId, Op, Operand, Terminator};
@@ -8,7 +8,7 @@ impl Lowering<'_> {
     /// `spawn`: the body is a function of its own; the arrays it captures are copied into the task, and so is its result.
     pub(super) fn spawn(&mut self, task: &Closure, scoped: bool, ty: TyId, span: Span) -> Operand {
         let ret = match self.program.types.kind(ty) {
-            TyKind::Adt { args, .. } => args[0],
+            TyKind::Builtin { args, .. } => args.first().copied().unwrap_or(TyId::UNIT),
             _ => TyId::UNIT,
         };
         let mut captures = Vec::new();
@@ -54,9 +54,12 @@ impl Lowering<'_> {
 
     fn returns_error(&self) -> bool {
         let types = &self.program.types;
-        let lang = |def: &DefId| self.program.defs[*def].lang;
         match types.kind(self.ret) {
-            TyKind::Adt { def, args } if lang(def) == Some(LangItem::Result) => args.get(1).is_some_and(|&error| matches!(types.kind(error), TyKind::Adt { def, .. } if lang(def) == Some(LangItem::Error))),
+            TyKind::Adt { def, args } if self.program.std.result == Some(*def) => {
+                args.get(1)
+                    .and_then(GenericArg::as_type)
+                    .is_some_and(|error| matches!(types.kind(error), TyKind::Adt { def, .. } if self.program.std.error == Some(*def)))
+            }
             _ => false,
         }
     }
@@ -119,8 +122,9 @@ impl Lowering<'_> {
             TyKind::Array(_) => true,
             TyKind::Optional(inner) => self.holds_array_in(inner, seen),
             TyKind::Tuple(items) | TyKind::Union(items) => items.into_iter().any(|item| self.holds_array_in(item, seen)),
+            TyKind::Builtin { .. } => false,
             TyKind::Adt { def, args } => {
-                if self.program.defs[def].lang.is_some_and(|lang| !matches!(lang, LangItem::Option | LangItem::Result)) {
+                if self.program.std.map == Some(def) || self.program.std.set == Some(def) {
                     return false;
                 }
                 let fields: Vec<TyId> = match &self.program.defs[def].kind {
@@ -137,7 +141,7 @@ impl Lowering<'_> {
                     _ => return false,
                 };
                 fields.into_iter().any(|field| {
-                    let field = self.program.types.subst(field, &args);
+                    let field = self.program.types.subst_generic(field, &args);
                     self.holds_array_in(field, seen)
                 })
             }

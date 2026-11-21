@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use mote_base::Span;
-use mote_semantics::{plan, Closure, Conversion, FnRef, LangItem, Local, TyId, TyKind};
+use mote_semantics::{plan, view_coercion_fn, BuiltinTy, Closure, Conversion, FnRef, Local, TyId, TyKind};
 
 use super::{placeholder, Cleanup, Lowering};
 use crate::builder::FunctionBuilder;
@@ -84,7 +84,7 @@ impl Lowering<'_> {
         id
     }
 
-    /// A named function used as a value; a native or an intrinsic goes through a function that calls it.
+    /// A named function used as a value; an extern or intrinsic goes through a function that calls it.
     pub(super) fn function_value(&mut self, function: &FnRef, ty: TyId, span: Span) -> Operand {
         let found = match self.instances.get(function) {
             Some(&func) => Some(func),
@@ -96,7 +96,7 @@ impl Lowering<'_> {
         }
     }
 
-    /// The function that calls a native or an intrinsic with the parameters of its function type.
+    /// The function that calls an extern or intrinsic with the parameters of its function type.
     fn native_wrapper(&mut self, function: &FnRef, ty: TyId) -> Option<FuncId> {
         if let Some(&id) = self.wrappers.get(function) {
             return Some(id);
@@ -134,6 +134,17 @@ impl Lowering<'_> {
         for (conversion, ty) in steps {
             operand = match conversion {
                 Conversion::Adapt => self.adapt(operand, current, ty, span),
+                Conversion::ToView => {
+                    let Some(fn_ref) = view_coercion_fn(self.program, self.interner, current, ty) else {
+                        return self.unsupported(span, "missing view coercion");
+                    };
+                    let Some(callee) = self.function_callee(&fn_ref) else {
+                        return self.unsupported(span, "missing view coercion instance");
+                    };
+                    let writes = self.var_positions(fn_ref.def).into_iter().filter(|&v| v).count();
+                    let outs = (0..writes).map(|_| self.b.reg(current, None)).collect();
+                    self.b.value(ty, Op::Call { callee, args: vec![operand], outs }, span)
+                }
                 Conversion::ToOptional if current == TyId::UNIT => self.b.value(ty, Op::Copy(Operand::Const(Const::Null)), span),
                 _ => self.b.value(ty, Op::Convert { conversion, operand }, span),
             };
@@ -142,11 +153,10 @@ impl Lowering<'_> {
         operand
     }
 
-    /// The element types of a built-in type of the item (`Stream` or `Task`) read as the same type of another element.
-    fn handle_elements(&self, item: LangItem, from: TyId, to: TyId) -> Option<(TyId, TyId)> {
-        let handle = *self.program.lang.get(&item)?;
+    /// The element types of a built-in type (`Stream` or `Task`) read as the same type of another element.
+    fn handle_elements(&self, item: BuiltinTy, from: TyId, to: TyId) -> Option<(TyId, TyId)> {
         match (self.program.types.kind(from), self.program.types.kind(to)) {
-            (TyKind::Adt { def: was, args: from }, TyKind::Adt { def: now, args: to }) if *was == handle && *now == handle => Some((*from.first()?, *to.first()?)),
+            (TyKind::Builtin { kind: was, args: from }, TyKind::Builtin { kind: now, args: to }) if *was == item && *now == item => Some((*from.first()?, *to.first()?)),
             _ => None,
         }
     }
@@ -200,10 +210,10 @@ impl Lowering<'_> {
 
     /// A function as a function type it fits: a wrapper converts the arguments and the result. A `Stream` gets a resume function that converts its elements; a `Task` gets a view that converts its result.
     pub(super) fn adapt(&mut self, operand: Operand, from: TyId, to: TyId, span: Span) -> Operand {
-        if let Some((was, now)) = self.handle_elements(LangItem::Stream, from, to) {
+        if let Some((was, now)) = self.handle_elements(BuiltinTy::Stream, from, to) {
             return if was == now { operand } else { self.adapt_stream(operand, from, to, was, now, span) };
         }
-        if let Some((was, now)) = self.handle_elements(LangItem::Task, from, to) {
+        if let Some((was, now)) = self.handle_elements(BuiltinTy::Task, from, to) {
             return if was == now { operand } else { self.adapt_task(operand, from, to, was, now, span) };
         }
         let (TyKind::Function(source), TyKind::Function(target)) = (self.program.types.kind(from).clone(), self.program.types.kind(to).clone()) else {
@@ -233,7 +243,9 @@ impl Lowering<'_> {
             self.b.value(source.ret, call, span)
         };
         for (position, out) in outs {
-            self.b.emit(Some(params[position]), Op::Copy(Operand::Reg(out)), span);
+            if target.params[position].ty == source.params[position].ty {
+                self.b.emit(Some(params[position]), Op::Copy(Operand::Reg(out)), span);
+            }
         }
         let value = (target.ret != TyId::UNIT).then(|| self.fit_value(result, source.ret, target.ret, span));
         self.b.terminate(Terminator::Return(value));

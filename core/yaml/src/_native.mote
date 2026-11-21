@@ -1,7 +1,0 @@
-// The functions of the native library `yaml`.
-
-@link("yaml")
-pub native fn yaml_parse(text: [UInt8], out: [UInt8]) -> Int
-
-@link("yaml")
-pub native fn yaml_print(json: [UInt8], out: [UInt8]) -> Int

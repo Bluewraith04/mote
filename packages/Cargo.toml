@@ -17,8 +17,5 @@ sha2 = "0.11.1"
 # zip's deflate-flate2 needs a flate2 backend, which flate2's default features pick.
 flate2 = "1.1.10"
 
-[build-dependencies]
-flate2 = "1.1.10"
-
 [dev-dependencies]
 mote-semantics = { workspace = true, features = ["testing"] }

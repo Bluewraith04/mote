@@ -1,5 +1,5 @@
 use mote_base::{Id, Span};
-use mote_semantics::{BinaryOp, Block, Expr, ExprKind, Stmt, StmtKind};
+use mote_semantics::{BinaryOp, Block, Expr, ExprKind, Stmt, StmtKind, TyKind};
 
 use super::Lowering;
 use crate::ir::{Const, Op, Operand, Terminator};
@@ -25,6 +25,11 @@ impl Lowering<'_> {
         let stmt = &body.stmts[id];
         match &stmt.kind {
             StmtKind::Let { pattern, init } => self.let_binding(*pattern, *init, stmt.span),
+            StmtKind::Const { local, init } => {
+                let reg = self.local_reg(*local);
+                let value = self.expr(*init);
+                self.b.emit(Some(reg), Op::Copy(value), stmt.span);
+            }
             StmtKind::Assign { target, op, value } => self.assign(*target, *op, *value, stmt.span),
             StmtKind::Return(value) => self.return_value(*value),
             StmtKind::Expr(expr) => {
@@ -34,6 +39,9 @@ impl Lowering<'_> {
             StmtKind::If(item) => self.if_stmt(item),
             StmtKind::While { condition, body } => self.while_stmt(condition, body),
             StmtKind::For(item) => self.for_stmt(item, stmt.span),
+            StmtKind::ComptimeIf(_) | StmtKind::ComptimeFor { .. } | StmtKind::ComptimeBlock(_) => {
+                self.unsupported(stmt.span, "unlowered comptime statement");
+            }
             StmtKind::Break => self.break_stmt(),
             StmtKind::Continue => self.continue_stmt(),
             StmtKind::Match(item) => drop(self.match_arms(item, mote_semantics::TyId::UNIT, stmt.span)),
@@ -77,8 +85,13 @@ impl Lowering<'_> {
             Some(BinaryOp::Coalesce) => self.coalesce_assign(&place, value, span),
             Some(op) => {
                 let current = self.read(&place, span);
+                let rhs_ty = self.body.exprs[value].ty;
                 let rhs = self.expr(value);
-                let result = self.b.value(place.ty, Op::Binary { op, left: current, right: rhs }, span);
+                let result = if matches!(self.program.types.kind(place.ty), TyKind::FixedArray(..)) {
+                    self.fixed_array_binary(place.ty, op, current, place.ty, rhs, rhs_ty, span)
+                } else {
+                    self.b.value(place.ty, Op::Binary { op, left: current, right: rhs }, span)
+                };
                 self.write(&place, result, span);
             }
         }

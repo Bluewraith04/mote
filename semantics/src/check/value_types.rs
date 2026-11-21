@@ -1,6 +1,6 @@
 use crate::cx::Cx;
 use crate::defs::{DefId, DefKind};
-use crate::types::{TyId, TyKind};
+use crate::types::{GenericArg, TyId, TyKind};
 
 impl Cx<'_> {
     /// Checks that every struct holds only values that cannot change under it and does not contain itself.
@@ -39,7 +39,7 @@ impl Cx<'_> {
                 if record.is_class {
                     return false;
                 }
-                if args.iter().any(|&arg| self.holds(arg, target, seen)) {
+                if args.iter().filter_map(GenericArg::as_type).any(|arg| self.holds(arg, target, seen)) {
                     return true;
                 }
                 if seen.contains(def) {

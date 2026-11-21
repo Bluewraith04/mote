@@ -1,0 +1,110 @@
+import { assert, assert_eq } from std.test
+import { Kind } from std.reflect
+
+struct Point {
+    x: Int
+    y: Int
+}
+
+class Boxed {
+    var label: String
+    var items: List<Int>
+}
+
+enum Color {
+    Red
+    Rgb(Int, Int, Int)
+}
+
+fn describe(v: Any) -> String {
+    return match v {
+        n: Int => "int:${n}"
+        s: String => "str:${s}"
+        p: Point => "pt:(${p.x},${p.y})"
+        b: Boxed => "box:${b.label}:${b.items.len()}"
+        c: Color => match c {
+            Red => "red"
+            Rgb(r, g, b) => "rgb:${r},${g},${b}"
+        }
+        _ => "other"
+    }
+}
+
+test "Any reflection and scalar boxing and unboxing" {
+    assert(@type_info(Any).kind == Kind.Any, "Kind.Any")
+    assert_eq(@type_name(Any), "Any")
+
+    let a: Any = 42
+    let b: Any = "hello"
+    let c: Any = true
+    let d: Any = null
+
+    assert_eq(a.to<Int>()!, 42)
+    assert(a.to<String>() == null, "wrong unbox returns null")
+    assert_eq(b.to<String>()!, "hello")
+    assert(c is Bool, "is Bool")
+    if c is Bool {
+        assert(c, "narrowed Bool is true")
+    }
+    assert(d is Null, "is Null")
+    assert_eq("${a}", "42")
+    assert_eq("${b}", "hello")
+}
+
+test "Any holds structs classes enums optionals and widened unions" {
+    let u: Int | String = "widened"
+    let opt: Int? = 7
+    let items: List<Any> = [
+        Point { x: 3, y: 4 },
+        Boxed { label: "bag", items: [10, 20, 30] },
+        Color.Red,
+        Color.Rgb(1, 2, 3),
+        u,
+        opt
+    ]
+
+    assert_eq(describe(items[0]), "pt:(3,4)")
+    assert_eq(describe(items[1]), "box:bag:3")
+    assert_eq(describe(items[2]), "red")
+    assert_eq(describe(items[3]), "rgb:1,2,3")
+    assert_eq(describe(items[4]), "str:widened")
+    assert_eq(describe(items[5]), "int:7")
+}
+
+test "Any works in Map registry and for dynamic function dispatch" {
+    var registry: Map<String, Any> = {}
+    registry["answer"] = 42
+    registry["adder"] = |n: Int| -> Int { return n + 10 }
+    registry["box"] = Boxed { label: "svc", items: [1, 2] }
+
+    let f = registry["adder"].to<(Int) -> Int>()!
+    assert_eq(f(5), 15)
+    assert_eq(registry["answer"].to<Int>()!, 42)
+    assert_eq(registry["box"].to<Boxed>()!.label, "svc")
+}
+
+test "Any preserves heap references under allocation pressure" {
+    var holder: List<Any> = []
+    for i in 0..200 {
+        holder.push(Boxed { label: "item-${i}", items: [i, i + 1] })
+    }
+    var junk = ""
+    for j in 0..2000 {
+        junk = "alloc-${j}"
+    }
+    assert(junk.len() > 0, "allocated")
+    let last = holder[199].to<Boxed>()!
+    assert_eq(last.label, "item-199")
+    assert_eq(last.items[1], 200)
+}
+
+test "typeof names the type an Any holds" {
+    let p = Point { x: 1, y: 2 }
+    let u: Int | String = "s"
+    let items: List<Any> = [7, "text", p, u, true]
+    assert_eq(typeof(items[0]), "Int")
+    assert_eq(typeof(items[1]), "String")
+    assert_eq(typeof(items[2]), @type_name(Point))
+    assert_eq(typeof(items[3]), "String")
+    assert_eq(typeof(items[4]), "Bool")
+}

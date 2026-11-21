@@ -5,13 +5,14 @@ mod tasks;
 #[cfg(test)]
 mod tests;
 
-pub use parking::PARKING_INTRINSICS;
+pub use crate::builtins::PARKING_BUILTINS;
 
 use mote_base::{DiagnosticSink, Interner};
 
-use crate::defs::{DefId, LangItem};
+use crate::defs::DefId;
 use crate::program::Program;
 use crate::tree::Body;
+use crate::types::{BuiltinTy, TyKind};
 
 /// Orders start-up and checks what needs the whole program: moved channel ends, `var` globals in tasks and parking inside `Mutex.lock`.
 pub fn analyze(program: &mut Program, interner: &Interner, sink: &mut DiagnosticSink) {
@@ -31,8 +32,11 @@ fn bodies(program: &Program) -> Vec<&Body> {
     instances.chain(globals).chain(top_levels).collect()
 }
 
-/// The lang item that owns a method, and the method's name.
-fn method_of<'a>(program: &Program, interner: &'a Interner, def: DefId) -> Option<(LangItem, &'a str)> {
-    let owner = program.defs[def].owner?;
-    Some((program.defs[owner].lang?, interner.resolve(program.defs[def].name)))
+/// The built-in handle type that owns an `extend` method, and the method's name.
+fn method_of<'a>(program: &Program, interner: &'a Interner, def: DefId) -> Option<(BuiltinTy, &'a str)> {
+    let ext = program.defs[def].extend?;
+    let TyKind::Builtin { kind, .. } = program.types.kind(program.extends[ext].target) else {
+        return None;
+    };
+    Some((*kind, interner.resolve(program.defs[def].name)))
 }

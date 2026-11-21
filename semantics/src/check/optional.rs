@@ -5,12 +5,11 @@ use mote_syntax::Ident;
 use super::coerce::plan;
 use super::FnCx;
 use crate::cx::Cx;
-use crate::defs::LangItem;
 use crate::tree::{Arm, ArmBody, Expr, ExprKind, Local, LocalKind, Match, PatternKind};
 use crate::types::{TyId, TyKind};
 
 impl Cx<'_> {
-    fn optional_inner(&self, ty: TyId) -> Option<TyId> {
+    pub(crate) fn optional_inner(&self, ty: TyId) -> Option<TyId> {
         match self.program.types.kind(ty) {
             TyKind::Optional(inner) => Some(*inner),
             _ => None,
@@ -98,7 +97,9 @@ impl Cx<'_> {
     fn payload_of(&self, ty: TyId) -> Option<(TyId, Option<TyId>)> {
         match self.program.types.kind(ty) {
             TyKind::Optional(inner) => Some((*inner, None)),
-            TyKind::Adt { def, args } if self.program.lang_item(LangItem::Result) == Some(*def) && args.len() == 2 => Some((args[0], Some(args[1]))),
+            TyKind::Adt { def, args } if self.program.std.result == Some(*def) && args.len() == 2 => {
+                Some((args[0].as_type()?, args[1].as_type()))
+            }
             _ => None,
         }
     }
@@ -168,7 +169,7 @@ impl Cx<'_> {
         match self.text(name.name).as_str() {
             "Some" => Some(self.some_value(f, args, expected, span)),
             "Ok" | "Err" => {
-                let def = self.program.lang_item(LangItem::Result)?;
+                let def = self.program.std.result?;
                 let index = self.variant_index(def, name.name)?;
                 match self.instance(def, Vec::new(), expected, span) {
                     Some(ty) => Some(self.variant_value(f, ty, index, args, span)),

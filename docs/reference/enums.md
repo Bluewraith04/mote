@@ -326,7 +326,7 @@ enum Light {
 * `enum Light: (Display)` lists traits it implements. <!-- block -->
 
 ```mote
-import { Display } from std.traits
+import Display from std.traits
 
 enum Light: (Display) {
     Red

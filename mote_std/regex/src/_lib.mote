@@ -1,0 +1,10 @@
+// The functions of the external library `regex`.
+
+extern "regex" {
+    pub fn regex_new(pattern: [UInt8], error: [UInt8]) -> Int
+    pub fn regex_free(handle: Int) -> Int
+    pub fn regex_groups(handle: Int) -> Int
+    pub fn regex_group_name(handle: Int, index: Int, out: [UInt8]) -> Int
+    pub fn regex_captures(handle: Int, text: [UInt8], start: Int, out: [UInt8]) -> Int
+    pub fn regex_is_match(handle: Int, text: [UInt8]) -> Int
+}

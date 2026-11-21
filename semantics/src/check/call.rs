@@ -4,14 +4,14 @@ use mote_syntax::Ident;
 
 use super::FnCx;
 use crate::cx::Cx;
-use crate::defs::{Bound, DefId, DefKind, ModuleId, Param, Receiver};
+use crate::defs::{DefId, DefKind, GenericParam, ModuleId, Param, Receiver};
 use crate::tree::{Callee, Conversion, Expr, ExprKind, FnRef};
-use crate::types::{TyId, TyKind};
+use crate::types::{ConstArg, ConstVal, GenericArg, TyId, TyKind};
 
 /// The arguments of a call: as written, or one already checked.
 pub(crate) enum Args<'a> {
     Written(&'a [ast::Arg]),
-    Checked(Id<Expr>),
+    Checked(&'a [Id<Expr>]),
 }
 
 #[derive(Clone, Copy)]
@@ -59,29 +59,45 @@ impl Cx<'_> {
 
     /// Calls a function or method; `type_args` are its owner's, `object` is the method's `self`.
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn call_def(&mut self, f: &mut FnCx, def: DefId, type_args: &[TyId], object: Option<Id<Expr>>, args: &[ast::Arg], expected: Option<TyId>, span: Span) -> Id<Expr> {
+    pub(crate) fn call_def(&mut self, f: &mut FnCx, def: DefId, type_args: &[GenericArg], object: Option<Id<Expr>>, args: &[ast::Arg], expected: Option<TyId>, span: Span) -> Id<Expr> {
         self.call_with(f, def, type_args, &[], object, Args::Written(args), expected, span)
     }
 
-    /// A call whose own type arguments may be written; every one left out is found from the arguments or the expected type.
+    /// A call whose own generic arguments may be written; every one left out is found from the arguments or the expected type.
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn call_with(&mut self, f: &mut FnCx, def: DefId, owner_args: &[TyId], own_args: &[TyId], object: Option<Id<Expr>>, args: Args, expected: Option<TyId>, span: Span) -> Id<Expr> {
-        let (params, ret, module, receiver, bounds) = {
+    pub(crate) fn call_with(&mut self, f: &mut FnCx, def: DefId, owner_args: &[GenericArg], own_args: &[GenericArg], object: Option<Id<Expr>>, args: Args, expected: Option<TyId>, span: Span) -> Id<Expr> {
+        let (params, ret, module, receiver, own_generics) = {
             let item = &self.program.defs[def];
             let function = item.function().expect("a function");
-            let bounds: Vec<Vec<Bound>> = function.generics.iter().map(|param| param.bounds.clone()).collect();
-            (function.params.clone(), function.ret, item.module, function.receiver, bounds)
+            (function.params.clone(), function.ret, item.module, function.receiver, function.generics.clone())
         };
-        let owner_count = self.owner_generics(def);
-        let mut type_args = owner_args.to_vec();
-        while type_args.len() < owner_count {
-            let variable = self.fresh(f);
-            type_args.push(variable);
+        if object.is_none()
+            && owner_args.is_empty()
+            && let Args::Written(written_args) = args
+        {
+            let mod_path = &self.program.modules[module].path;
+            let is_std_array = mod_path.len() == 2
+                && self.interner.resolve(mod_path[0]) == "std"
+                && self.interner.resolve(mod_path[1]) == "array";
+            if is_std_array
+                && let Some(expr) = self.check_std_array_call(f, def, own_args, written_args, expected, span)
+            {
+                return expr;
+            }
         }
-        let Some(own) = self.own_type_args(f, def, own_args, span) else { return self.error_expr(f, span) };
+        let owner_params = self.owner_generic_params(def);
+        let owner_count = owner_params.len();
+        let mut type_args = owner_args.to_vec();
+        for param in owner_params.iter().skip(type_args.len()) {
+            match param {
+                GenericParam::Type { .. } => type_args.push(GenericArg::Type(self.fresh(f))),
+                GenericParam::Const { .. } => type_args.push(GenericArg::Const(self.fresh_const(f))),
+            }
+        }
+        let Some(own) = self.own_generic_args(f, def, own_args, span) else { return self.error_expr(f, span) };
         type_args.extend(own);
-        let params: Vec<Param> = params.into_iter().map(|param| Param { ty: self.program.types.subst(param.ty, &type_args), ..param }).collect();
-        let ret = self.program.types.subst(ret, &type_args);
+        let params: Vec<Param> = params.into_iter().map(|param| Param { ty: self.program.types.subst_generic(param.ty, &type_args), ..param }).collect();
+        let ret = self.program.types.subst_generic(ret, &type_args);
         if let Some(object) = object
             && receiver == Receiver::Write
             && Self::is_place(f, object)
@@ -99,21 +115,24 @@ impl Cx<'_> {
         }
         let failed = values.iter().chain(&rest).any(|&value| f.body.exprs[value].ty == TyId::ERROR);
         let mut found = Vec::new();
-        for (index, &argument) in type_args.iter().enumerate() {
-            let ty = self.solved(f, argument);
-            if self.program.types.has_infer(ty) {
+        for (index, argument) in type_args.iter().enumerate() {
+            let mut resolved = self.solved_generic(f, argument);
+            if let GenericArg::Const(c) = &resolved {
+                resolved = GenericArg::Const(crate::comptime::normalize_const_arg(self, c));
+            }
+            if self.program.types.generic_has_infer(&resolved) {
                 if !failed {
                     let name = self.text(self.generic_names(def)[index]);
-                    self.error(span, format!("cannot infer the type argument `{name}`"));
+                    self.error(span, format!("cannot infer the generic argument `{name}`"));
                 }
                 return self.error_expr(f, span);
             }
-            found.push(ty);
+            found.push(resolved);
         }
         for index in pending {
             let ty = self.solved(f, params[index].ty);
             let value_span = f.body.exprs[values[index]].span;
-            values[index] = self.coerce(f, values[index], ty, value_span);
+            values[index] = self.coerce_arg(f, values[index], ty, value_span, !params[index].is_var);
         }
         if params.last().is_some_and(|param| param.variadic) {
             let element = self.solved(f, params[params.len() - 1].ty);
@@ -127,17 +146,33 @@ impl Cx<'_> {
             let list = self.list_of(element, span);
             values.push(f.body.expr(ExprKind::List(items), list, span));
         }
-        if let Some(owner) = self.program.defs[def].owner {
-            for (index, bound) in self.type_bounds(owner).iter().enumerate().take(owner_count) {
-                self.check_bounds(f, found[index], bound, &found, span);
+        for (index, param) in owner_params.iter().enumerate() {
+            match (param, &found[index]) {
+                (GenericParam::Type { bounds, .. }, GenericArg::Type(ty_arg)) => {
+                    self.check_bounds(f, *ty_arg, bounds, &found, span);
+                }
+                (GenericParam::Const { ty, .. }, GenericArg::Const(c_arg)) => {
+                    self.check_const_arg_type(c_arg, *ty, &found, span);
+                }
+                _ => {}
             }
         }
-        for (index, bound) in bounds.iter().enumerate() {
-            self.check_bounds(f, found[owner_count + index], bound, &found, span);
+        for (index, param) in own_generics.iter().enumerate() {
+            match (param, &found[owner_count + index]) {
+                (GenericParam::Type { bounds, .. }, GenericArg::Type(ty_arg)) => {
+                    self.check_bounds(f, *ty_arg, bounds, &found, span);
+                }
+                (GenericParam::Const { ty, .. }, GenericArg::Const(c_arg)) => {
+                    self.check_const_arg_type(c_arg, *ty, &found, span);
+                }
+                _ => {}
+            }
         }
-        let ret = self.solved(f, ret);
-        let callee = if owner_count > 0 && matches!(self.program.defs[self.program.defs[def].owner.expect("a method")].kind, DefKind::Trait(_)) {
-            Callee::TraitMethod { method: def, self_ty: found[0], args: found[1..].to_vec() }
+        let solved_ret = self.solved(f, ret);
+        let ret = crate::comptime::normalize_ty_consts(self, solved_ret);
+        let callee = if owner_count > 0 && self.program.defs[def].owner.is_some_and(|o| matches!(self.program.defs[o].kind, DefKind::Trait(_))) {
+            let self_ty = found[0].as_type().unwrap_or(TyId::ERROR);
+            Callee::TraitMethod { method: def, self_ty, args: found[1..].to_vec() }
         } else {
             Callee::Function(FnRef { def, args: found })
         };
@@ -148,6 +183,40 @@ impl Cx<'_> {
             f.body.arg_order.insert(call, order);
         }
         call
+    }
+
+    fn owner_generic_params(&self, def: DefId) -> Vec<GenericParam> {
+        if let Some(ext) = self.program.defs[def].extend {
+            return self.program.extends[ext].generics.clone();
+        }
+        let Some(owner) = self.program.defs[def].owner else { return Vec::new() };
+        match &self.program.defs[owner].kind {
+            DefKind::Trait(item) => {
+                let mut params = vec![GenericParam::Type { name: self.self_name, bounds: Vec::new() }];
+                params.extend(item.generics.clone());
+                params
+            }
+            DefKind::Record(record) => record.generics.clone(),
+            DefKind::Enum(en) => en.generics.clone(),
+            _ => Vec::new(),
+        }
+    }
+
+    fn check_const_arg_type(&mut self, arg: &ConstArg, param_ty: TyId, subst_args: &[GenericArg], span: Span) {
+        let expected_ty = self.program.types.subst_generic(param_ty, subst_args);
+        if expected_ty == TyId::ERROR {
+            return;
+        }
+        let ConstArg::Val(val) = arg else { return };
+        let ok = match (val, self.program.types.kind(expected_ty)) {
+            (ConstVal::Int(n, _), TyKind::Int(int_ty)) => int_ty.fits(*n),
+            (ConstVal::Bool(_), TyKind::Bool) => true,
+            (ConstVal::String(_), TyKind::String) => true,
+            _ => false,
+        };
+        if !ok {
+            self.error(span, format!("const argument does not match {}", self.show_ty(expected_ty)));
+        }
     }
 
     /// A default argument or field value, checked in the module that declares it.
@@ -162,7 +231,7 @@ impl Cx<'_> {
     fn match_args(&mut self, f: &mut FnCx, params: &[Param], args: Args, module: crate::defs::ModuleId, span: Span) -> Option<Matched> {
         let items: Vec<(Option<Ident>, Source)> = match args {
             Args::Written(args) => args.iter().map(|arg| (arg.name, Source::Written(arg.value))).collect(),
-            Args::Checked(node) => vec![(None, Source::Checked(node))],
+            Args::Checked(nodes) => nodes.iter().map(|&node| (None, Source::Checked(node))).collect(),
         };
         let variadic = params.last().filter(|param| param.variadic);
         let fixed = if variadic.is_some() { &params[..params.len() - 1] } else { params };
@@ -302,9 +371,9 @@ impl Cx<'_> {
             if self.program.types.has_infer(known) {
                 return (node, false);
             }
-            return (self.coerce(f, node, known, span), true);
+            return (self.coerce_arg(f, node, known, span, !is_var), true);
         }
-        (self.coerce(f, node, known, span), true)
+        (self.coerce_arg(f, node, known, span, !is_var), true)
     }
 
     /// Whether the expression names a place rather than a value.

@@ -59,8 +59,31 @@ impl Bits {
         self.0.iter().all(|&word| word == 0)
     }
 
-    fn iter(&self) -> impl Iterator<Item = usize> + '_ {
-        self.0.iter().enumerate().flat_map(|(word, &bits)| (0..64).filter(move |bit| bits >> bit & 1 == 1).map(move |bit| word * 64 + bit))
+    fn iter(&self) -> BitsIter<'_> {
+        BitsIter { words: &self.0, word_index: 0, current: 0 }
+    }
+}
+
+struct BitsIter<'a> {
+    words: &'a [u64],
+    word_index: usize,
+    current: u64,
+}
+
+impl Iterator for BitsIter<'_> {
+    type Item = usize;
+
+    fn next(&mut self) -> Option<usize> {
+        while self.current == 0 {
+            if self.word_index >= self.words.len() {
+                return None;
+            }
+            self.current = self.words[self.word_index];
+            self.word_index += 1;
+        }
+        let bit = self.current.trailing_zeros() as usize;
+        self.current &= self.current - 1;
+        Some((self.word_index - 1) * 64 + bit)
     }
 }
 
@@ -295,8 +318,14 @@ impl<'a> Analysis<'a> {
         for set in &sets {
             all.union(set);
         }
-        let mut result = self.reach(&all);
-        result.insert(UNKNOWN);
+        let needs_result = dest.is_some_and(|reg| self.tracked[reg.index()]) || outs.iter().any(|&out| self.tracked[out.index()]);
+        let mut result = if needs_result {
+            let mut reachable = self.reach(&all);
+            reachable.insert(UNKNOWN);
+            reachable
+        } else {
+            Bits::default()
+        };
         match callee {
             Callee::Function(func) => self.apply(*func, &sets),
             Callee::Value(function) => {
@@ -316,7 +345,9 @@ impl<'a> Analysis<'a> {
                             if writes {
                                 self.mark_written(&inside);
                             }
-                            result.union(&inside);
+                            if needs_result {
+                                result.union(&inside);
+                            }
                         }
                         _ => unknown = true,
                     }
@@ -331,29 +362,33 @@ impl<'a> Analysis<'a> {
             Callee::Native(_) => self.opaque(&all),
             Callee::Intrinsic(name) => match intrinsics::lookup(self.interner.resolve(*name)) {
                 Some(row) => {
-                    let everything = self.reach(&all);
-                    if row.parks() {
-                        self.mark_root(&everything);
-                    }
-                    if row.writes() {
-                        self.mark_written(&everything);
-                        for (index, set) in sets.iter().enumerate() {
-                            let mut others = Bits::default();
-                            for (other, held) in sets.iter().enumerate() {
-                                if other != index {
-                                    others.union(held);
+                    if row.parks() || row.writes() {
+                        let everything = self.reach(&all);
+                        if row.parks() {
+                            self.mark_root(&everything);
+                        }
+                        if row.writes() {
+                            self.mark_written(&everything);
+                            for (index, set) in sets.iter().enumerate() {
+                                let mut others = Bits::default();
+                                for (other, held) in sets.iter().enumerate() {
+                                    if other != index {
+                                        others.union(held);
+                                    }
                                 }
+                                self.store(set, &others);
                             }
-                            self.store(set, &others);
                         }
                     }
                 }
                 None => self.opaque(&all),
             },
         }
-        self.flow(dest, &result);
-        for &out in outs {
-            self.flow(Some(out), &result);
+        if needs_result {
+            self.flow(dest, &result);
+            for &out in outs {
+                self.flow(Some(out), &result);
+            }
         }
     }
 

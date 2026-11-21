@@ -5,14 +5,15 @@ use std::collections::HashMap;
 use cranelift_module::{default_libcall_names, DataDescription, DataId, FuncId as ClifFunc, Linkage, Module as ClifModule};
 use cranelift_object::{ObjectBuilder, ObjectModule};
 use mote_abi::{
-    CodeTable, DebugFunction, DebugTable, LinkImage, Place as DebugPlace, Reflection, TypeImage, DIRECTORY_CODE, DIRECTORY_DEBUG, DIRECTORY_FAILURE, DIRECTORY_FAULTS, DIRECTORY_INITS, DIRECTORY_LINK, DIRECTORY_META, DIRECTORY_NATIVES, DIRECTORY_TYPES, DIRECTORY_WORDS,
-    DIRECTORY_WORDS_OF_CODE,
+    CodeTable, DebugFunction, DebugTable, LinkImage, Place as DebugPlace, TypeImage, DIRECTORY_CODE, DIRECTORY_DEBUG, DIRECTORY_FAILURE, DIRECTORY_FAULTS, DIRECTORY_FLAGS, DIRECTORY_FLAG_SINGLE_THREADED, DIRECTORY_INITS, DIRECTORY_LINK,
+    DIRECTORY_META, DIRECTORY_NATIVES, DIRECTORY_TYPES, DIRECTORY_WORDS, DIRECTORY_WORDS_OF_CODE,
 };
 use mote_base::Interner;
 use mote_ir::{EntryKind, FuncId, Module};
 use mote_semantics::Program;
 
 use crate::debug::Debug;
+#[cfg(not(target_os = "windows"))]
 use crate::dwarf;
 use crate::jit::{c_signature, isa, lower, Lowered};
 use crate::meta;
@@ -96,7 +97,7 @@ impl DebugBuilder<'_> {
 pub fn compile_object(module: &Module, program: &mut Program, interner: &Interner, entry: EntryKind, error_text: Option<FuncId>, libraries: Vec<ObjectLibrary>, resolve: Resolve) -> Result<Vec<u8>, CompileError> {
     let builder = ObjectBuilder::new(isa(true)?, "mote", default_libcall_names()).map_err(CompileError::internal)?;
     let statics: Vec<bool> = libraries.iter().map(|library| library.archive).collect();
-    let Lowered { module: mut out, faults, types, safepoints, debug, roots, link, native_slots, failure, .. } = lower(ObjectModule::new(builder), module, program, interner, Some(entry), error_text, &statics)?;
+    let Lowered { module: mut out, faults, types, safepoints, debug, roots, link, native_slots, failure, single_threaded, .. } = lower(ObjectModule::new(builder), module, program, interner, Some(entry), error_text, &statics, true)?;
     let files: Vec<String> = libraries.iter().map(|library| library.file.clone()).collect();
     let meta = meta::build(program, interner, &types);
 
@@ -122,7 +123,7 @@ pub fn compile_object(module: &Module, program: &mut Program, interner: &Interne
         places.push(Place::Data(data));
     }
     let inits: Vec<String> = link.libraries.iter().zip(&statics).filter(|(_, linked)| **linked).map(|(name, _)| init_symbol(name)).collect();
-    let image = TypeImage { table: types.table, reflection: Reflection::default() }.to_bytes().map_err(CompileError::internal)?;
+    let image = TypeImage::new(types.table).to_bytes().map_err(CompileError::internal)?;
     let tables = [
         (DIRECTORY_TYPES, "table_types", image),
         (DIRECTORY_FAULTS, "table_faults", faults.to_bytes()),
@@ -168,6 +169,9 @@ pub fn compile_object(module: &Module, program: &mut Program, interner: &Interne
     }
     pointers.push((DIRECTORY_INITS, define(&mut out, "table_inits", Linkage::Local, &init_words)?));
     contents[(DIRECTORY_INITS + 1) * 8..(DIRECTORY_INITS + 2) * 8].copy_from_slice(&(inits.len() as u64).to_le_bytes());
+    if single_threaded {
+        contents[DIRECTORY_FLAGS * 8..(DIRECTORY_FLAGS + 1) * 8].copy_from_slice(&(DIRECTORY_FLAG_SINGLE_THREADED as u64).to_le_bytes());
+    }
 
     directory.define(contents.into_boxed_slice());
     directory.set_align(8);
@@ -177,15 +181,21 @@ pub fn compile_object(module: &Module, program: &mut Program, interner: &Interne
     }
     define(&mut out, "mote_tables", Linkage::Export, &directory)?;
 
+    #[cfg_attr(target_os = "windows", allow(unused_mut))]
     let mut product = out.finish();
-    let symbols: Vec<_> = places
-        .iter()
-        .filter_map(|place| match *place {
-            Place::Function(function) => Some(product.functions[function].expect("a defined function").0),
-            Place::Data(_) => None,
-        })
-        .collect();
-    dwarf::add_line_tables(&mut product, &debug_table.table, &symbols)?;
+    #[cfg(not(target_os = "windows"))]
+    {
+        let symbols: Vec<_> = places
+            .iter()
+            .filter_map(|place| match *place {
+                Place::Function(function) => Some(product.functions[function].expect("a defined function").0),
+                Place::Data(_) => None,
+            })
+            .collect();
+        dwarf::add_line_tables(&mut product, &debug_table.table, &symbols)?;
+    }
+    #[cfg(target_os = "windows")]
+    let _ = (&places, &debug_table);
     product.emit().map_err(CompileError::internal)
 }
 

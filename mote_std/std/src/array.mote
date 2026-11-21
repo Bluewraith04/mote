@@ -1,0 +1,447 @@
+// Array reductions, scans, search, transforms, constructors, and methods.
+// Works uniformly on both dynamic `[T]` and sized `[T; N]` arrays.
+import std.math as math
+import fault from std.option
+import Kind from std.reflect
+
+// --- Array Constructors ---
+
+pub fn zeros(n: Int) -> [Float] {
+    if n < 0 { @fault("zeros: negative length ${n}") }
+    return [0.0; n]
+}
+
+pub fn ones(n: Int) -> [Float] {
+    if n < 0 { @fault("ones: negative length ${n}") }
+    return [1.0; n]
+}
+
+pub fn zeros_int(n: Int) -> [Int] {
+    if n < 0 { @fault("zeros_int: negative length ${n}") }
+    return [0; n]
+}
+
+pub fn ones_int(n: Int) -> [Int] {
+    if n < 0 { @fault("ones_int: negative length ${n}") }
+    return [1; n]
+}
+
+pub fn full<T>(n: Int, value: T) -> [T] {
+    if n < 0 { @fault("full: negative length ${n}") }
+    return [value; n]
+}
+
+pub fn from_fn<T>(n: Int, f: (Int) -> T) -> [T] {
+    if n < 0 { @fault("from_fn: negative length ${n}") }
+    if n == 0 { return [] }
+    var out = [f(0); n]
+    var i = 1
+    while i < n {
+        @__array_set(out, i, f(i))
+        i += 1
+    }
+    return out
+}
+
+pub fn range(start: Int, stop: Int, step: Int = 1) -> [Int] {
+    if step == 0 { @fault("range: step cannot be zero") }
+    if (step > 0 && start >= stop) || (step < 0 && start <= stop) { return [] }
+    let diff = if step > 0 { stop - start } else { start - stop }
+    let abs_step = if step > 0 { step } else { -step }
+    let count = (diff + abs_step - 1) / abs_step
+    var out = [start; count]
+    var i = 1
+    while i < count {
+        @__array_set(out, i, start + i * step)
+        i += 1
+    }
+    return out
+}
+
+pub fn arange(start: Float, stop: Float, step: Float = 1.0) -> [Float] {
+    if step == 0.0 { @fault("arange: step cannot be zero") }
+    if (step > 0.0 && start >= stop) || (step < 0.0 && start <= stop) { return [] }
+    var items: List<Float> = []
+    var i = 0
+    while true {
+        let v = start + (i as Float) * step
+        if step > 0.0 && v >= stop { break }
+        if step < 0.0 && v <= stop { break }
+        items.push(v)
+        i += 1
+    }
+    return items.to_array()
+}
+
+pub fn linspace(start: Float, stop: Float, num: Int) -> [Float] {
+    if num < 0 { @fault("linspace: num cannot be negative") }
+    if num == 0 { return [] }
+    if num == 1 { return [start] }
+    var out = [start; num]
+    let denom = (num - 1) as Float
+    let delta = stop - start
+    var i = 1
+    while i < num - 1 {
+        @__array_set(out, i, start + delta * ((i as Float) / denom))
+        i += 1
+    }
+    @__array_set(out, num - 1, stop)
+    return out
+}
+
+pub fn logspace(start: Float, stop: Float, num: Int, base: Float = 10.0) -> [Float] {
+    let exps = linspace(start, stop, num)
+    if num == 0 { return [] }
+    var out = [0.0; num]
+    var i = 0
+    while i < num {
+        @__array_set(out, i, math.pow(base, @__array_get(exps, i)))
+        i += 1
+    }
+    return out
+}
+
+// --- Category A: Numeric & Mask Reductions ---
+
+pub fn all<A>(mask: A) -> Bool { return @__mask_all(mask) }
+pub fn any<A>(mask: A) -> Bool { return @__mask_any(mask) }
+pub fn none<A>(mask: A) -> Bool { return @__mask_none(mask) }
+
+pub fn all_by<A, E>(xs: A, pred: (E) -> Bool) -> Bool { return @__array_all_by(xs, pred) }
+pub fn any_by<A, E>(xs: A, pred: (E) -> Bool) -> Bool { return @__array_any_by(xs, pred) }
+pub fn none_by<A, E>(xs: A, pred: (E) -> Bool) -> Bool { return @__array_none_by(xs, pred) }
+
+pub fn count<A, E>(xs: A, value: E) -> Int { return @__array_count(xs, value) }
+pub fn count_by<A, E>(xs: A, pred: (E) -> Bool) -> Int { return @__array_count_by(xs, pred) }
+
+pub fn sum<A, E>(xs: A) -> E { return @__array_sum(xs) }
+pub fn product<A, E>(xs: A) -> E { return @__array_product(xs) }
+pub fn mean<A, E>(xs: A) -> Float { return @__array_mean(xs) }
+pub fn min<A, E>(xs: A) -> E? { return @__array_min(xs) }
+pub fn max<A, E>(xs: A) -> E? { return @__array_max(xs) }
+pub fn argmin<A, E>(xs: A) -> Int? { return @__array_argmin(xs) }
+pub fn argmax<A, E>(xs: A) -> Int? { return @__array_argmax(xs) }
+pub fn dot<A, E>(a: A, b: A) -> E { return @__array_dot(a, b) }
+pub fn norm_sq<A, E>(xs: A) -> E { return @__array_norm_sq(xs) }
+
+// --- Category B: Folds & Scans ---
+
+pub fn fold<A, E, Acc>(xs: A, init: Acc, f: (Acc, E) -> Acc) -> Acc { return @__array_fold(xs, init, f) }
+pub fn reduce<A, E>(xs: A, f: (E, E) -> E) -> E? { return @__array_reduce(xs, f) }
+pub fn scan<A, E, U, Out>(xs: A, init: U, f: (U, E) -> U) -> Out { return @__array_scan(xs, init, f) }
+
+// --- Category C: Searches & Selections ---
+
+pub fn find<A, E>(xs: A, pred: (E) -> Bool) -> E? { return @__array_find(xs, pred) }
+pub fn find_index<A, E>(xs: A, pred: (E) -> Bool) -> Int? { return @__array_find_index(xs, pred) }
+pub fn index_of<A, E>(xs: A, value: E) -> Int? { return @__array_index_of(xs, value) }
+pub fn select<M, A>(mask: M, on_true: A, on_false: A) -> A { return @__array_select(mask, on_true, on_false) }
+
+// --- Category D: Shape-Preserving Transforms ---
+
+pub fn map<A, E, U, Out>(xs: A, f: (E) -> U) -> Out { return @__array_map(xs, f) }
+pub fn zip_with<A, E1, B, E2, U, Out>(a: A, b: B, f: (E1, E2) -> U) -> Out { return @__array_zip_with(a, b, f) }
+pub fn reverse<A>(xs: A) -> A { return @__array_reverse(xs) }
+pub fn clamp<A, E>(xs: A, lo: E, hi: E) -> A { return @__array_clamp(xs, lo, hi) }
+
+// --- Category E: Dynamic Operations ---
+
+pub fn filter<A, E>(xs: A, pred: (E) -> Bool) -> [E] { return @__array_filter(xs, pred) }
+pub fn zip<A, E1, B, E2, Out>(a: A, b: B) -> Out { return @__array_zip(a, b) }
+pub fn enumerate<A, E, Out>(xs: A) -> Out { return @__array_enumerate(xs) }
+pub fn concat<A, B, E>(a: A, b: B) -> [E] { return @__array_concat(a, b) }
+pub fn take<A, E>(xs: A, n: Int) -> [E] { return @__array_take(xs, n) }
+pub fn drop<A, E>(xs: A, n: Int) -> [E] { return @__array_drop(xs, n) }
+pub fn flatten<A, E>(xss: A) -> [E] { return @__array_flatten(xss) }
+pub fn sort<A>(xs: A) -> A { return @__array_sort(xs) }
+pub fn sort_by<A, E>(xs: A, cmp: (E, E) -> Int) -> A { return @__array_sort_by(xs, cmp) }
+
+// --- Methods on Dynamic Arrays `[T]` ---
+
+extend<T> [T] {
+    pub fn sum(self) -> T {
+        comptime if @type_info(T).kind == Kind.Int || @type_info(T).kind == Kind.Float {
+            return @__array_sum(self)
+        } else {
+            @compile_error("`sum` requires numeric array elements")
+            return fault("`sum` requires numeric array elements")
+        }
+    }
+    pub fn product(self) -> T {
+        comptime if @type_info(T).kind == Kind.Int || @type_info(T).kind == Kind.Float {
+            return @__array_product(self)
+        } else {
+            @compile_error("`product` requires numeric array elements")
+            return fault("`product` requires numeric array elements")
+        }
+    }
+    pub fn mean(self) -> Float {
+        comptime if @type_info(T).kind == Kind.Int || @type_info(T).kind == Kind.Float {
+            return @__array_mean(self)
+        } else {
+            @compile_error("`mean` requires numeric array elements")
+            return 0.0
+        }
+    }
+    pub fn dot(self, other: [T]) -> T {
+        comptime if @type_info(T).kind == Kind.Int || @type_info(T).kind == Kind.Float {
+            return @__array_dot(self, other)
+        } else {
+            @compile_error("`dot` requires numeric array elements")
+            return fault("`dot` requires numeric array elements")
+        }
+    }
+    pub fn norm_sq(self) -> T {
+        comptime if @type_info(T).kind == Kind.Int || @type_info(T).kind == Kind.Float {
+            return @__array_norm_sq(self)
+        } else {
+            @compile_error("`norm_sq` requires numeric array elements")
+            return fault("`norm_sq` requires numeric array elements")
+        }
+    }
+    pub fn clamp(self, lo: T, hi: T) -> [T] {
+        comptime if @type_info(T).kind == Kind.Int || @type_info(T).kind == Kind.Float {
+            return @__array_clamp(self, lo, hi)
+        } else {
+            @compile_error("`clamp` requires numeric array elements")
+            return fault("`clamp` requires numeric array elements")
+        }
+    }
+    pub fn min(self) -> T? {
+        comptime if @type_info(T).kind == Kind.Int || @type_info(T).kind == Kind.Float || @type_info(T).kind == Kind.String {
+            return @__array_min(self)
+        } else {
+            @compile_error("`min` requires numeric or String array elements")
+            return None
+        }
+    }
+    pub fn max(self) -> T? {
+        comptime if @type_info(T).kind == Kind.Int || @type_info(T).kind == Kind.Float || @type_info(T).kind == Kind.String {
+            return @__array_max(self)
+        } else {
+            @compile_error("`max` requires numeric or String array elements")
+            return None
+        }
+    }
+    pub fn argmin(self) -> Int? {
+        comptime if @type_info(T).kind == Kind.Int || @type_info(T).kind == Kind.Float || @type_info(T).kind == Kind.String {
+            return @__array_argmin(self)
+        } else {
+            @compile_error("`argmin` requires numeric or String array elements")
+            return None
+        }
+    }
+    pub fn argmax(self) -> Int? {
+        comptime if @type_info(T).kind == Kind.Int || @type_info(T).kind == Kind.Float || @type_info(T).kind == Kind.String {
+            return @__array_argmax(self)
+        } else {
+            @compile_error("`argmax` requires numeric or String array elements")
+            return None
+        }
+    }
+    pub fn sort(self) -> [T] {
+        comptime if @type_info(T).kind == Kind.Int || @type_info(T).kind == Kind.Float || @type_info(T).kind == Kind.String {
+            return @__array_sort(self)
+        } else {
+            @compile_error("`sort` requires numeric or String array elements")
+            return fault("`sort` requires numeric or String array elements")
+        }
+    }
+
+    pub fn fold<Acc>(self, init: Acc, f: (Acc, T) -> Acc) -> Acc { return @__array_fold(self, init, f) }
+    pub fn reduce(self, f: (T, T) -> T) -> T? { return @__array_reduce(self, f) }
+    pub fn scan<U>(self, init: U, f: (U, T) -> U) -> [U] { return @__array_scan(self, init, f) }
+    pub fn find(self, pred: (T) -> Bool) -> T? { return @__array_find(self, pred) }
+    pub fn find_index(self, pred: (T) -> Bool) -> Int? { return @__array_find_index(self, pred) }
+    pub fn index_of(self, value: T) -> Int? { return @__array_index_of(self, value) }
+    pub fn count(self, value: T) -> Int { return @__array_count(self, value) }
+    pub fn count_by(self, pred: (T) -> Bool) -> Int { return @__array_count_by(self, pred) }
+    pub fn all_by(self, pred: (T) -> Bool) -> Bool { return @__array_all_by(self, pred) }
+    pub fn any_by(self, pred: (T) -> Bool) -> Bool { return @__array_any_by(self, pred) }
+    pub fn none_by(self, pred: (T) -> Bool) -> Bool { return @__array_none_by(self, pred) }
+    pub fn map<U>(self, f: (T) -> U) -> [U] { return @__array_map(self, f) }
+    pub fn zip<U>(self, other: [U]) -> [(T, U)] { return @__array_zip(self, other) }
+    pub fn zip_with<U, R>(self, other: [U], f: (T, U) -> R) -> [R] { return @__array_zip_with(self, other, f) }
+    pub fn enumerate(self) -> [(Int, T)] { return @__array_enumerate(self) }
+    pub fn reverse(self) -> [T] { return @__array_reverse(self) }
+    pub fn sort_by(self, cmp: (T, T) -> Int) -> [T] { return @__array_sort_by(self, cmp) }
+    pub fn filter(self, pred: (T) -> Bool) -> [T] { return @__array_filter(self, pred) }
+    pub fn concat(self, other: [T]) -> [T] { return @__array_concat(self, other) }
+    pub fn take(self, n: Int) -> [T] { return @__array_take(self, n) }
+    pub fn drop(self, n: Int) -> [T] { return @__array_drop(self, n) }
+}
+
+// --- Mask Methods on `[Bool]` and `[Bool; N]` ---
+
+extend [Bool] {
+    pub fn all(self) -> Bool { return @__mask_all(self) }
+    pub fn any(self) -> Bool { return @__mask_any(self) }
+    pub fn none(self) -> Bool { return @__mask_none(self) }
+    pub fn select<T>(self, on_true: [T], on_false: [T]) -> [T] { return @__array_select(self, on_true, on_false) }
+}
+
+extend<const N: Int> [Bool; N] {
+    pub fn all(self) -> Bool { return @__mask_all(self) }
+    pub fn any(self) -> Bool { return @__mask_any(self) }
+    pub fn none(self) -> Bool { return @__mask_none(self) }
+    pub fn select<T>(self, on_true: [T; N], on_false: [T; N]) -> [T; N] { return @__array_select(self, on_true, on_false) }
+}
+
+// --- Methods on Fixed-Size Arrays `[T; N]` ---
+
+extend<T, const N: Int> [T; N] {
+    pub fn len(self) -> Int { return N }
+    pub fn is_empty(self) -> Bool { return N == 0 }
+    pub fn first(self) -> T? {
+        if N == 0 { return None }
+        return Some(self[0])
+    }
+    pub fn last(self) -> T? {
+        if N == 0 { return None }
+        return Some(self[N - 1])
+    }
+    pub fn get(self, index: Int) -> T { return self[index] }
+    pub fn get_or(self, index: Int, fallback: T) -> T {
+        if index < 0 || index >= N { return fallback }
+        return self[index]
+    }
+    pub fn set(var self, index: Int, value: T) { self[index] = value }
+    pub fn fill(var self, value: T) {
+        var i = 0
+        while i < N {
+            self[i] = value
+            i += 1
+        }
+    }
+    pub fn contains(self, value: T) -> Bool { return @__array_contains(self, value) }
+    pub fn slice(self, start: Int, end: Int) -> [T] { return self[start..end] }
+    pub fn clone(self) -> [T; N] { return self }
+    pub fn deep_clone(self) -> [T; N] { return @__deep_clone(self) }
+    pub fn to_array(self) -> [T] { return self[..] }
+    pub fn to_list(self) -> List<T> {
+        var out: List<T> = []
+        var i = 0
+        while i < N {
+            @__list_push(out, self[i])
+            i += 1
+        }
+        return out
+    }
+    pub fn stream(self) -> Stream<T> {
+        var i = 0
+        while i < N {
+            yield self[i]
+            i += 1
+        }
+    }
+
+    pub fn sum(self) -> T {
+        comptime if @type_info(T).kind == Kind.Int || @type_info(T).kind == Kind.Float {
+            return @__array_sum(self)
+        } else {
+            @compile_error("`sum` requires numeric array elements")
+            return fault("`sum` requires numeric array elements")
+        }
+    }
+    pub fn product(self) -> T {
+        comptime if @type_info(T).kind == Kind.Int || @type_info(T).kind == Kind.Float {
+            return @__array_product(self)
+        } else {
+            @compile_error("`product` requires numeric array elements")
+            return fault("`product` requires numeric array elements")
+        }
+    }
+    pub fn mean(self) -> Float {
+        comptime if @type_info(T).kind == Kind.Int || @type_info(T).kind == Kind.Float {
+            return @__array_mean(self)
+        } else {
+            @compile_error("`mean` requires numeric array elements")
+            return 0.0
+        }
+    }
+    pub fn dot(self, other: [T; N]) -> T {
+        comptime if @type_info(T).kind == Kind.Int || @type_info(T).kind == Kind.Float {
+            return @__array_dot(self, other)
+        } else {
+            @compile_error("`dot` requires numeric array elements")
+            return fault("`dot` requires numeric array elements")
+        }
+    }
+    pub fn norm_sq(self) -> T {
+        comptime if @type_info(T).kind == Kind.Int || @type_info(T).kind == Kind.Float {
+            return @__array_norm_sq(self)
+        } else {
+            @compile_error("`norm_sq` requires numeric array elements")
+            return fault("`norm_sq` requires numeric array elements")
+        }
+    }
+    pub fn clamp(self, lo: T, hi: T) -> [T; N] {
+        comptime if @type_info(T).kind == Kind.Int || @type_info(T).kind == Kind.Float {
+            return @__array_clamp(self, lo, hi)
+        } else {
+            @compile_error("`clamp` requires numeric array elements")
+            return fault("`clamp` requires numeric array elements")
+        }
+    }
+    pub fn min(self) -> T? {
+        comptime if @type_info(T).kind == Kind.Int || @type_info(T).kind == Kind.Float || @type_info(T).kind == Kind.String {
+            return @__array_min(self)
+        } else {
+            @compile_error("`min` requires numeric or String array elements")
+            return None
+        }
+    }
+    pub fn max(self) -> T? {
+        comptime if @type_info(T).kind == Kind.Int || @type_info(T).kind == Kind.Float || @type_info(T).kind == Kind.String {
+            return @__array_max(self)
+        } else {
+            @compile_error("`max` requires numeric or String array elements")
+            return None
+        }
+    }
+    pub fn argmin(self) -> Int? {
+        comptime if @type_info(T).kind == Kind.Int || @type_info(T).kind == Kind.Float || @type_info(T).kind == Kind.String {
+            return @__array_argmin(self)
+        } else {
+            @compile_error("`argmin` requires numeric or String array elements")
+            return None
+        }
+    }
+    pub fn argmax(self) -> Int? {
+        comptime if @type_info(T).kind == Kind.Int || @type_info(T).kind == Kind.Float || @type_info(T).kind == Kind.String {
+            return @__array_argmax(self)
+        } else {
+            @compile_error("`argmax` requires numeric or String array elements")
+            return None
+        }
+    }
+    pub fn sort(self) -> [T; N] {
+        comptime if @type_info(T).kind == Kind.Int || @type_info(T).kind == Kind.Float || @type_info(T).kind == Kind.String {
+            return @__array_sort(self)
+        } else {
+            @compile_error("`sort` requires numeric or String array elements")
+            return fault("`sort` requires numeric or String array elements")
+        }
+    }
+
+    pub fn fold<Acc>(self, init: Acc, f: (Acc, T) -> Acc) -> Acc { return @__array_fold(self, init, f) }
+    pub fn reduce(self, f: (T, T) -> T) -> T? { return @__array_reduce(self, f) }
+    pub fn scan<U>(self, init: U, f: (U, T) -> U) -> [U; N] { return @__array_scan(self, init, f) }
+    pub fn find(self, pred: (T) -> Bool) -> T? { return @__array_find(self, pred) }
+    pub fn find_index(self, pred: (T) -> Bool) -> Int? { return @__array_find_index(self, pred) }
+    pub fn index_of(self, value: T) -> Int? { return @__array_index_of(self, value) }
+    pub fn count(self, value: T) -> Int { return @__array_count(self, value) }
+    pub fn count_by(self, pred: (T) -> Bool) -> Int { return @__array_count_by(self, pred) }
+    pub fn all_by(self, pred: (T) -> Bool) -> Bool { return @__array_all_by(self, pred) }
+    pub fn any_by(self, pred: (T) -> Bool) -> Bool { return @__array_any_by(self, pred) }
+    pub fn none_by(self, pred: (T) -> Bool) -> Bool { return @__array_none_by(self, pred) }
+    pub fn map<U>(self, f: (T) -> U) -> [U; N] { return @__array_map(self, f) }
+    pub fn zip<U>(self, other: [U; N]) -> [(T, U); N] { return @__array_zip(self, other) }
+    pub fn zip_with<U, R>(self, other: [U; N], f: (T, U) -> R) -> [R; N] { return @__array_zip_with(self, other, f) }
+    pub fn enumerate(self) -> [(Int, T); N] { return @__array_enumerate(self) }
+    pub fn reverse(self) -> [T; N] { return @__array_reverse(self) }
+    pub fn sort_by(self, cmp: (T, T) -> Int) -> [T; N] { return @__array_sort_by(self, cmp) }
+    pub fn filter(self, pred: (T) -> Bool) -> [T] { return @__array_filter(self, pred) }
+    pub fn take(self, n: Int) -> [T] { return @__array_take(self, n) }
+    pub fn drop(self, n: Int) -> [T] { return @__array_drop(self, n) }
+}

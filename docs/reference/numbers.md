@@ -247,7 +247,7 @@ fn main() {
 * A conversion that can fail has another name and returns a `Result`: `std.string.parse_int`. <!-- block -->
 
 ```mote
-import { parse_int } from std.string
+import parse_int from std.string
 
 fn main() {
     println(parse_int("42"))

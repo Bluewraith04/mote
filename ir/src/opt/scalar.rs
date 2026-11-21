@@ -23,7 +23,7 @@ fn field_types(program: &mut Program, ty: TyId) -> Vec<TyId> {
         TyKind::Tuple(elements) => elements,
         TyKind::Adt { def, args } => {
             let declared: Vec<TyId> = program.defs[def].record().map(|record| record.fields.iter().map(|field| field.ty).collect()).unwrap_or_default();
-            declared.into_iter().map(|field| program.types.subst(field, &args)).collect()
+            declared.into_iter().map(|field| program.types.subst_generic(field, &args)).collect()
         }
         _ => Vec::new(),
     }

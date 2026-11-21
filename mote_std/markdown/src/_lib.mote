@@ -1,0 +1,7 @@
+// The functions of the external library `markdown`.
+
+extern "markdown" {
+    pub fn markdown_parse(text: [UInt8], options: Int) -> Int
+    pub fn markdown_bytes(handle: Int, out: [UInt8]) -> Int
+    pub fn markdown_free(handle: Int) -> Int
+}

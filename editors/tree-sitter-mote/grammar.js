@@ -40,6 +40,15 @@ module.exports = grammar({
     [$.tuple_type, $.function_type],
     [$._expression, $.struct_expression, $.type_apply_callee],
     [$._expression, $.struct_expression],
+    [$.module_path, $.import_name],
+    [$.module_path],
+    [$.attribute, $._builtin_arguments],
+    [$.attribute_argument, $._expression],
+    [$.path, $._arg_name],
+    [$.path, $._expression],
+    [$.path, $._expression, $.struct_expression, $.type_apply_callee],
+    [$.builtin_type, $.builtin_expression],
+    [$.tuple_type, $.tuple_expression],
   ],
 
   rules: {
@@ -101,16 +110,18 @@ module.exports = grammar({
 
     // ------------------------------------------------------------ attributes
 
-    attribute: ($) => prec.right(seq('@', $.identifier, optional(seq('(', commaSep($.attribute_argument), ')')))),
+    attribute: ($) => prec.dynamic(5, prec.right(seq('@', $.identifier, optional(seq(choice('(', alias($._call_paren, '(')), commaSep($.attribute_argument), ')'))))),
 
     attribute_argument: ($) =>
-      seq(optional(seq(field('key', $.path), '=')), field('value', choice($.path, $.string_literal, $.integer_literal, $.float_literal, $.boolean_literal))),
+      prec.dynamic(5, seq(optional(seq(field('key', $.path), '=')), field('value', choice($.path, $.string_literal, $.integer_literal, $.float_literal, $.boolean_literal)))),
 
     // ----------------------------------------------------------------- items
 
     _item: ($) =>
       choice(
-        $.native_function_item,
+        $.extern_block,
+        $.extend_item,
+        $.public_const,
         $.test_item,
         $.struct_item,
         $.class_item,
@@ -124,6 +135,7 @@ module.exports = grammar({
     visibility: () => 'pub',
 
     public_binding: ($) => seq($.visibility, $.binding),
+    public_const: ($) => seq($.visibility, $.const_decl),
 
     function_item: ($) =>
       seq(
@@ -136,8 +148,32 @@ module.exports = grammar({
         field('body', $.block),
       ),
 
-    native_function_item: ($) =>
-      seq(optional($.visibility), 'native', 'fn', field('name', $.identifier), optional($.generics), $.parameters, optional(seq('->', field('return_type', $._type)))),
+    extern_block: ($) =>
+      seq(optional($.visibility), 'extern', field('library', $.string_literal), '{', repeat($.extern_fn), '}'),
+
+    extern_fn: ($) =>
+      seq(
+        repeat($.attribute),
+        optional($.visibility),
+        'fn',
+        field('name', $._member_name),
+        $.parameters,
+        optional(seq('->', field('return_type', $._type))),
+      ),
+
+    extend_item: ($) =>
+      seq(
+        'extend',
+        optional($.generics),
+        field('target', $._type),
+        optional($.trait_list),
+        '{',
+        repeat($.function_item),
+        '}',
+      ),
+
+    const_decl: ($) =>
+      seq('const', field('name', $.identifier), optional(seq(':', field('type', $._type))), '=', field('value', $._expression)),
 
     test_item: ($) => seq(alias($._test_word, $.test_keyword), field('name', $.string_literal), field('body', $.block)),
 
@@ -178,7 +214,14 @@ module.exports = grammar({
         optional($.visibility),
         'import',
         choice(
-          seq(field('path', $.module_path), optional(seq('as', field('alias', $.identifier)))),
+          seq(
+            field('path', $.module_path),
+            choice(
+              optional(seq('as', field('alias', $.identifier))),
+              seq('.', choice('*', seq('{', choice(commaSep1($.import_name), '*'), '}'))),
+            ),
+          ),
+          seq(choice($.import_name, '*'), 'from', field('path', $.module_path)),
           seq('{', choice(commaSep1($.import_name), '*'), '}', 'from', field('path', $.module_path)),
         ),
       ),
@@ -187,7 +230,11 @@ module.exports = grammar({
 
     generics: ($) => seq('<', commaSep1($.generic_parameter), '>'),
 
-    generic_parameter: ($) => seq($.identifier, optional(seq(':', $._type, repeat(seq('+', $._type))))),
+    generic_parameter: ($) =>
+      choice(
+        seq('const', $.identifier, ':', $._type),
+        seq($.identifier, optional(seq(':', $._type, repeat(seq('+', $._type))))),
+      ),
 
     trait_list: ($) => seq(':', '(', commaSep1($._type), ')'),
 
@@ -208,9 +255,11 @@ module.exports = grammar({
     _statement: ($) =>
       choice(
         $.binding,
+        $.const_decl,
         $.assignment,
         $.while_statement,
         $.for_statement,
+        $.comptime_for_statement,
         $.scope_statement,
         $.with_statement,
         $.return_statement,
@@ -235,6 +284,10 @@ module.exports = grammar({
     while_statement: ($) => seq('while', field('condition', $._condition), field('body', $.block)),
 
     for_statement: ($) => seq('for', field('pattern', $._binding_pattern), 'in', field('iterable', $._expression), field('body', $.block)),
+
+    comptime_for_statement: ($) => seq('comptime', 'for', field('pattern', $._binding_pattern), 'in', field('iterable', $._expression), field('body', $.block)),
+
+    comptime_block: ($) => seq('comptime', $.block),
 
     scope_statement: ($) => seq('scope', $.block),
 
@@ -276,7 +329,7 @@ module.exports = grammar({
 
     // ----------------------------------------------------------------- types
 
-    _type_atom: ($) => choice($.named_type, $.generic_type, $.nullable_type, $.tuple_type, $.array_type, $.function_type, $.parenthesized_type),
+    _type_atom: ($) => choice($.named_type, $.generic_type, $.builtin_type, $.nullable_type, $.tuple_type, $.array_type, $.function_type, $.parenthesized_type),
 
     _type: ($) => choice($._type_atom, $.union_type),
 
@@ -284,7 +337,39 @@ module.exports = grammar({
 
     generic_type: ($) => prec(1, seq($.path, $.type_arguments)),
 
-    type_arguments: ($) => seq('<', commaSep1($._type), '>'),
+    builtin_type: ($) => seq('@', $.identifier, optional($.type_arguments), alias($._builtin_arguments, $.arguments)),
+
+    type_arguments: ($) => seq('<', commaSep1(choice($._type, $._const_type_arg)), '>'),
+
+    _const_type_arg: ($) =>
+      choice(
+        $.integer_literal,
+        $.float_literal,
+        $.boolean_literal,
+        $.string_literal,
+        $.null_literal,
+        alias($._const_unary, $.unary_expression),
+        alias($._const_binary, $.binary_expression),
+      ),
+
+    _const_atom: ($) =>
+      choice(
+        $.identifier,
+        $.integer_literal,
+        $.float_literal,
+        $.boolean_literal,
+        $.string_literal,
+        $.null_literal,
+        alias($._const_parens, $.parenthesized_expression),
+      ),
+
+    _const_parens: ($) => seq('(', $._const_binary, ')'),
+    _const_unary: ($) => prec(PREC.unary, seq(choice('-', '!', '~'), $._const_atom)),
+    _const_binary: ($) =>
+      choice(
+        prec.left(PREC.additive, seq(choice($._const_atom, $._const_binary), choice('+', '-'), choice($._const_atom, $._const_binary))),
+        prec.left(PREC.multiplicative, seq(choice($._const_atom, $._const_binary), choice('*', '/', '%'), choice($._const_atom, $._const_binary))),
+      ),
 
     nullable_type: ($) => prec.left(2, seq($._type_atom, choice('?', '??'))),
 
@@ -320,6 +405,7 @@ module.exports = grammar({
         $.struct_expression,
         $.lambda_expression,
         $.call_expression,
+        $.builtin_expression,
         $.member_expression,
         $.tuple_index_expression,
         $.optional_member_expression,
@@ -335,6 +421,8 @@ module.exports = grammar({
         $.range_expression,
         $.spawn_expression,
         $.if_expression,
+        $.comptime_if_expression,
+        $.comptime_block,
         $.match_expression,
       ),
 
@@ -368,9 +456,18 @@ module.exports = grammar({
 
     arguments: ($) => seq(alias($._call_paren, '('), commaSep($.argument), ')'),
 
-    argument: ($) => choice(seq($.identifier, '=', $._expression), $._expression),
+    _arg_name: ($) => $.identifier,
+
+    argument: ($) => choice(seq($._arg_name, '=', $._expression), $._expression),
 
     call_expression: ($) => prec(PREC.postfix, seq(field('function', choice($._expression, $.type_apply_callee)), $.arguments)),
+
+    _builtin_arguments: ($) => seq(alias($._call_paren, '('), commaSep(choice($.argument, $._non_ident_type)), ')'),
+
+    _non_ident_type: ($) =>
+      choice($.generic_type, $.builtin_type, $.nullable_type, $.tuple_type, $.array_type, $.function_type, $.union_type),
+
+    builtin_expression: ($) => seq('@', $.identifier, optional($.type_arguments), alias($._builtin_arguments, $.arguments)),
 
     type_apply_callee: ($) => seq(choice($.identifier, $.member_expression), $.type_arguments),
 
@@ -425,6 +522,8 @@ module.exports = grammar({
     spawn_expression: ($) => prec.right(seq('spawn', choice($.block, $._expression))),
 
     if_expression: ($) => seq('if', field('condition', $._condition), field('then', $.block), optional(seq('else', field('else', choice($.if_expression, $.block))))),
+
+    comptime_if_expression: ($) => seq('comptime', 'if', field('condition', $._condition), field('then', $.block), optional(seq('else', field('else', choice($.comptime_if_expression, $.if_expression, $.block))))),
 
     match_expression: ($) => seq('match', field('value', $._expression), '{', repeat(seq($.match_arm, optional(','))), '}'),
 

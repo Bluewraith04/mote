@@ -338,7 +338,7 @@ fn if_let_binds_in_the_then_branch_and_falls_to_the_else() {
 
 #[test]
 fn while_let_matches_each_round_and_exits_on_a_mismatch() {
-    let source = "import { Stream } from std.collections\nfn f(var s: Stream<Int>) -> Int {\n var t = 0\n while let Some(n) = s.next() { t += n }\n return t\n}";
+    let source = "fn f(var s: Stream<Int>) -> Int {\n var t = 0\n while let Some(n) = s.next() { t += n }\n return t\n}";
     expect(
         source,
         &[

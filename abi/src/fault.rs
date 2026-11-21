@@ -11,7 +11,7 @@ pub enum FaultKind {
     IndexOutOfRange,
     /// `!` on a `None` or an `Err`.
     UnwrapFailed,
-    /// A native returned NULL where the type is not optional.
+    /// An external library function returned NULL where the type is not optional.
     NullPointer,
     /// `std` stopped the program with a message of its own, such as a missing map key.
     Raised,
@@ -46,7 +46,7 @@ impl FaultKind {
             FaultKind::ShiftOutOfRange => "shift out of range",
             FaultKind::IndexOutOfRange => "index out of range",
             FaultKind::UnwrapFailed => "unwrapped a missing value",
-            FaultKind::NullPointer => "native returned a null pointer",
+            FaultKind::NullPointer => "external library returned a null pointer",
             FaultKind::Raised => "the message the program gives",
             FaultKind::MemoryLimit => "memory limit reached",
             FaultKind::StackDepth => "call stack too deep",

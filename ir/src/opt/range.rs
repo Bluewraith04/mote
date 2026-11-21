@@ -33,10 +33,15 @@ fn range_of(function: &Function, program: &Program, bounds: &Bounds, operand: &O
 /// The bounds of `left op right` when it does not fault.
 fn combine(op: BinaryOp, (a_low, a_high): (i128, i128), (b_low, b_high): (i128, i128)) -> Option<(i128, i128)> {
     match op {
-        BinaryOp::Add => Some((a_low + b_low, a_high + b_high)),
-        BinaryOp::Sub => Some((a_low - b_high, a_high - b_low)),
+        BinaryOp::Add => Some((a_low.checked_add(b_low)?, a_high.checked_add(b_high)?)),
+        BinaryOp::Sub => Some((a_low.checked_sub(b_high)?, a_high.checked_sub(b_low)?)),
         BinaryOp::Mul => {
-            let products = [a_low * b_low, a_low * b_high, a_high * b_low, a_high * b_high];
+            let products = [
+                a_low.checked_mul(b_low)?,
+                a_low.checked_mul(b_high)?,
+                a_high.checked_mul(b_low)?,
+                a_high.checked_mul(b_high)?,
+            ];
             Some((*products.iter().min()?, *products.iter().max()?))
         }
         _ => None,

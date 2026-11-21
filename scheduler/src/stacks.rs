@@ -13,6 +13,10 @@ pub const TASK_STACK_BYTES: usize = 16 << 20;
 pub const MAIN_STACK_BYTES: usize = 256 << 20;
 
 /// Bytes at the low end of a slot that the stack limit keeps free for the runtime's own frames.
+/// On Windows, must exceed the kernel's ~20 KiB guaranteed stack floor plus fault-reporting frames.
+#[cfg(target_os = "windows")]
+pub const RED_ZONE: usize = 64 * 1024;
+#[cfg(not(target_os = "windows"))]
 pub const RED_ZONE: usize = 16 * 1024;
 
 /// One slot of a slab; it is returned with `Slab::release`.
@@ -93,7 +97,7 @@ impl Slab {
     /// Reserves the address space; no memory is committed until a stack is touched.
     pub fn new(count: usize, slot_bytes: usize) -> Result<Self, SysError> {
         assert!(count > 0 && slot_bytes.is_multiple_of(PAGE_SIZE) && slot_bytes >= 2 * RED_ZONE, "a slot is whole pages with room beyond the red zone");
-        let base = sys::map(count.checked_mul(slot_bytes).ok_or(SysError(12))?)?;
+        let base = sys::map_slots(count.checked_mul(slot_bytes).ok_or(SysError(12))?, slot_bytes)?;
         Ok(Self { base, slot_bytes, count, state: Mutex::new(State { next: 0, free: Vec::new() }), mapped: AtomicBool::new(true) })
     }
 

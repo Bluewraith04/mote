@@ -99,6 +99,20 @@ fn a_recursive_function_keeps_its_calls() {
 }
 
 #[test]
+fn an_operator_dunder_larger_than_small_is_inlined_at_every_call() {
+    let source = "struct Vec2 {\n x: Int\n y: Int\n fn __add__(self, other: Vec2) -> Vec2 {\n let x0 = self.x * 2\n let x1 = other.x * 3\n let y0 = self.y * 2\n let y1 = other.y * 3\n return Vec2 { x: x0 + x1, y: y0 + y1 }\n }\n}\nfn f(a: Vec2, b: Vec2, c: Vec2) -> Int {\n let s = (a + b) + (b + c)\n return s.x + s.y\n}";
+    assert!(!after(source, "f").contains("call"), "{}", after(source, "f"));
+}
+
+#[test]
+fn sized_array_ops_and_mask_reductions_optimize_and_verify() {
+    let small = after("import { all, any } from std.array\nfn f(var a: [Int; 4], b: [Int; 4]) -> Bool {\n a += b\n let c = 2 * a\n return all(c >= b) && any(c == 10)\n}", "f");
+    assert!(!small.contains("call"), "{small}");
+    let large = after("import { any } from std.array\nfn f(a: [Int; 40]) -> Bool {\n let b = -a + 1\n return any(b < 0)\n}", "f");
+    assert!(!large.contains("mask_") && large.contains("num_wrapping_add"), "{large}");
+}
+
+#[test]
 fn a_record_that_is_only_read_and_written_by_field_has_no_allocation() {
     let build = "struct P {\n var x: Int\n var y: Int\n}\nfn f(a: Int) -> Int {\n let p = P { x: a, y: 2 }\n return p.x + p.y\n}";
     assert!(!after(build, "f").contains("record"), "{}", after(build, "f"));
@@ -152,15 +166,17 @@ fn what_both_sides_of_an_if_agree_on_still_holds_after_it() {
 
 #[test]
 fn a_deep_copy_of_a_value_that_holds_no_object_is_a_plain_copy() {
-    let got = after("import { Mutex } from std.sync\nfn f() -> Int {\n let m = Mutex(0)\n return m.get()\n}", "f");
+    let got = after("fn f() -> Int {\n let m = Mutex(0)\n return m.get()\n}", "f");
     assert!(!got.contains("deep_clone"), "{got}");
+    let fixed = after("struct Vec3 { data: [Float; 3] }\nfn f() -> Float {\n let m = Mutex(Vec3 { data: [1.0, 2.0, 3.0] })\n return m.get().data[1]\n}", "f");
+    assert!(!fixed.contains("deep_clone"), "{fixed}");
 }
 
 #[test]
 fn a_deep_copy_of_a_list_built_to_be_copied_is_a_plain_copy_and_one_of_a_list_held_elsewhere_is_not() {
-    let fresh = after("import { Mutex } from std.sync\nfn f() -> Int {\n let m = Mutex([0])\n return m.get().len()\n}", "f");
+    let fresh = after("fn f() -> Int {\n let m = Mutex([0])\n return m.get().len()\n}", "f");
     assert_eq!(fresh.matches("deep_clone").count(), 1, "{fresh}");
-    let held = after("import { Mutex } from std.sync\nfn f() -> Int {\n let xs = [1]\n let m = Mutex(xs)\n return m.get().len() + xs.len()\n}", "f");
+    let held = after("fn f() -> Int {\n let xs = [1]\n let m = Mutex(xs)\n return m.get().len() + xs.len()\n}", "f");
     assert_eq!(held.matches("deep_clone").count(), 2, "{held}");
 }
 
@@ -234,21 +250,21 @@ fn described(source: &str) -> String {
 
 #[test]
 fn a_type_described_at_a_known_type_has_no_table_read_left() {
-    let got = described("import { describe } from std.meta\nstruct P {\n x: Int\n y: Int\n}\nfn main() {\n println(describe<P>().fields().len())\n}");
+    let got = described("struct P {\n x: Int\n y: Int\n}\nfn main() {\n let fs = @fields(P)\n println(\"${fs[0].name}:${fs[1].name}:${fs.len()}\")\n}");
     assert!(!got.contains("meta_ints") && !got.contains("meta_texts") && !got.contains(" lt "), "{got}");
-    assert!(got.contains("copy \"x\"") && got.contains("copy \"y\""), "{got}");
+    assert!(got.contains("\"x\"") && got.contains("\"y\""), "{got}");
 }
 
 #[test]
 fn the_variants_of_a_known_enum_have_no_table_read_left() {
-    let got = described("import { describe } from std.meta\nenum Shape {\n Empty\n Circle(Float)\n Rect { width: Float, height: Float }\n}\nfn main() {\n println(describe<Shape>().variants().len())\n}");
+    let got = described("enum Shape {\n Empty\n Circle(Float)\n Rect { width: Float, height: Float }\n}\nfn main() {\n let vs = @variants(Shape)\n let fs = @__variant_fields(Shape, \"Rect\")\n println(\"${vs[2].name}:${fs[0].name}:${vs.len()}\")\n}");
     assert!(!got.contains("meta_ints") && !got.contains("meta_texts"), "{got}");
-    assert!(got.contains("copy \"Rect\"") && got.contains("copy \"width\""), "{got}");
+    assert!(got.contains("\"Rect\"") && got.contains("\"width\""), "{got}");
 }
 
 #[test]
-fn a_type_described_through_a_value_read_by_position_still_reads_the_table() {
-    let got = described("import { describe } from std.meta\nstruct P {\n x: Int\n}\nfn name_of(id: Int) -> String {\n return describe<P>().name()\n}\nfn main() {\n println(name_of(1))\n}");
+fn a_type_described_through_a_value_read_by_position_still_folds_statically() {
+    let got = described("struct P {\n x: Int\n}\nfn name_of(id: Int) -> String {\n return @type_name(P)\n}\nfn main() {\n println(name_of(1))\n}");
     assert!(!got.contains("meta_ints"), "{got}");
 }
 

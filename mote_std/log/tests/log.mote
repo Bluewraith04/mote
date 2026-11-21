@@ -1,0 +1,76 @@
+import { assert, assert_eq } from std.test
+import { Level, Logger, Record } from log
+
+test "a level has a number and a name" {
+    assert_eq(Level.Debug.number(), 0)
+    assert_eq(Level.Error.number(), 3)
+    assert_eq(Level.Warn.to_string(), "WARN")
+}
+
+test "a logger passes records at its level and above" {
+    var lines: List<String> = []
+    var logger = Logger.new("app", |record| lines.push(record.format()))
+    logger.debug("hidden")
+    logger.info("one")
+    logger.warn("two")
+    logger.error("three")
+    assert_eq(lines.len(), 3)
+    assert_eq(lines.get(0), "INFO app: one")
+    assert_eq(lines.get(2), "ERROR app: three")
+    logger.set_level(Level.Error)
+    logger.warn("hidden too")
+    assert_eq(lines.len(), 3)
+    logger.set_level(Level.Debug)
+    logger.debug("shown")
+    assert_eq(lines.get(3), "DEBUG app: shown")
+}
+
+test "a logger reports its name and level" {
+    var logger = Logger.new("db", |record| {})
+    assert_eq(logger.name(), "db")
+    assert_eq(logger.level().to_string(), "INFO")
+    assert(logger.enabled(Level.Warn), "warn")
+    assert(!logger.enabled(Level.Debug), "debug")
+    logger.set_level(Level.Warn)
+    assert_eq(logger.level().to_string(), "WARN")
+}
+
+test "fields follow the message as key=value" {
+    var lines: List<String> = []
+    let logger = Logger.new("app", |record| lines.push(record.format()))
+    logger.info("listening", [("port", "8080"), ("host", "localhost")])
+    assert_eq(lines.get(0), "INFO app: listening port=8080 host=localhost")
+}
+
+test "a value with a space, an equals sign or a quote is quoted" {
+    var lines: List<String> = []
+    let logger = Logger.new("", |record| lines.push(record.format()))
+    logger.warn("odd", [("a", "two words"), ("b", "x=y"), ("c", ""), ("d", "say \"hi\"")])
+    assert_eq(lines.get(0), "WARN odd a=\"two words\" b=\"x=y\" c=\"\" d=\"say \\\"hi\\\"\"")
+}
+
+test "a record holds what the sink needs" {
+    var seen: List<Record> = []
+    let logger = Logger.new("net", |record| seen.push(record))
+    logger.error("down", [("code", "7")])
+    let record = seen.get(0)
+    assert_eq(record.level.to_string(), "ERROR")
+    assert_eq(record.logger, "net")
+    assert_eq(record.message, "down")
+    assert_eq(record.fields.len(), 1)
+}
+
+test "the stream loggers print the formatted record" {
+    let out = Logger.to_stdout("app")
+    out.info("to standard output", [("k", "v")])
+    let err = Logger.to_stderr("app")
+    err.error("to standard error")
+}
+
+test "levels compare with Ord operators" {
+    assert(Level.Debug < Level.Info, "debug < info")
+    assert(Level.Info <= Level.Info, "info <= info")
+    assert(Level.Warn > Level.Info, "warn > info")
+    assert(Level.Error >= Level.Warn, "error >= warn")
+    assert(Level.Error != Level.Debug, "error != debug")
+}

@@ -15,7 +15,9 @@ pub struct Item {
 #[derive(Clone, Debug, PartialEq)]
 pub enum ItemKind {
     Function(Function),
-    NativeFunction(NativeFunction),
+    ExternBlock(ExternBlock),
+    Extend(Extend),
+    Const(ConstDecl),
     Test(Test),
     Record(Record),
     Enum(Enum),
@@ -50,9 +52,9 @@ pub enum AttrValue {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct GenericParam {
-    pub name: Ident,
-    pub bounds: Vec<Id<Type>>,
+pub enum GenericParam {
+    Type { name: Ident, bounds: Vec<Id<Type>> },
+    Const { name: Ident, ty: Id<Type> },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -78,11 +80,35 @@ pub struct Function {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct NativeFunction {
+pub struct ExternBlock {
+    pub library: Symbol,
+    pub decls: Vec<ExternFn>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ExternFn {
+    pub doc: Option<Span>,
+    pub attrs: Vec<Attribute>,
+    pub is_pub: bool,
     pub name: Ident,
-    pub generics: Vec<GenericParam>,
     pub params: Vec<Param>,
     pub ret: Option<Id<Type>>,
+    pub span: Span,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Extend {
+    pub generics: Vec<GenericParam>,
+    pub target: Id<Type>,
+    pub traits: Vec<Id<Type>>,
+    pub methods: Vec<Method>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ConstDecl {
+    pub name: Ident,
+    pub ty: Option<Id<Type>>,
+    pub value: Id<Expr>,
 }
 
 #[derive(Clone, Debug, PartialEq)]

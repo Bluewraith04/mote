@@ -233,5 +233,6 @@ pub(crate) fn conversion_name(conversion: Conversion) -> &'static str {
         Conversion::WidenUnion => "widen_union",
         Conversion::Narrow => "narrow",
         Conversion::Adapt => "adapt",
+        Conversion::ToView => "to_view",
     }
 }

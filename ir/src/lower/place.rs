@@ -53,7 +53,7 @@ impl Lowering<'_> {
     }
 
     /// The place an object is read from; a value that is not a place is held in a fresh register.
-    fn base(&mut self, id: Id<Expr>) -> Place {
+    pub(super) fn base(&mut self, id: Id<Expr>) -> Place {
         if self.is_place(id)
             && let Some(place) = self.place(id)
         {
@@ -111,7 +111,7 @@ impl Lowering<'_> {
     }
 
     /// Applies a write to the object in `base`: in place for a register or a reference, else on a copy that is stored back.
-    fn write_through(&mut self, base: &Place, span: Span, op: impl FnOnce(Operand) -> Op) {
+    pub(super) fn write_through(&mut self, base: &Place, span: Span, op: impl FnOnce(Operand) -> Op) {
         if let Kind::Reg(reg) = base.kind {
             self.b.emit(None, op(Operand::Reg(reg)), span);
         } else if self.is_reference(base.ty) {

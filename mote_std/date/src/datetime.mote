@@ -1,0 +1,37 @@
+// A date with a time of day.
+import { Display, Eq, Ord } from std.traits
+import { pad_start, parse_int } from std.string
+import { all_digits, bad, civil_to_days, days_to_civil, digits, modulo, two } from ._support
+import Date from .date
+import TimeOfDay from .time
+
+pub struct DateTime: (Eq, Ord, Display) {
+    at: Date
+    of: TimeOfDay
+
+    pub fn new(date: Date, time: TimeOfDay) -> DateTime { return DateTime { at: date, of: time } }
+
+    /// The moment `seconds` after 1970-01-01T00:00:00.
+    pub fn from_seconds(seconds: Int) -> DateTime {
+        let days = (seconds - modulo(seconds, 86400)) / 86400
+        return DateTime { at: Date.from_days(days), of: TimeOfDay.from_seconds(seconds) }
+    }
+
+    /// `YYYY-MM-DDTHH:MM:SS`.
+    pub fn parse(text: String) -> Result<DateTime, Error> {
+        let parts = text.split("T")
+        if parts.len() != 2 { return Err(bad("a date and time", text)) }
+        return Ok(DateTime { at: Date.parse(parts.get(0))?, of: TimeOfDay.parse(parts.get(1))? })
+    }
+
+    pub fn date(self) -> Date { return self.at }
+    pub fn time(self) -> TimeOfDay { return self.of }
+    pub fn seconds(self) -> Int { return self.at.days() * 86400 + self.of.seconds() }
+    pub fn add_seconds(self, count: Int) -> DateTime { return DateTime.from_seconds(self.seconds() + count) }
+    pub fn __add__(self, seconds: Int) -> DateTime { return self.add_seconds(seconds) }
+    pub fn __radd__(self, seconds: Int) -> DateTime { return self.add_seconds(seconds) }
+    pub fn __sub__(self, other: DateTime) -> Int { return self.seconds() - other.seconds() }
+    pub fn eq(self, other: DateTime) -> Bool { return self.seconds() == other.seconds() }
+    pub fn compare(self, other: DateTime) -> Int { return self.seconds() - other.seconds() }
+    pub fn to_string(self) -> String { return "${self.at}T${self.of}" }
+}

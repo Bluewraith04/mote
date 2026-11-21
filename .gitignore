@@ -1,5 +1,9 @@
 /target
 /bench/*/target
 **/native/x86_64-linux/
-/core/*/rust/target
+/mote_std/*/rust/target
+/mote_std/*/lib/x86_64-linux/
+/mote_std/*/lib/x86_64-windows/
 /demo/
+/mote_pkg/
+**/reference.md

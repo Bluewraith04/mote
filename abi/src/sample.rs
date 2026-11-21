@@ -1,11 +1,10 @@
 use crate::handle::HandleKind;
 use crate::kind::Kind;
-use crate::reflect::Reflection;
 use crate::scalar::Scalar;
 use crate::table::TypeTable;
 use crate::table_bytes::TypeImage;
 
-/// A table with every kind, a recursive class, a recursive enum and a reflection section.
+/// A table with every kind, a recursive class and a recursive enum.
 pub(crate) fn everything() -> TypeImage {
     let mut table = TypeTable::new();
     table.add("Null", Kind::Unit);
@@ -33,6 +32,5 @@ pub(crate) fn everything() -> TypeImage {
     table.add("Sender<String>", Kind::Handle(HandleKind::Sender, vec![]));
     table.add("Mutex<Shape>", Kind::Handle(HandleKind::Mutex, vec![shape]));
     table.add("Atomic", Kind::Handle(HandleKind::AtomicInt, vec![]));
-    let reflection = Reflection { ints: vec![3, 0, -7], texts: vec![String::new(), "Point".into()] };
-    TypeImage { table, reflection }
+    TypeImage::new(table)
 }

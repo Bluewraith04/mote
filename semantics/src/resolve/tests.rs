@@ -233,15 +233,15 @@ fn records_collect_fields_traits_and_methods() {
 #[test]
 fn generics_number_the_owner_first_and_keep_bounds() {
     let run = main("trait Ord { fn lt(self, other: Self) -> Bool }\nstruct Box<T: Ord> {\n v: T\n fn map<U>(self, f: (T) -> U) -> Box<U> { return Box { v: f(self.v) } }\n}\nfn largest<T: Ord>(xs: List<T>) -> T? { return null }");
-    assert_eq!(run.errors, ["unknown name `List`"]);
+    assert_eq!(run.errors, Vec::<String>::new());
     let boxed = run.def("main", "Box");
     let record = run.program.defs[boxed].record().expect("a record");
-    assert_eq!(record.generics[0].bounds, [Bound { def: run.def("main", "Ord"), args: Vec::new() }]);
+    assert_eq!(record.generics[0].bounds(), [Bound { def: run.def("main", "Ord"), args: Vec::new() }]);
     assert_eq!(run.signature(run.method(boxed, "map")), "((T) -> U) -> Box<U>");
     let map = run.program.defs[run.method(boxed, "map")].function().expect("a function");
     assert_eq!(map.generics.len(), 1);
     let TyKind::Adt { args, .. } = run.program.types.kind(map.ret) else { panic!("an adt") };
-    assert!(matches!(run.program.types.kind(args[0]), TyKind::Param { index: 1, .. }));
+    assert!(matches!(run.program.types.kind(args[0].as_type().expect("type arg")), TyKind::Param { index: 1, .. }));
 }
 
 #[test]
@@ -310,7 +310,7 @@ fn a_type_is_reached_through_a_module_name() {
 #[test]
 fn self_outside_a_type_and_array_lengths_are_checked() {
     let run = main("fn f(a: Self, b: [Int; n]) {}");
-    assert_eq!(run.errors, ["`Self` is only inside a type", "an array length is an integer literal"]);
+    assert_eq!(run.errors, ["`Self` is only inside a type", "`n` is not a compile-time constant"]);
 }
 
 #[test]
@@ -337,37 +337,23 @@ fn only_from_may_repeat_and_once_per_source_type() {
 }
 
 #[test]
-fn native_functions_record_their_link() {
-    let run = main("@link(\"m\")\nnative fn pow(x: Float, y: Float) -> Float\n@link(\"sqlite3\", symbol = \"sqlite3_libversion_number\")\n@blocking\nnative fn version() -> Int32\nnative fn lost()");
-    assert_eq!(run.errors, ["a native fn needs `@link`"]);
+fn extern_blocks_record_their_link() {
+    let run = main("extern \"m\" {\n fn pow(x: Float, y: Float) -> Float\n}\nextern \"sqlite3\" {\n @blocking\n fn version() -> Int32\n}");
+    assert_eq!(run.errors, Vec::<String>::new());
     let pow = run.program.defs[run.def("main", "pow")].function().expect("a function").link.expect("a link");
     assert_eq!(run.interner.resolve(pow.library), "m");
     assert_eq!(run.interner.resolve(pow.symbol), "pow");
     assert!(!pow.blocking);
     let version = run.program.defs[run.def("main", "version")].function().expect("a function").link.expect("a link");
-    assert_eq!(run.interner.resolve(version.symbol), "sqlite3_libversion_number");
+    assert_eq!(run.interner.resolve(version.library), "sqlite3");
+    assert_eq!(run.interner.resolve(version.symbol), "version");
     assert!(version.blocking);
 }
 
 #[test]
-fn an_intrinsic_is_a_generic_native_function_in_std() {
-    let run = run(&[(
-        "std.core",
-        "@intrinsic(\"alloc_array\")\nnative fn alloc<T>(n: Int) -> [T]\n@intrinsic(\"x\")\n@link(\"m\")\nnative fn both()\n@intrinsic(1)\nnative fn named()\n@intrinsic\nnative fn bare()\n@intrinsic(\"x\")\nfn plain() {}",
-    )]);
-    assert_eq!(run.errors, ["a native fn takes `@link` or `@intrinsic`, not both", "`@intrinsic` takes a name in quotes", "`@intrinsic` takes one name", "`@intrinsic` goes on a native fn"]);
-    let alloc = run.program.defs[run.def("std.core", "alloc")].function().expect("a function");
-    assert_eq!(run.interner.resolve(alloc.intrinsic.expect("an intrinsic")), "alloc_array");
-    assert_eq!(alloc.generics.len(), 1);
-    assert!(alloc.link.is_none());
-    let outside = main("@intrinsic(\"x\")\nnative fn f()");
-    assert_eq!(outside.errors, ["`@intrinsic` is for std only"]);
-}
-
-#[test]
-fn link_and_blocking_belong_on_native_functions() {
-    let run = main("@link(\"m\")\nfn f() {}\n@blocking\nfn g() {}\n@link(1)\nnative fn h()");
-    assert_eq!(run.errors, ["`@link` goes on a native fn", "`@blocking` goes on a native fn", "`@link` takes a library name and an optional `symbol`", "a native fn needs `@link`"]);
+fn blocking_belongs_on_extern_functions() {
+    let run = main("@blocking\nfn g() {}");
+    assert_eq!(run.errors, ["`@blocking` goes on a function in an `extern` block"]);
 }
 
 #[test]
@@ -377,21 +363,22 @@ fn attributes_are_a_closed_set() {
 }
 
 #[test]
-fn lang_items_are_std_only_and_register_once() {
-    let outside = main("@lang(\"list\")\nstruct List<T> {}");
-    assert_eq!(outside.errors, ["`@lang` is for std only"]);
-    let std = run(&[("std.core", "@lang(\"list\")\npub struct List<T> {}\n@lang(\"pointer\")\npub struct Pointer<T> { v: UInt64 }\n@lang(\"int8\")\npub struct Byte {}\n@lang(\"nope\")\nstruct X {}\n@lang(\"list\")\nstruct Y {}\n@lang(\"map\")\nfn z() {}")]);
-    assert_eq!(std.errors, ["unknown lang item `nope`", "lang item `list` is declared twice", "`@lang` goes on a type or trait"]);
-    let list = std.def("std.core", "List");
-    assert_eq!(std.program.lang_item(crate::defs::LangItem::List), Some(list));
-    assert_eq!(std.program.defs[list].lang, Some(crate::defs::LangItem::List));
+fn universal_builtin_types_resolve_without_import() {
+    let run = main("fn f(a: Int8, b: Option<Int>, c: List<String>, d: Task<Int>) {}");
+    assert_eq!(run.errors, Vec::<String>::new());
+    assert_eq!(run.signature(run.def("main", "f")), "(Int8, Int?, List<String>, Task<Int>) -> Null");
 }
 
 #[test]
-fn a_lang_declaration_stands_for_its_built_in_type() {
-    let run = run(&[("std.core", "@lang(\"int8\")\npub struct Byte {}\n@lang(\"option\")\npub enum Option<T> { Some(T)\n None }"), ("main", "import { Byte, Option } from .std.core\nfn f(a: Byte, b: Option<Int>) {}")]);
-    assert_eq!(run.errors, Vec::<String>::new());
-    assert_eq!(run.signature(run.def("main", "f")), "(Int8, Int?) -> Null");
+fn std_canonical_items_resolve_by_module_path() {
+    let std = run(&[
+        ("std.collections", "pub class Map<K, V> {}\npub class Set<T> {}"),
+        ("std.result", "pub enum Result<T, E> { Ok(T)\n Err(E) }"),
+    ]);
+    assert!(std.errors.is_empty(), "{:?}", std.errors);
+    assert_eq!(std.program.std.map, Some(std.def("std.collections", "Map")));
+    assert_eq!(std.program.std.set, Some(std.def("std.collections", "Set")));
+    assert_eq!(std.program.std.result, Some(std.def("std.result", "Result")));
 }
 
 #[test]

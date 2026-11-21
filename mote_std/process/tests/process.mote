@@ -1,0 +1,181 @@
+import { assert, assert_eq } from std.test
+import get as env_get from env
+import { Child, Command, Stdio, command } from process
+
+fn is_win() -> Bool {
+    return env_get("OS") == "Windows_NT"
+}
+
+fn text_of(bytes: [UInt8]) -> String {
+    return String.from_bytes(bytes)!
+}
+
+fn shell(script: String) -> Command {
+    if is_win() {
+        return command("cmd.exe").arg("/c").arg(script)
+    }
+    return command("/bin/sh").arg("-c").arg(script)
+}
+
+fn cat_cmd() -> Command {
+    if is_win() {
+        return command("powershell.exe").arg("-NoProfile").arg("-Command").arg("[Console]::OpenStandardInput().CopyTo([Console]::OpenStandardOutput())")
+    }
+    return command("cat")
+}
+
+fn true_cmd() -> Command {
+    if is_win() {
+        return command("cmd.exe").arg("/c").arg("exit 0")
+    }
+    return command("true")
+}
+
+fn sleep_cmd(seconds: Int) -> Command {
+    if is_win() {
+        return command("powershell.exe").arg("-NoProfile").arg("-Command").arg("Start-Sleep -Seconds ${seconds}")
+    }
+    return command("sleep").arg("${seconds}")
+}
+
+test "a program's output and status are collected" {
+    let out = if is_win() { shell("echo hello world").output()! } else { command("echo").arg("hello").arg("world").output()! }
+    assert(out.status.success(), "success")
+    let stdout = out.stdout_string()!
+    assert(stdout == "hello world\n" || stdout == "hello world\r\n", "echo output")
+    assert_eq(out.stderr.len(), 0)
+    assert_eq(out.status.code()!, 0)
+    assert(out.status.signal() == null, "no signal")
+}
+
+test "an exit code is reported" {
+    let status = shell("exit 3").output()!.status
+    assert(!status.success(), "failure")
+    assert_eq(status.code()!, 3)
+    assert_eq(status.to_string(), "exit code 3")
+}
+
+test "standard error is collected apart, or merged into standard output" {
+    let script = if is_win() { "echo out& echo err 1>&2" } else { "echo out; echo err 1>&2" }
+    let out = shell(script).output()!
+    assert(out.stdout_string()!.trim() == "out", "out only")
+    assert(out.stderr_string()!.trim() == "err", "err only")
+    let child = shell(script).with_stdout(Stdio.Piped).with_stderr(Stdio.Merged).start()!
+    let all = text_of(child.read_all()!)
+    assert(all.contains("out"), "out")
+    assert(all.contains("err"), "err")
+    child.wait()!
+    child.close()!
+}
+
+test "input is written to a child and its end closed" {
+    let child = cat_cmd().with_stdin(Stdio.Piped).with_stdout(Stdio.Piped).start()!
+    child.write_string("first\n")!
+    child.write_string("second\n")!
+    child.close_stdin()!
+    assert_eq(text_of(child.read_all()!), "first\nsecond\n")
+    assert(child.wait()!.success(), "cat ended")
+    assert(child.close_stdin().is_err(), "closed twice")
+    child.close()!
+}
+
+test "output_with feeds input while reading a large answer" {
+    let big = "x".repeat(600000)
+    let out = cat_cmd().output_with(big.bytes())!
+    assert_eq(out.stdout.len(), 600000)
+    assert(out.status.success(), "success")
+}
+
+test "a large output is read whole" {
+    let out = if is_win() {
+        command("powershell.exe").arg("-NoProfile").arg("-Command").arg("[Console]::OpenStandardOutput().Write(([byte[]]::new(1000000)),0,1000000)").output()!
+    } else {
+        shell("head -c 1000000 /dev/zero").output()!
+    }
+    assert_eq(out.stdout.len(), 1000000)
+}
+
+test "the environment is inherited, extended, replaced and cleared" {
+    if is_win() {
+        let own = shell("echo %USERPROFILE%").output()!.stdout_string()!.trim()
+        assert(own.len() > 2, "USERPROFILE is inherited")
+        let added = shell("echo %MOTE_PROCESS_TEST%:%USERPROFILE%").set_env("MOTE_PROCESS_TEST", "one").set_env("MOTE_PROCESS_TEST", "two").output()!.stdout_string()!.trim()
+        assert_eq(added, "two:" + own)
+        let cleared = shell("set").set_env("ONLY", "this").without_inherited_env().output()!.stdout_string()!
+        assert(cleared.contains("ONLY=this"), "cleared env has ONLY=this")
+    } else {
+        let own = shell("echo $HOME").output()!.stdout_string()!
+        assert(own.len() > 1, "HOME is inherited")
+        let added = shell("echo $MOTE_PROCESS_TEST:$HOME").set_env("MOTE_PROCESS_TEST", "one").set_env("MOTE_PROCESS_TEST", "two").output()!.stdout_string()!
+        assert_eq(added, "two:" + own)
+        let cleared = command("/usr/bin/env").set_env("ONLY", "this").without_inherited_env().output()!.stdout_string()!
+        assert_eq(cleared, "ONLY=this\n")
+    }
+}
+
+test "the working directory can be set" {
+    if is_win() {
+        let temp = env_get("TEMP") ?? env_get("TMP") ?? "C:\\Windows\\Temp"
+        let out = shell("cd").in_dir(temp).output()!
+        assert(out.stdout_string()!.trim().len() >= 3, "win cwd")
+        assert(shell("cd").in_dir("Z:\\no\\such\\mote\\dir").output().is_err(), "a missing directory")
+    } else {
+        let out = command("pwd").in_dir("/tmp").output()!
+        assert_eq(out.stdout_string()!, "/tmp\n")
+        assert(command("pwd").in_dir("/no/such/dir").output().is_err(), "a missing directory")
+    }
+}
+
+test "a program that is not there is an error" {
+    let missing = command("/no/such/program").start()
+    assert(missing.is_err(), "missing")
+    let error = command("mote-no-such-program-anywhere").output()
+    assert(error.is_err(), "not on PATH")
+    assert(command("").start().is_err(), "empty name")
+}
+
+test "a running child is polled, killed and waited for" {
+    let child = sleep_cmd(30).start()!
+    assert(child.try_wait()! == null, "still running")
+    child.kill()!
+    let status = child.wait()!
+    assert_eq(status.signal()!, 9)
+    assert(status.code() == null, "no code")
+    assert_eq(child.wait()!.raw, status.raw)
+    assert(child.try_wait()! != null, "known after the wait")
+    child.kill()!
+    child.close()!
+}
+
+test "a stream that is not a pipe cannot be used" {
+    let child = true_cmd().with_stdout(Stdio.Null).start()!
+    assert(child.read(10).is_err(), "no pipe")
+    assert(child.write_string("x").is_err(), "no input pipe")
+    child.wait()!
+    assert(true_cmd().with_stdout(Stdio.Merged).start().is_err(), "merged output")
+    child.close()!
+}
+
+test "a write to a child that has gone is an error and not a crash" {
+    let child = true_cmd().with_stdin(Stdio.Piped).start()!
+    child.wait()!
+    let big: [UInt8] = [0; 200000]
+    assert(child.write(big).is_err(), "broken pipe")
+    child.close()!
+}
+
+test "many children run at the same time while their tasks wait" {
+    var tasks: List<Task<Int>> = []
+    for n in 0..24 {
+        tasks.push(spawn {
+            let script = if is_win() { "powershell -NoProfile -Command \"Start-Sleep -Milliseconds 150\" & echo ${n}" } else { "sleep 0.2; echo ${n}" }
+            let out = shell(script).output()!
+            return out.stdout_string()!.trim().len()
+        })
+    }
+    var total = 0
+    for task in tasks {
+        total = total + task.await()!
+    }
+    assert(total >= 24, "all answered")
+}

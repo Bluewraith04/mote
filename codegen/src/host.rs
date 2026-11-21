@@ -17,10 +17,11 @@ impl Compiled {
 
     /// Like `run`, with the runtime handed to `started` before the program's task starts.
     pub fn run_with(self, started: impl FnOnce(&Arc<Runtime>)) -> Ran {
+        #[cfg(target_os = "linux")]
         if std::env::var("MOTE_PERF_MAP").is_ok_and(|value| value == "1") {
             let _ = std::fs::write(format!("/tmp/perf-{}.map", std::process::id()), self.perf_map());
         }
-        let Compiled { jit, faults, types, meta, run, link: table, native_slots, files, failure, code, heap, scheduler, feeds, args, sink, .. } = self;
+        let Compiled { jit, faults, types, meta, run, link: table, native_slots, files, failure, code, heap, scheduler, feeds, args, sink, single_threaded, .. } = self;
         if let Some(slots) = native_slots {
             let (address, _) = jit.get_finalized_data(slots);
             // SAFETY: the table has a word for each function of the link table, and nothing runs yet.
@@ -33,7 +34,7 @@ impl Compiled {
         // SAFETY: `run` is the address of the function `compile` made, which takes the context and returns nothing.
         let run: extern "C" fn(*mut mote_abi::TaskContext) = unsafe { std::mem::transmute(run) };
         let failure = failure.map(|cell| jit.get_finalized_data(cell).0 as usize);
-        let ran = Image { run, types: types.table, faults, meta, code, failure, heap, scheduler, feeds, args, sink }.run_with(started);
+        let ran = Image { run, types: types.table, faults, meta, code, failure, heap, scheduler, feeds, args, sink, single_threaded }.run_with(started);
         // SAFETY: the program has stopped for good, so nothing runs the code and no stack frame returns into it.
         unsafe { jit.free_memory() };
         ran

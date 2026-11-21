@@ -1,4 +1,4 @@
-import { Channel, Sender } from std.sync
+import Channel from std.sync
 
 fn main() {
     let (requests, inbox) = Channel<(Int, Sender<Int>)>(0)

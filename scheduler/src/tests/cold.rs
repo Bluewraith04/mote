@@ -181,3 +181,29 @@ fn queues_a_cancelled_cold_task_resumes_and_ends() {
         task.join().unwrap();
     });
 }
+
+#[test]
+fn queues_a_task_grows_its_stack_all_the_way_to_the_red_zone() {
+    #[inline(never)]
+    fn recurse_until(limit: usize, depth: usize) -> usize {
+        let buf = [depth as u8; 1024];
+        let buf = black_box(buf);
+        let sp = buf.as_ptr() as usize;
+        if sp <= limit {
+            depth
+        } else {
+            recurse_until(limit, depth + 1)
+        }
+    }
+    let out = Arc::new(Mutex::new(0usize));
+    let slot = out.clone();
+    run(quick(2), move || {
+        let task = spawn(move || {
+            let (base, _) = crate::current().stack_bounds().unwrap();
+            *slot.lock().unwrap() = recurse_until(base + crate::RED_ZONE + 4096, 0);
+        });
+        task.join().unwrap();
+    });
+    let reached = *out.lock().unwrap();
+    assert!(reached > 15_000, "only reached depth {reached}");
+}

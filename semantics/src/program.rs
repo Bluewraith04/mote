@@ -2,10 +2,9 @@ use std::collections::HashMap;
 
 use mote_base::{Arena, Interner, Symbol};
 
-use crate::defs::{Def, DefId, DefKind, LangItem, Module, ModuleId, Resolved};
-use crate::reflect::Reflected;
+use crate::defs::{Def, DefId, DefKind, ExtendDef, ExtendId, GenericParam, Module, ModuleId, Resolved, TyHead};
 use crate::tree::{Body, FnRef};
-use crate::types::{TyId, TyKind, TypeNames, Types};
+use crate::types::{BuiltinTy, ConstArg, ConstVal, GenericArg, TyId, TyKind, TypeNames, Types};
 
 /// A function at concrete type arguments; each has one typed body.
 pub type Instance = FnRef;
@@ -19,12 +18,43 @@ pub enum Init {
     TopLevel(ModuleId),
 }
 
+/// Canonical definitions from the standard library resolved by module path (no `@lang` attributes).
+#[derive(Default, Debug, Clone, PartialEq, Eq)]
+pub struct StdItems {
+    pub map: Option<DefId>,
+    pub set: Option<DefId>,
+    pub range: Option<DefId>,
+    pub result: Option<DefId>,
+    pub error: Option<DefId>,
+    pub error_kind: Option<DefId>,
+    pub display: Option<DefId>,
+    pub debug: Option<DefId>,
+    pub eq: Option<DefId>,
+    pub ord: Option<DefId>,
+    pub clone: Option<DefId>,
+    pub closeable: Option<DefId>,
+    pub key: Option<DefId>,
+    pub type_info: Option<DefId>,
+    pub field_info: Option<DefId>,
+    pub variant_info: Option<DefId>,
+    pub reflect_kind: Option<DefId>,
+    pub reflect_shape: Option<DefId>,
+    pub span: Option<DefId>,
+    pub mut_span: Option<DefId>,
+    pub str_view: Option<DefId>,
+    pub buffer: Option<DefId>,
+    pub bytes: Option<DefId>,
+}
+
 /// Everything semantics knows about a program.
 pub struct Program {
     pub modules: Arena<Module>,
     pub defs: Arena<Def>,
     pub types: Types,
-    pub lang: HashMap<LangItem, DefId>,
+    pub std: StdItems,
+    pub extends: Arena<ExtendDef>,
+    pub extend_by_head: HashMap<TyHead, Vec<ExtendId>>,
+    pub const_vals: HashMap<DefId, ConstVal>,
     /// The module whose exports every module sees without an import.
     pub prelude: Option<ModuleId>,
     /// The checked body of each function, still over its own type parameters.
@@ -35,14 +65,12 @@ pub struct Program {
     pub top_level: HashMap<ModuleId, Body>,
     /// The typed body of each instance.
     pub bodies: HashMap<Instance, Body>,
+    /// The concrete normalized return type of each instantiated function.
+    pub instance_returns: HashMap<Instance, TyId>,
     /// Instances in the order they were first needed.
     pub order: Vec<Instance>,
     /// The start-up steps in the order they run: each module after the modules it imports, its globals after the globals they read, then its statements.
     pub init: Vec<Init>,
-    /// The types `std.meta` describes, in the order they were first asked for.
-    pub reflected: Vec<Reflected>,
-    /// The position in `reflected` of each described type.
-    pub reflect_index: HashMap<TyId, u32>,
     /// The trait each default method copied into a listing type comes from.
     pub listed_defaults: HashMap<DefId, DefId>,
 }
@@ -59,22 +87,20 @@ impl Program {
             modules: Arena::new(),
             defs: Arena::new(),
             types: Types::new(),
-            lang: HashMap::new(),
+            std: StdItems::default(),
+            extends: Arena::new(),
+            extend_by_head: HashMap::new(),
+            const_vals: HashMap::new(),
             prelude: None,
             checked: HashMap::new(),
             global_inits: HashMap::new(),
             top_level: HashMap::new(),
             bodies: HashMap::new(),
+            instance_returns: HashMap::new(),
             order: Vec::new(),
             init: Vec::new(),
-            reflected: Vec::new(),
-            reflect_index: HashMap::new(),
             listed_defaults: HashMap::new(),
         }
-    }
-
-    pub fn lang_item(&self, item: LangItem) -> Option<DefId> {
-        self.lang.get(&item).copied()
     }
 
     /// The methods of a record, enum or trait with the name.
@@ -88,44 +114,79 @@ impl Program {
         methods.iter().copied().filter(|&method| self.defs[method].name == name).collect()
     }
 
-    /// The declaration whose methods a value of the type has, with the type's arguments.
-    pub fn method_owner(&self, ty: TyId) -> Option<(DefId, Vec<TyId>)> {
+    /// The methods with the name declared on an `extend` block.
+    pub fn extend_methods_named(&self, extend: ExtendId, name: Symbol) -> Vec<DefId> {
+        self.extends[extend]
+            .methods
+            .iter()
+            .copied()
+            .filter(|&method| self.defs[method].name == name)
+            .collect()
+    }
+
+    /// The ADT declaration whose methods a value of the type has, with its generic arguments.
+    pub fn method_owner(&self, ty: TyId) -> Option<(DefId, Vec<GenericArg>)> {
         match self.types.kind(ty) {
             TyKind::Adt { def, args } => Some((*def, args.clone())),
-            TyKind::Optional(inner) => Some((self.lang_item(LangItem::Option)?, vec![*inner])),
-            TyKind::Array(element) => Some((self.lang_item(LangItem::Array)?, vec![*element])),
-            _ => {
-                let item = LangItem::ALL.into_iter().find(|item| item.primitive() == Some(ty))?;
-                Some((self.lang_item(item)?, Vec::new()))
+            _ => None,
+        }
+    }
+
+    /// Resolves a concrete method (inherent or from an `extend` block) on a concrete `ty`, returning `(method_def, owner_args)`.
+    pub fn resolve_method(&self, ty: TyId, name: Symbol) -> Option<(DefId, Vec<GenericArg>)> {
+        if let Some((owner, args)) = self.method_owner(ty)
+            && let Some(&found) = self.methods_named(owner, name).first()
+        {
+            return Some((found, args));
+        }
+        let head = TyHead::of(&self.types, ty)?;
+        let extends = self.extend_by_head.get(&head)?;
+        for &ext_id in extends {
+            let Some(&found) = self.extend_methods_named(ext_id, name).first() else {
+                continue;
+            };
+            let ext = &self.extends[ext_id];
+            if let Some(args) = match_extend_concrete(&self.types, ext, ty) {
+                return Some((found, args));
             }
         }
+        None
     }
 
     /// The method of a `Map` or `Set` type that the language itself calls: indexing, a literal and `==` run std code.
     pub fn collection_method(&self, ty: TyId, name: Symbol) -> Option<FnRef> {
         let TyKind::Adt { def, args } = self.types.kind(ty) else { return None };
-        if !matches!(self.defs[*def].lang, Some(LangItem::Map | LangItem::Set)) {
+        if self.std.map != Some(*def) && self.std.set != Some(*def) {
             return None;
         }
-        Some(FnRef { def: *self.methods_named(*def, name).first()?, args: args.clone() })
+        if let Some(&method) = self.methods_named(*def, name).first() {
+            return Some(FnRef { def: method, args: args.clone() });
+        }
+        if let Some(extends) = self.extend_by_head.get(&TyHead::Adt(*def)) {
+            for &ext in extends {
+                if let Some(&method) = self.extend_methods_named(ext, name).first() {
+                    return Some(FnRef { def: method, args: args.clone() });
+                }
+            }
+        }
+        None
     }
 
     /// Whether a value of the type can change without a write to the value that holds it.
     pub fn changes_inside(&self, ty: TyId) -> bool {
         match self.types.kind(ty) {
-            TyKind::Array(_) | TyKind::FixedArray(..) => true,
-            TyKind::Optional(inner) => self.changes_inside(*inner),
+            TyKind::Array(_) | TyKind::Any => true,
+            TyKind::FixedArray(inner, _) | TyKind::Optional(inner) => self.changes_inside(*inner),
             TyKind::Tuple(members) | TyKind::Union(members) => members.iter().any(|&member| self.changes_inside(member)),
+            TyKind::Builtin { kind, .. } => *kind == BuiltinTy::List,
             TyKind::Adt { def, args } => {
-                let item = &self.defs[*def];
-                match item.lang {
-                    Some(LangItem::List | LangItem::Map | LangItem::Set | LangItem::Array) => return true,
-                    Some(lang) if lang.is_handle() => return false,
-                    _ => {}
+                if self.std.map == Some(*def) || self.std.set == Some(*def) {
+                    return true;
                 }
+                let item = &self.defs[*def];
                 match &item.kind {
                     DefKind::Record(record) if record.is_class => record.fields.iter().any(|field| field.is_var),
-                    _ => args.iter().any(|&arg| self.changes_inside(arg)),
+                    _ => args.iter().filter_map(GenericArg::as_type).any(|arg| self.changes_inside(arg)),
                 }
             }
             _ => false,
@@ -152,6 +213,11 @@ impl Program {
     pub fn render_source(&self, ty: TyId, interner: &Interner) -> String {
         self.types.render(ty, &Namer { program: self, interner, qualified: true })
     }
+
+    /// A const generic argument as source writes it.
+    pub fn render_const(&self, arg: &ConstArg, interner: &Interner) -> String {
+        self.types.render_const(arg, &Namer { program: self, interner, qualified: false })
+    }
 }
 
 struct Namer<'a> {
@@ -177,18 +243,86 @@ impl TypeNames for Namer<'_> {
     }
 }
 
+fn match_extend_concrete(types: &Types, ext: &ExtendDef, concrete: TyId) -> Option<Vec<GenericArg>> {
+    let mut slots: Vec<Option<GenericArg>> = vec![None; ext.generics.len()];
+    if !unify_concrete_pattern(types, ext.target, concrete, &mut slots) {
+        return None;
+    }
+    let mut out = Vec::with_capacity(slots.len());
+    for (idx, param) in ext.generics.iter().enumerate() {
+        let arg = slots[idx].clone()?;
+        match (param, &arg) {
+            (GenericParam::Type { .. }, GenericArg::Type(_)) | (GenericParam::Const { .. }, GenericArg::Const(_)) => out.push(arg),
+            _ => return None,
+        }
+    }
+    Some(out)
+}
+
+fn unify_concrete_pattern(types: &Types, pattern: TyId, concrete: TyId, slots: &mut [Option<GenericArg>]) -> bool {
+    match (types.kind(pattern), types.kind(concrete)) {
+        (TyKind::Param { index, .. }, _) => {
+            let idx = *index as usize;
+            if let Some(Some(existing)) = slots.get(idx) {
+                return existing.as_type() == Some(concrete);
+            }
+            if idx < slots.len() {
+                slots[idx] = Some(GenericArg::Type(concrete));
+                true
+            } else {
+                false
+            }
+        }
+        _ if pattern == concrete => true,
+        (TyKind::Optional(p), TyKind::Optional(c)) | (TyKind::Array(p), TyKind::Array(c)) => unify_concrete_pattern(types, *p, *c, slots),
+        (TyKind::FixedArray(p, pn), TyKind::FixedArray(c, cn)) => {
+            unify_concrete_pattern(types, *p, *c, slots) && unify_concrete_const(pn, cn, slots)
+        }
+        (TyKind::Tuple(p), TyKind::Tuple(c)) if p.len() == c.len() => p.iter().zip(c.iter()).all(|(&a, &b)| unify_concrete_pattern(types, a, b, slots)),
+        (TyKind::Builtin { kind: pk, args: pa }, TyKind::Builtin { kind: ck, args: ca }) if pk == ck && pa.len() == ca.len() => {
+            pa.iter().zip(ca.iter()).all(|(&a, &b)| unify_concrete_pattern(types, a, b, slots))
+        }
+        (TyKind::Adt { def: pd, args: pa }, TyKind::Adt { def: cd, args: ca }) if pd == cd && pa.len() == ca.len() => {
+            pa.iter().zip(ca.iter()).all(|(a, b)| match (a, b) {
+                (GenericArg::Type(pt), GenericArg::Type(ct)) => unify_concrete_pattern(types, *pt, *ct, slots),
+                (GenericArg::Const(pc), GenericArg::Const(cc)) => unify_concrete_const(pc, cc, slots),
+                _ => false,
+            })
+        }
+        _ => false,
+    }
+}
+
+fn unify_concrete_const(pattern: &ConstArg, concrete: &ConstArg, slots: &mut [Option<GenericArg>]) -> bool {
+    match pattern {
+        ConstArg::Param { index, .. } => {
+            let idx = *index as usize;
+            if let Some(Some(existing)) = slots.get(idx) {
+                return existing.as_const() == Some(concrete);
+            }
+            if idx < slots.len() {
+                slots[idx] = Some(GenericArg::Const(concrete.clone()));
+                true
+            } else {
+                false
+            }
+        }
+        _ => pattern == concrete,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::defs::test_support::Fixture;
 
     #[test]
-    fn lang_items_are_looked_up_by_kind() {
+    fn std_items_can_be_recorded_and_read() {
         let mut fixture = Fixture::new();
-        let list = fixture.def("List");
-        fixture.program.lang.insert(LangItem::List, list);
-        assert_eq!(fixture.program.lang_item(LangItem::List), Some(list));
-        assert_eq!(fixture.program.lang_item(LangItem::Map), None);
+        let map = fixture.def("Map");
+        fixture.program.std.map = Some(map);
+        assert_eq!(fixture.program.std.map, Some(map));
+        assert_eq!(fixture.program.std.set, None);
     }
 
     #[test]
@@ -197,7 +331,7 @@ mod tests {
         let a = fixture.def("a");
         let b = fixture.def("b");
         let first = Instance { def: b, args: vec![] };
-        let second = Instance { def: a, args: vec![TyId::INT] };
+        let second = Instance { def: a, args: vec![GenericArg::Type(TyId::INT)] };
         fixture.program.add_body(first.clone(), Body::new());
         fixture.program.add_body(second.clone(), Body::new());
         assert_eq!(fixture.program.order, [first.clone(), second]);
@@ -219,7 +353,7 @@ mod tests {
     fn render_names_adts_through_the_interner() {
         let mut fixture = Fixture::new();
         let point = fixture.def("Point");
-        let ty = fixture.program.types.adt(point, vec![TyId::INT]);
+        let ty = fixture.program.types.adt_types(point, vec![TyId::INT]);
         assert_eq!(fixture.program.render(ty, &fixture.interner), "Point<Int>");
     }
 }

@@ -16,7 +16,6 @@ mod meta;
 mod native;
 mod object;
 mod passing;
-mod reflect;
 mod region;
 #[cfg(test)]
 mod sample;
@@ -46,10 +45,10 @@ pub use layout::{
 pub use meta::{Carries, Described, Meta, Reflected, Shown};
 pub use native::{CParam, CType, LinkImage, LinkTable, LinkedFn, NativeSig};
 pub use object::{
-    DIRECTORY_CODE, DIRECTORY_DEBUG, DIRECTORY_FAILURE, DIRECTORY_FAULTS, DIRECTORY_INITS, DIRECTORY_LINK, DIRECTORY_META, DIRECTORY_NATIVES, DIRECTORY_TYPES, DIRECTORY_WORDS, DIRECTORY_WORDS_OF_CODE,
+    DIRECTORY_CODE, DIRECTORY_DEBUG, DIRECTORY_FAILURE, DIRECTORY_FAULTS, DIRECTORY_FLAGS, DIRECTORY_FLAG_SINGLE_THREADED, DIRECTORY_INITS,
+    DIRECTORY_LINK, DIRECTORY_META, DIRECTORY_NATIVES, DIRECTORY_TYPES, DIRECTORY_WORDS, DIRECTORY_WORDS_OF_CODE,
 };
 pub use passing::{passing, Passing, MAX_PASSED_SCALARS};
-pub use reflect::Reflection;
 pub use region::{inline_size, is_finalized, Region, MAX_INLINE_ALLOC};
 pub use scalar::Scalar;
 pub use table::{TypeInfo, TypeTable};

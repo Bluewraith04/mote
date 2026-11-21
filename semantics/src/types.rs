@@ -1,8 +1,9 @@
 use std::collections::{HashMap, HashSet};
 
-use mote_base::Symbol;
+use mote_base::{Id, Symbol};
+use mote_syntax as ast;
 
-use crate::defs::DefId;
+use crate::defs::{DefId, ModuleId};
 
 /// A type interned in [`Types`]; equal types have equal ids.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -23,6 +24,7 @@ impl TyId {
     pub const UINT64: TyId = TyId(11);
     pub const FLOAT32: TyId = TyId(12);
     pub const FLOAT64: TyId = TyId(13);
+    pub const ANY: TyId = TyId(14);
     /// `Int` is the 64-bit default.
     pub const INT: TyId = TyId::INT64;
     /// `Float` is the 64-bit default.
@@ -117,6 +119,164 @@ pub struct FnTy {
     pub send: bool,
 }
 
+/// Universal compiler-known generic/handle types resolved without std `@lang`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum BuiltinTy {
+    Pointer,
+    List,
+    Stream,
+    Task,
+    Sender,
+    Receiver,
+    Mutex,
+    Once,
+    AtomicInt,
+    AtomicBool,
+    PortEnd,
+}
+
+impl BuiltinTy {
+    pub const ALL: [BuiltinTy; 11] = [
+        BuiltinTy::Pointer,
+        BuiltinTy::List,
+        BuiltinTy::Stream,
+        BuiltinTy::Task,
+        BuiltinTy::Sender,
+        BuiltinTy::Receiver,
+        BuiltinTy::Mutex,
+        BuiltinTy::Once,
+        BuiltinTy::AtomicInt,
+        BuiltinTy::AtomicBool,
+        BuiltinTy::PortEnd,
+    ];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            BuiltinTy::Pointer => "Pointer",
+            BuiltinTy::List => "List",
+            BuiltinTy::Stream => "Stream",
+            BuiltinTy::Task => "Task",
+            BuiltinTy::Sender => "Sender",
+            BuiltinTy::Receiver => "Receiver",
+            BuiltinTy::Mutex => "Mutex",
+            BuiltinTy::Once => "Once",
+            BuiltinTy::AtomicInt => "AtomicInt",
+            BuiltinTy::AtomicBool => "AtomicBool",
+            BuiltinTy::PortEnd => "PortEnd",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<BuiltinTy> {
+        BuiltinTy::ALL.into_iter().find(|item| item.name() == name)
+    }
+
+    pub fn arity(self) -> usize {
+        match self {
+            BuiltinTy::Pointer
+            | BuiltinTy::List
+            | BuiltinTy::Stream
+            | BuiltinTy::Task
+            | BuiltinTy::Sender
+            | BuiltinTy::Receiver
+            | BuiltinTy::Mutex
+            | BuiltinTy::Once => 1,
+            BuiltinTy::AtomicInt | BuiltinTy::AtomicBool | BuiltinTy::PortEnd => 0,
+        }
+    }
+
+    /// Whether values are handles that tasks share and that never change by a write through the holder.
+    pub fn is_handle(self) -> bool {
+        matches!(
+            self,
+            BuiltinTy::Task
+                | BuiltinTy::Sender
+                | BuiltinTy::Receiver
+                | BuiltinTy::Mutex
+                | BuiltinTy::Once
+                | BuiltinTy::AtomicInt
+                | BuiltinTy::AtomicBool
+                | BuiltinTy::PortEnd
+        )
+    }
+}
+
+/// Compile-time constant value.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum ConstVal {
+    Int(i128, IntTy),
+    Bool(bool),
+    String(Symbol),
+    Null,
+    Tuple(Vec<ConstVal>),
+    Array(Vec<ConstVal>),
+    Type(TyId),
+    Struct { ty: TyId, fields: Vec<(Symbol, ConstVal)> },
+    Enum { ty: TyId, variant: u32 },
+}
+
+impl ConstVal {
+    pub fn as_u32(&self) -> Option<u32> {
+        match self {
+            ConstVal::Int(value, _) if (0..=i128::from(u32::MAX)).contains(value) => Some(*value as u32),
+            _ => None,
+        }
+    }
+}
+
+/// A deferred compile-time expression appearing in a generic type argument (e.g. `N + 1`).
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct ConstExpr {
+    pub module: ModuleId,
+    pub expr: Id<ast::Expr>,
+    pub params: Vec<Symbol>,
+    pub args: Vec<GenericArg>,
+}
+
+/// Constant argument passed to a `const` generic parameter or fixed array length.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum ConstArg {
+    Val(ConstVal),
+    Param { index: u32, name: Symbol },
+    Infer(u32),
+    Expr(ConstExpr),
+}
+
+impl ConstArg {
+    pub fn from_u32(len: u32) -> Self {
+        ConstArg::Val(ConstVal::Int(i128::from(len), IntTy::I64))
+    }
+
+    pub fn as_u32(&self) -> Option<u32> {
+        match self {
+            ConstArg::Val(val) => val.as_u32(),
+            _ => None,
+        }
+    }
+}
+
+/// Either a type argument or a constant expression argument in a generic application.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum GenericArg {
+    Type(TyId),
+    Const(ConstArg),
+}
+
+impl GenericArg {
+    pub fn as_type(&self) -> Option<TyId> {
+        match self {
+            GenericArg::Type(ty) => Some(*ty),
+            GenericArg::Const(_) => None,
+        }
+    }
+
+    pub fn as_const(&self) -> Option<&ConstArg> {
+        match self {
+            GenericArg::Const(c) => Some(c),
+            GenericArg::Type(_) => None,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum TyKind {
     /// A type that failed to check; it matches anything and reports nothing.
@@ -127,21 +287,25 @@ pub enum TyKind {
     String,
     Int(IntTy),
     Float(FloatTy),
+    /// A universal compiler-backed type (`List<T>`, `Pointer<T>`, `Mutex<T>`, ...).
+    Builtin { kind: BuiltinTy, args: Vec<TyId> },
     /// A type parameter of a declaration, by position: the owner's first, then the function's own.
     Param { index: u32, name: Symbol },
     /// An unsolved variable of a call being checked.
     Infer(u32),
-    /// A struct, class or enum with its type arguments.
-    Adt { def: DefId, args: Vec<TyId> },
+    /// A struct, class or enum with its generic arguments.
+    Adt { def: DefId, args: Vec<GenericArg> },
     Tuple(Vec<TyId>),
     /// `[T]`.
     Array(TyId),
     /// `[T; N]`.
-    FixedArray(TyId, u32),
+    FixedArray(TyId, ConstArg),
     /// `T?`.
     Optional(TyId),
     /// Two or more members, sorted by id, none a union.
     Union(Vec<TyId>),
+    /// Universal type-safe dynamic container backed by the tagged Pair ABI.
+    Any,
     Function(FnTy),
 }
 
@@ -174,6 +338,8 @@ impl Types {
         }
         types.intern(TyKind::Float(FloatTy::F32));
         types.intern(TyKind::Float(FloatTy::F64));
+        let any = types.intern(TyKind::Any);
+        debug_assert_eq!(any, TyId::ANY);
         debug_assert_eq!(types.int(IntTy::U64), TyId::UINT64);
         debug_assert_eq!(types.float(FloatTy::F64), TyId::FLOAT64);
         types
@@ -212,8 +378,16 @@ impl Types {
         }
     }
 
-    pub fn adt(&mut self, def: DefId, args: Vec<TyId>) -> TyId {
+    pub fn builtin(&mut self, kind: BuiltinTy, args: Vec<TyId>) -> TyId {
+        self.intern(TyKind::Builtin { kind, args })
+    }
+
+    pub fn adt(&mut self, def: DefId, args: Vec<GenericArg>) -> TyId {
         self.intern(TyKind::Adt { def, args })
+    }
+
+    pub fn adt_types(&mut self, def: DefId, args: Vec<TyId>) -> TyId {
+        self.intern(TyKind::Adt { def, args: args.into_iter().map(GenericArg::Type).collect() })
     }
 
     pub fn tuple(&mut self, elements: Vec<TyId>) -> TyId {
@@ -225,6 +399,10 @@ impl Types {
     }
 
     pub fn fixed_array(&mut self, element: TyId, len: u32) -> TyId {
+        self.intern(TyKind::FixedArray(element, ConstArg::from_u32(len)))
+    }
+
+    pub fn fixed_array_arg(&mut self, element: TyId, len: ConstArg) -> TyId {
         self.intern(TyKind::FixedArray(element, len))
     }
 
@@ -264,20 +442,72 @@ impl Types {
 
     /// Replaces each `Param` by the argument at its index; a parameter past the arguments stays.
     pub fn subst(&mut self, ty: TyId, args: &[TyId]) -> TyId {
-        self.map(ty, &|kind| match kind {
-            TyKind::Param { index, .. } => args.get(*index as usize).copied(),
-            _ => None,
-        })
+        let generic: Vec<GenericArg> = args.iter().copied().map(GenericArg::Type).collect();
+        self.subst_generic(ty, &generic)
     }
 
-    /// Replaces each solved variable by its type, as deep as the solutions go.
+    /// Replaces each type or const `Param` by the corresponding entry in `args`.
+    pub fn subst_generic(&mut self, ty: TyId, args: &[GenericArg]) -> TyId {
+        let leaf = |kind: &TyKind| match kind {
+            TyKind::Param { index, .. } => match args.get(*index as usize) {
+                Some(GenericArg::Type(t)) => Some(*t),
+                _ => None,
+            },
+            _ => None,
+        };
+        let const_leaf = |arg: &ConstArg| -> ConstArg {
+            match arg {
+                ConstArg::Param { index, .. } => match args.get(*index as usize) {
+                    Some(GenericArg::Const(c)) => c.clone(),
+                    _ => arg.clone(),
+                },
+                _ => arg.clone(),
+            }
+        };
+        self.map_with_const(ty, &leaf, &const_leaf, &mut HashMap::new())
+    }
+
+    /// Substitutes generic parameters inside a single `ConstArg`.
+    pub fn subst_const(&mut self, arg: &ConstArg, args: &[GenericArg]) -> ConstArg {
+        let leaf = |kind: &TyKind| match kind {
+            TyKind::Param { index, .. } => match args.get(*index as usize) {
+                Some(GenericArg::Type(t)) => Some(*t),
+                _ => None,
+            },
+            _ => None,
+        };
+        let const_leaf = |inner: &ConstArg| -> ConstArg {
+            match inner {
+                ConstArg::Param { index, .. } => match args.get(*index as usize) {
+                    Some(GenericArg::Const(c)) => c.clone(),
+                    _ => inner.clone(),
+                },
+                _ => inner.clone(),
+            }
+        };
+        self.map_const(arg, &leaf, &const_leaf, &mut HashMap::new())
+    }
+
+    /// Replaces each solved type variable by its type, as deep as the solutions go.
     pub fn solve(&mut self, ty: TyId, solved: &[Option<TyId>]) -> TyId {
+        self.solve_generic(ty, solved, &[])
+    }
+
+    /// Replaces each solved type and const variable by its solution, as deep as they go.
+    pub fn solve_generic(&mut self, ty: TyId, solved_types: &[Option<TyId>], solved_consts: &[Option<ConstArg>]) -> TyId {
         let mut ty = ty;
         while self.has_infer(ty) {
-            let next = self.map(ty, &|kind| match kind {
-                TyKind::Infer(variable) => solved.get(*variable as usize).copied().flatten(),
+            let leaf = |kind: &TyKind| match kind {
+                TyKind::Infer(variable) => solved_types.get(*variable as usize).copied().flatten(),
                 _ => None,
-            });
+            };
+            let const_leaf = |arg: &ConstArg| -> ConstArg {
+                match arg {
+                    ConstArg::Infer(variable) => solved_consts.get(*variable as usize).and_then(|v| v.clone()).unwrap_or_else(|| arg.clone()),
+                    _ => arg.clone(),
+                }
+            };
+            let next = self.map_with_const(ty, &leaf, &const_leaf, &mut HashMap::new());
             if next == ty {
                 break;
             }
@@ -286,13 +516,63 @@ impl Types {
         ty
     }
 
-    /// Rebuilds the type with `leaf` answering for the nodes it replaces.
-    fn map(&mut self, ty: TyId, leaf: &dyn Fn(&TyKind) -> Option<TyId>) -> TyId {
-        self.map_with(ty, leaf, &mut HashMap::new())
+    /// Replaces each solved type and const variable inside a single `ConstArg`.
+    pub fn solve_const(&mut self, arg: &ConstArg, solved_types: &[Option<TyId>], solved_consts: &[Option<ConstArg>]) -> ConstArg {
+        let mut cur = arg.clone();
+        while self.const_has_infer(&cur) {
+            let leaf = |kind: &TyKind| match kind {
+                TyKind::Infer(variable) => solved_types.get(*variable as usize).copied().flatten(),
+                _ => None,
+            };
+            let const_leaf = |inner: &ConstArg| -> ConstArg {
+                match inner {
+                    ConstArg::Infer(variable) => solved_consts.get(*variable as usize).and_then(|v| v.clone()).unwrap_or_else(|| inner.clone()),
+                    _ => inner.clone(),
+                }
+            };
+            let next = self.map_const(&cur, &leaf, &const_leaf, &mut HashMap::new());
+            if next == cur {
+                break;
+            }
+            cur = next;
+        }
+        cur
+    }
+
+    fn map_const(
+        &mut self,
+        arg: &ConstArg,
+        leaf: &dyn Fn(&TyKind) -> Option<TyId>,
+        const_leaf: &dyn Fn(&ConstArg) -> ConstArg,
+        done: &mut HashMap<TyId, TyId>,
+    ) -> ConstArg {
+        let mapped = match arg {
+            ConstArg::Expr(ce) => ConstArg::Expr(ConstExpr {
+                module: ce.module,
+                expr: ce.expr,
+                params: ce.params.clone(),
+                args: ce
+                    .args
+                    .iter()
+                    .map(|a| match a {
+                        GenericArg::Type(t) => GenericArg::Type(self.map_with_const(*t, leaf, const_leaf, done)),
+                        GenericArg::Const(c) => GenericArg::Const(self.map_const(c, leaf, const_leaf, done)),
+                    })
+                    .collect(),
+            }),
+            other => other.clone(),
+        };
+        const_leaf(&mapped)
     }
 
     /// `map`, answering a type met again from `done` so a type that shares parts is visited once.
-    fn map_with(&mut self, ty: TyId, leaf: &dyn Fn(&TyKind) -> Option<TyId>, done: &mut HashMap<TyId, TyId>) -> TyId {
+    fn map_with_const(
+        &mut self,
+        ty: TyId,
+        leaf: &dyn Fn(&TyKind) -> Option<TyId>,
+        const_leaf: &dyn Fn(&ConstArg) -> ConstArg,
+        done: &mut HashMap<TyId, TyId>,
+    ) -> TyId {
         if let Some(&found) = done.get(&ty) {
             return found;
         }
@@ -301,33 +581,48 @@ impl Types {
             found
         } else {
             match kind {
+                TyKind::Builtin { kind, args: inner } => {
+                    let inner = self.map_all(&inner, leaf, const_leaf, done);
+                    self.builtin(kind, inner)
+                }
                 TyKind::Adt { def, args: inner } => {
-                    let inner = self.map_all(&inner, leaf, done);
+                    let inner = inner
+                        .iter()
+                        .map(|arg| match arg {
+                            GenericArg::Type(t) => GenericArg::Type(self.map_with_const(*t, leaf, const_leaf, done)),
+                            GenericArg::Const(c) => GenericArg::Const(self.map_const(c, leaf, const_leaf, done)),
+                        })
+                        .collect();
                     self.adt(def, inner)
                 }
                 TyKind::Tuple(elements) => {
-                    let elements = self.map_all(&elements, leaf, done);
+                    let elements = self.map_all(&elements, leaf, const_leaf, done);
                     self.tuple(elements)
                 }
                 TyKind::Array(element) => {
-                    let element = self.map_with(element, leaf, done);
+                    let element = self.map_with_const(element, leaf, const_leaf, done);
                     self.array(element)
                 }
                 TyKind::FixedArray(element, len) => {
-                    let element = self.map_with(element, leaf, done);
-                    self.fixed_array(element, len)
+                    let element = self.map_with_const(element, leaf, const_leaf, done);
+                    let len = self.map_const(&len, leaf, const_leaf, done);
+                    self.fixed_array_arg(element, len)
                 }
                 TyKind::Optional(inner) => {
-                    let inner = self.map_with(inner, leaf, done);
+                    let inner = self.map_with_const(inner, leaf, const_leaf, done);
                     self.optional(inner)
                 }
                 TyKind::Union(members) => {
-                    let members = self.map_all(&members, leaf, done);
+                    let members = self.map_all(&members, leaf, const_leaf, done);
                     self.union(&members)
                 }
                 TyKind::Function(function) => {
-                    let params = function.params.iter().map(|param| FnParam { ty: self.map_with(param.ty, leaf, done), is_var: param.is_var }).collect();
-                    let ret = self.map_with(function.ret, leaf, done);
+                    let params = function
+                        .params
+                        .iter()
+                        .map(|param| FnParam { ty: self.map_with_const(param.ty, leaf, const_leaf, done), is_var: param.is_var })
+                        .collect();
+                    let ret = self.map_with_const(function.ret, leaf, const_leaf, done);
                     self.function(params, ret, function.send)
                 }
                 _ => ty,
@@ -337,13 +632,28 @@ impl Types {
         result
     }
 
-    fn map_all(&mut self, types: &[TyId], leaf: &dyn Fn(&TyKind) -> Option<TyId>, done: &mut HashMap<TyId, TyId>) -> Vec<TyId> {
-        types.iter().map(|&ty| self.map_with(ty, leaf, done)).collect()
+    fn map_all(
+        &mut self,
+        types: &[TyId],
+        leaf: &dyn Fn(&TyKind) -> Option<TyId>,
+        const_leaf: &dyn Fn(&ConstArg) -> ConstArg,
+        done: &mut HashMap<TyId, TyId>,
+    ) -> Vec<TyId> {
+        types.iter().map(|&ty| self.map_with_const(ty, leaf, const_leaf, done)).collect()
     }
 
-    /// Whether the variable occurs anywhere in the type.
+    /// Whether the type variable occurs anywhere in the type.
     pub fn mentions(&self, ty: TyId, variable: u32) -> bool {
         self.any(ty, &|kind| matches!(kind, TyKind::Infer(other) if *other == variable))
+    }
+
+    /// Whether the const variable occurs anywhere in the type.
+    pub fn mentions_const(&self, ty: TyId, variable: u32) -> bool {
+        self.any(ty, &|kind| match kind {
+            TyKind::Adt { args, .. } => args.iter().any(|arg| matches!(arg, GenericArg::Const(ConstArg::Infer(other)) if *other == variable)),
+            TyKind::FixedArray(_, ConstArg::Infer(other)) => *other == variable,
+            _ => false,
+        })
     }
 
     /// Whether any part of the type is `Error`.
@@ -351,14 +661,58 @@ impl Types {
         self.any(ty, &|kind| matches!(kind, TyKind::Error))
     }
 
-    /// Whether any part of the type is an unsolved variable.
-    pub fn has_infer(&self, ty: TyId) -> bool {
-        self.any(ty, &|kind| matches!(kind, TyKind::Infer(_)))
+    /// Whether any part of a `ConstArg` contains an unsolved inference variable.
+    pub fn const_has_infer(&self, arg: &ConstArg) -> bool {
+        match arg {
+            ConstArg::Infer(_) => true,
+            ConstArg::Expr(ce) => ce.args.iter().any(|g| self.generic_has_infer(g)),
+            _ => false,
+        }
     }
 
-    /// Whether any part of the type is a type parameter.
+    /// Whether any part of a `ConstArg` contains a generic or type parameter.
+    pub fn const_has_param(&self, arg: &ConstArg) -> bool {
+        match arg {
+            ConstArg::Param { .. } => true,
+            ConstArg::Expr(ce) => ce.args.iter().any(|g| self.generic_has_param(g)),
+            _ => false,
+        }
+    }
+
+    /// Whether a `GenericArg` contains an unsolved inference variable.
+    pub fn generic_has_infer(&self, arg: &GenericArg) -> bool {
+        match arg {
+            GenericArg::Type(ty) => self.has_infer(*ty),
+            GenericArg::Const(c) => self.const_has_infer(c),
+        }
+    }
+
+    /// Whether a `GenericArg` contains a generic or type parameter.
+    pub fn generic_has_param(&self, arg: &GenericArg) -> bool {
+        match arg {
+            GenericArg::Type(ty) => self.has_param(*ty),
+            GenericArg::Const(c) => self.const_has_param(c),
+        }
+    }
+
+    /// Whether any part of the type is an unsolved variable.
+    pub fn has_infer(&self, ty: TyId) -> bool {
+        self.any(ty, &|kind| match kind {
+            TyKind::Infer(_) => true,
+            TyKind::Adt { args, .. } => args.iter().any(|g| self.generic_has_infer(g)),
+            TyKind::FixedArray(_, len) => self.const_has_infer(len),
+            _ => false,
+        })
+    }
+
+    /// Whether any part of the type is a type or const parameter.
     pub fn has_param(&self, ty: TyId) -> bool {
-        self.any(ty, &|kind| matches!(kind, TyKind::Param { .. }))
+        self.any(ty, &|kind| match kind {
+            TyKind::Param { .. } => true,
+            TyKind::Adt { args, .. } => args.iter().any(|g| self.generic_has_param(g)),
+            TyKind::FixedArray(_, len) => self.const_has_param(len),
+            _ => false,
+        })
     }
 
     /// How many types deep the type nests.
@@ -372,7 +726,8 @@ impl Types {
         }
         let deepest = |types: &mut dyn Iterator<Item = TyId>, done: &mut HashMap<TyId, usize>| types.map(|inner| self.depth_with(inner, done)).max().unwrap_or(0);
         let inside = match self.kind(ty) {
-            TyKind::Adt { args, .. } => deepest(&mut args.iter().copied(), done),
+            TyKind::Builtin { args, .. } => deepest(&mut args.iter().copied(), done),
+            TyKind::Adt { args, .. } => deepest(&mut args.iter().filter_map(GenericArg::as_type), done),
             TyKind::Tuple(types) | TyKind::Union(types) => deepest(&mut types.iter().copied(), done),
             TyKind::Array(inner) | TyKind::FixedArray(inner, _) | TyKind::Optional(inner) => deepest(&mut [*inner].into_iter(), done),
             TyKind::Function(function) => deepest(&mut function.params.iter().map(|param| param.ty).chain([function.ret]), done),
@@ -397,7 +752,12 @@ impl Types {
             return true;
         }
         match kind {
-            TyKind::Adt { args, .. } => args.iter().any(|&arg| self.any_seen(arg, test, seen)),
+            TyKind::Builtin { args, .. } => args.iter().any(|&arg| self.any_seen(arg, test, seen)),
+            TyKind::Adt { args, .. } => args.iter().any(|arg| match arg {
+                GenericArg::Type(t) => self.any_seen(*t, test, seen),
+                GenericArg::Const(ConstArg::Val(ConstVal::Type(t))) => self.any_seen(*t, test, seen),
+                GenericArg::Const(_) => false,
+            }),
             TyKind::Tuple(types) | TyKind::Union(types) => types.iter().any(|&inner| self.any_seen(inner, test, seen)),
             TyKind::Array(inner) | TyKind::FixedArray(inner, _) | TyKind::Optional(inner) => self.any_seen(*inner, test, seen),
             TyKind::Function(function) => function.params.iter().any(|param| self.any_seen(param.ty, test, seen)) || self.any_seen(function.ret, test, seen),
@@ -416,14 +776,32 @@ impl Types {
             TyKind::Float(float) => float.name().to_string(),
             TyKind::Param { name, .. } => names.symbol(*name),
             TyKind::Infer(_) => "_".to_string(),
+            TyKind::Builtin { kind, args } => {
+                if args.is_empty() {
+                    kind.name().to_string()
+                } else {
+                    format!("{}<{}>", kind.name(), self.render_all(args, names))
+                }
+            }
             TyKind::Adt { def, args } => {
                 let name = names.def_name(*def);
-                if args.is_empty() { name } else { format!("{name}<{}>", self.render_all(args, names)) }
+                if args.is_empty() {
+                    name
+                } else {
+                    let rendered: Vec<String> = args
+                        .iter()
+                        .map(|arg| match arg {
+                            GenericArg::Type(t) => self.render(*t, names),
+                            GenericArg::Const(c) => self.render_const(c, names),
+                        })
+                        .collect();
+                    format!("{name}<{}>", rendered.join(", "))
+                }
             }
             TyKind::Tuple(elements) if elements.len() == 1 => format!("({},)", self.render(elements[0], names)),
             TyKind::Tuple(elements) => format!("({})", self.render_all(elements, names)),
             TyKind::Array(element) => format!("[{}]", self.render(*element, names)),
-            TyKind::FixedArray(element, len) => format!("[{}; {len}]", self.render(*element, names)),
+            TyKind::FixedArray(element, len) => format!("[{}; {}]", self.render(*element, names), self.render_const(len, names)),
             TyKind::Optional(inner) => {
                 let text = self.render(*inner, names);
                 if matches!(self.kind(*inner), TyKind::Union(_) | TyKind::Function(_)) { format!("({text})?") } else { format!("{text}?") }
@@ -436,6 +814,7 @@ impl Types {
                 })
                 .collect::<Vec<_>>()
                 .join(" | "),
+            TyKind::Any => "Any".to_string(),
             TyKind::Function(function) => {
                 let params: Vec<String> = function
                     .params
@@ -445,6 +824,35 @@ impl Types {
                 let send = if function.send { "Send " } else { "" };
                 format!("{send}({}) -> {}", params.join(", "), self.render(function.ret, names))
             }
+        }
+    }
+
+    pub fn render_const(&self, arg: &ConstArg, names: &dyn TypeNames) -> String {
+        match arg {
+            ConstArg::Val(val) => self.render_const_val(val, names),
+            ConstArg::Param { name, .. } => names.symbol(*name),
+            ConstArg::Infer(_) => "_".to_string(),
+            ConstArg::Expr(_) => "<const>".to_string(),
+        }
+    }
+
+    pub fn render_const_val(&self, val: &ConstVal, names: &dyn TypeNames) -> String {
+        match val {
+            ConstVal::Int(n, _) => n.to_string(),
+            ConstVal::Bool(b) => b.to_string(),
+            ConstVal::String(s) => format!("{:?}", names.symbol(*s)),
+            ConstVal::Null => "null".to_string(),
+            ConstVal::Tuple(items) => {
+                let parts: Vec<String> = items.iter().map(|v| self.render_const_val(v, names)).collect();
+                if items.len() == 1 { format!("({},)", parts[0]) } else { format!("({})", parts.join(", ")) }
+            }
+            ConstVal::Array(items) => {
+                let parts: Vec<String> = items.iter().map(|v| self.render_const_val(v, names)).collect();
+                format!("[{}]", parts.join(", "))
+            }
+            ConstVal::Type(t) => self.render(*t, names),
+            ConstVal::Struct { ty, .. } => format!("{} {{ .. }}", self.render(*ty, names)),
+            ConstVal::Enum { ty, variant } => format!("{}::#{}", self.render(*ty, names), variant),
         }
     }
 
@@ -478,8 +886,9 @@ mod tests {
         assert_eq!(types.kind(TyId::INT), &TyKind::Int(IntTy::I64));
         assert_eq!(types.kind(TyId::UINT8), &TyKind::Int(IntTy::U8));
         assert_eq!(types.kind(TyId::FLOAT32), &TyKind::Float(FloatTy::F32));
+        assert_eq!(types.kind(TyId::ANY), &TyKind::Any);
         assert_eq!(types.int(IntTy::U16), TyId::UINT16);
-        assert_eq!(types.len(), 14);
+        assert_eq!(types.len(), 15);
     }
 
     #[test]
@@ -576,7 +985,7 @@ mod tests {
         let name = fixture.interner.intern("T");
         let types = &mut fixture.program.types;
         let t = types.param(0, name);
-        let point_ty = types.adt(point, vec![t]);
+        let point_ty = types.adt_types(point, vec![t]);
         let union = types.union(&[TyId::INT, TyId::STRING]);
         let optional_union = types.optional(union);
         let tuple = types.tuple(vec![TyId::INT, TyId::STRING]);

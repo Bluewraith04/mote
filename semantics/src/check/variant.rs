@@ -6,7 +6,7 @@ use super::FnCx;
 use crate::cx::Cx;
 use crate::defs::{DefId, Payload, Resolved};
 use crate::tree::{Expr, ExprKind, FieldValue};
-use crate::types::{TyId, TyKind};
+use crate::types::{GenericArg, TyId, TyKind};
 
 impl Cx<'_> {
     pub(crate) fn variant_index(&self, def: DefId, name: Symbol) -> Option<usize> {
@@ -33,7 +33,7 @@ impl Cx<'_> {
         }
     }
 
-    fn enum_parts(&self, ty: TyId) -> (DefId, Vec<TyId>) {
+    fn enum_parts(&self, ty: TyId) -> (DefId, Vec<GenericArg>) {
         match self.program.types.kind(ty) {
             TyKind::Adt { def, args } => (*def, args.clone()),
             _ => unreachable!("an enum type"),
@@ -66,7 +66,7 @@ impl Cx<'_> {
                 }
                 let mut fields = Vec::new();
                 for (position, (arg, declared)) in args.iter().zip(types).enumerate() {
-                    let field_ty = self.program.types.subst(declared, &type_args);
+                    let field_ty = self.program.types.subst_generic(declared, &type_args);
                     let value = self.expr_to(f, arg.value, field_ty);
                     fields.push(FieldValue { index: position as u32, value });
                 }

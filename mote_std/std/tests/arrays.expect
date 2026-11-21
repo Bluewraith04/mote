@@ -1,0 +1,9 @@
+start
+test "dynamic array core, reductions, folds, search, and transforms"
+passed
+test "fixed array [T; N] methods match dynamic arrays"
+passed
+test "[i; n] assigns cleanly to [@typeof(i)] and const T = @typeof(i)"
+passed
+test "numpy-style array constructors in std.array"
+passed

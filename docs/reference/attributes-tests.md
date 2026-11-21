@@ -4,25 +4,23 @@
 
 * `@name` or `@name(arg, …)` precedes an item. The set is closed: an unknown name is an error. <!-- test: tests_and_attributes, an_attribute_the_compiler_does_not_define_is_unknown_on_an_item_and_on_a_variant, attributes_are_a_closed_set, the_attributes_the_compiler_defines_are_these_and_no_others -->
 <!-- table: attributes -->
-* The attributes are `@link`, `@blocking`, `@intrinsic`, `@lang`, `@stable` and `@ignore`.
+* The attributes are `@blocking`, `@stable` and `@ignore`.
 <!-- /table -->
 
-<!-- test: native_functions_record_their_link, link_and_blocking_belong_on_native_functions, an_intrinsic_is_a_generic_native_function_in_std, lang_items_are_std_only_and_register_once, attributes_are_a_closed_set, a_lang_declaration_stands_for_its_built_in_type -->
+<!-- test: extern_blocks_record_their_link, blocking_belongs_on_extern_functions, attributes_are_a_closed_set -->
 | Attribute | Effect |
 |---|---|
-| `@link("lib")`, `@link("lib", symbol = "name")` | on a `native fn`: the library and C symbol it binds |
-| `@intrinsic("name")` | on a `native fn` in `std`: an operation the compiler or runtime provides, in place of `@link`; an error elsewhere |
-| `@blocking` | on a `native fn`: marks a call that may wait |
-| `@lang("name")` | marks a `std` declaration the compiler needs, such as `list` or `pointer`; an error elsewhere |
+| `@blocking` | on an `extern` fn: marks a call that may wait |
 | `@stable` | marks an item of `std`; an error elsewhere |
 | `@ignore` | on a `test` block: skips it |
 
 * An argument is a bare name, a string, a number or `true`/`false`, alone or as `key = value`. <!-- test: tests_and_attributes -->
-* `@link` and `@blocking` go on a `native fn` only, `@ignore` on a `test` only, and `@lang` and `@stable` in `std` only. <!-- block -->
+* `@blocking` goes on an `extern` fn only, `@ignore` on a `test` only, and `@stable` in `std` only. <!-- block -->
 
 ```mote
-@link("c", symbol = "puts")
-native fn puts(text: String) -> Int
+extern "c" {
+    fn puts(text: String) -> Int
+}
 
 @ignore
 fn plain() {} // error: `@ignore` goes on a test
@@ -121,7 +119,7 @@ fn main() {
 * `mote test` runs every test in the package and reports each. <!-- test: run_tests_lists_one_line_per_block_with_ignored_ones_skipped_and_a_count -->
 
 ```mote
-import { assert_eq } from std.test
+import assert_eq from std.test
 
 test "addition" {
     assert_eq(1 + 1, 2)

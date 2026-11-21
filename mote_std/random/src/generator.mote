@@ -1,0 +1,268 @@
+// A seeded generator, xoshiro256++ seeded by splitmix64.
+import std.math as math
+import system_int from .system
+
+fn rotl(x: UInt64, k: Int) -> UInt64 {
+    let right: UInt64 = (64 - k) as UInt64
+    return x.wrapping_shl(k) | (x >> right)
+}
+
+// One step of splitmix64: the next state and the output are both derived from it.
+fn splitmix(state: UInt64) -> (UInt64, UInt64) {
+    let next = state.wrapping_add(0x9E3779B97F4A7C15)
+    var z = next
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58476D1CE4E5B9)
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D049BB133111EB)
+    return (next, z ^ (z >> 31))
+}
+
+
+/// A generator: the same seed gives the same numbers, and it is not meant for secrets.
+pub struct Random {
+    var state: [UInt64; 4]
+
+    /// A generator whose numbers follow from `seed`.
+    pub fn seeded(seed: Int) -> Random {
+        var s = seed as UInt64
+        var state: [UInt64; 4] = [0; 4]
+        for i in 0..4 {
+            let step = splitmix(s)
+            s = step.0
+            state[i] = step.1
+        }
+        return Random { state: state }
+    }
+
+    /// A generator seeded from the system's source.
+    pub fn system() -> Result<Random, Error> {
+        return Ok(Random.seeded(system_int()?))
+    }
+
+    /// The next 64 bits.
+    pub fn next_bits(var self) -> UInt64 {
+        let result = rotl(self.state[0].wrapping_add(self.state[3]), 23).wrapping_add(self.state[0])
+        let t = self.state[1] << 17
+        self.state[2] = self.state[2] ^ self.state[0]
+        self.state[3] = self.state[3] ^ self.state[1]
+        self.state[1] = self.state[1] ^ self.state[2]
+        self.state[0] = self.state[0] ^ self.state[3]
+        self.state[2] = self.state[2] ^ t
+        self.state[3] = rotl(self.state[3], 45)
+        return result
+    }
+
+    /// An integer from 0 up to but not including `limit`, every value equally likely; `limit` must be above 0.
+    pub fn below(var self, limit: Int) -> Int {
+        if limit <= 0 { @fault("the limit must be above 0") }
+        let span = limit as UInt64
+        let floor = span.wrapping_neg() % span
+        while true {
+            let bits = self.next_bits()
+            if bits >= floor { return (bits % span) as Int }
+        }
+        return 0
+    }
+
+    /// An integer from `low` up to but not including `high`; `high` must be above `low`.
+    pub fn between(var self, low: Int, high: Int) -> Int {
+        if high <= low { @fault("the range must not be empty") }
+        return low + self.below(high - low)
+    }
+
+    /// A float from 0.0 up to but not including 1.0.
+    pub fn float(var self) -> Float {
+        return ((self.next_bits() >> 11) as Float) / 9007199254740992.0
+    }
+
+    /// True or false with equal chance.
+    pub fn bool(var self) -> Bool {
+        return (self.next_bits() >> 63) == 1
+    }
+
+    /// `count` random bytes.
+    pub fn bytes(var self, count: Int) -> [UInt8] {
+        var out: List<UInt8> = []
+        for _ in 0..count {
+            out.push((self.next_bits() >> 56) as UInt8)
+        }
+        return out.to_array()
+    }
+
+    /// A copy of `items` in a random order.
+    pub fn shuffled<T>(var self, items: List<T>) -> List<T> {
+        var out = items.clone()
+        var at = out.len() - 1
+        while at > 0 {
+            let other = self.below(at + 1)
+            let held = out.get(at)
+            out.set(at, out.get(other))
+            out.set(other, held)
+            at -= 1
+        }
+        return out
+    }
+
+    /// One item chosen at random, or null for an empty list.
+    pub fn choose<T>(var self, items: List<T>) -> T? {
+        if items.is_empty() { return null }
+        return items.get(self.below(items.len()))
+    }
+
+    /// A float uniformly distributed in `[low, high)`.
+    pub fn uniform(var self, low: Float, high: Float) -> Float {
+        if high <= low { @fault("uniform: high must be greater than low") }
+        return low + self.float() * (high - low)
+    }
+
+    /// A float drawn from the normal distribution `N(mean, std^2)`.
+    pub fn normal(var self, mean: Float = 0.0, std: Float = 1.0) -> Float {
+        if std < 0.0 { @fault("normal: std must be non-negative") }
+        var u1 = self.float()
+        while u1 <= 0.0 { u1 = self.float() }
+        let u2 = self.float()
+        let z = math.sqrt(-2.0 * math.ln(u1)) * math.cos(2.0 * math.PI * u2)
+        return mean + std * z
+    }
+
+    /// `n` floats uniformly distributed in `[0.0, 1.0)`.
+    pub fn rand(var self, n: Int) -> [Float] {
+        if n < 0 { @fault("rand: negative length ${n}") }
+        if n == 0 { return [] }
+        var out = [0.0; n]
+        var i = 0
+        while i < n {
+            out[i] = self.float()
+            i += 1
+        }
+        return out
+    }
+
+    /// `n` floats uniformly distributed in `[low, high)`.
+    pub fn uniform_array(var self, n: Int, low: Float, high: Float) -> [Float] {
+        if n < 0 { @fault("uniform_array: negative length ${n}") }
+        if high <= low { @fault("uniform_array: high must be greater than low") }
+        if n == 0 { return [] }
+        var out = [0.0; n]
+        var i = 0
+        while i < n {
+            out[i] = self.uniform(low, high)
+            i += 1
+        }
+        return out
+    }
+
+    /// `n` floats drawn from the standard normal distribution `N(0, 1)`.
+    pub fn randn(var self, n: Int) -> [Float] {
+        if n < 0 { @fault("randn: negative length ${n}") }
+        if n == 0 { return [] }
+        var out = [0.0; n]
+        var i = 0
+        while i < n {
+            var u1 = self.float()
+            while u1 <= 0.0 { u1 = self.float() }
+            let u2 = self.float()
+            let r = math.sqrt(-2.0 * math.ln(u1))
+            let theta = 2.0 * math.PI * u2
+            out[i] = r * math.cos(theta)
+            if i + 1 < n {
+                out[i + 1] = r * math.sin(theta)
+            }
+            i += 2
+        }
+        return out
+    }
+
+    /// `n` floats drawn from `N(mean, std^2)`.
+    pub fn normal_array(var self, n: Int, mean: Float = 0.0, std: Float = 1.0) -> [Float] {
+        if n < 0 { @fault("normal_array: negative length ${n}") }
+        if std < 0.0 { @fault("normal_array: std must be non-negative") }
+        var out = self.randn(n)
+        if mean != 0.0 || std != 1.0 {
+            var i = 0
+            while i < n {
+                out[i] = mean + std * out[i]
+                i += 1
+            }
+        }
+        return out
+    }
+
+    /// `n` integers uniformly distributed in `[low, high)`.
+    pub fn randint(var self, n: Int, low: Int, high: Int) -> [Int] {
+        if n < 0 { @fault("randint: negative length ${n}") }
+        if high <= low { @fault("randint: high must be greater than low") }
+        if n == 0 { return [] }
+        var out = [0; n]
+        var i = 0
+        while i < n {
+            out[i] = self.between(low, high)
+            i += 1
+        }
+        return out
+    }
+
+    /// `n` booleans with equal probability.
+    pub fn randbool(var self, n: Int) -> [Bool] {
+        if n < 0 { @fault("randbool: negative length ${n}") }
+        if n == 0 { return [] }
+        var out = [false; n]
+        var i = 0
+        while i < n {
+            out[i] = self.bool()
+            i += 1
+        }
+        return out
+    }
+
+    /// A random permutation of `0..n`.
+    pub fn permutation(var self, n: Int) -> [Int] {
+        if n < 0 { @fault("permutation: negative length ${n}") }
+        if n == 0 { return [] }
+        var out = [0; n]
+        var i = 0
+        while i < n {
+            out[i] = i
+            i += 1
+        }
+        var at = n - 1
+        while at > 0 {
+            let other = self.below(at + 1)
+            let tmp = out[at]
+            out[at] = out[other]
+            out[other] = tmp
+            at -= 1
+        }
+        return out
+    }
+
+    /// `n` elements sampled with replacement from `items`.
+    pub fn choice<T>(var self, items: [T], n: Int) -> [T] {
+        if n < 0 { @fault("choice: negative length ${n}") }
+        if n == 0 { return [] }
+        let count = items.len()
+        if count == 0 { @fault("choice: cannot sample from empty array") }
+        var out = [items[self.below(count)]; n]
+        var i = 1
+        while i < n {
+            out[i] = items[self.below(count)]
+            i += 1
+        }
+        return out
+    }
+
+    /// A shuffled copy of `items`.
+    pub fn shuffled_array<T>(var self, items: [T]) -> [T] {
+        var out = items.clone()
+        self.shuffle(out.mut_span())
+        return out
+    }
+
+    /// Shuffles the elements of a mutable view in place.
+    pub fn shuffle<T>(var self, var items: MutSpan<T>) {
+        var at = items.len() - 1
+        while at > 0 {
+            items.swap(at, self.below(at + 1))
+            at -= 1
+        }
+    }
+}

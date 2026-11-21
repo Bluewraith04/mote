@@ -27,7 +27,7 @@ fn manifest_text(name: &str, lib: bool) -> String {
 const MAIN_TEXT: &str = "fn main() {\n    println(\"Hello, world!\")\n}\n";
 
 fn lib_text(name: &str) -> String {
-    format!("import {{ assert_eq }} from std.test\n\npub fn hello() -> String {{\n    return \"Hello from {name}\"\n}}\n\ntest \"hello\" {{\n    assert_eq(hello(), \"Hello from {name}\")\n}}\n")
+    format!("import assert_eq from std.test\n\npub fn hello() -> String {{\n    return \"Hello from {name}\"\n}}\n\ntest \"hello\" {{\n    assert_eq(hello(), \"Hello from {name}\")\n}}\n")
 }
 
 /// Makes the directory `path` (the current one when absent or `.`) a package named after the directory, and says which files it wrote; an existing manifest is an error, and an existing source file is kept.
@@ -168,7 +168,7 @@ mod tests {
         let (_scratch, dir) = empty("old");
         fs::write(dir.join("mote.toml"), "mine").unwrap();
         let outcome = execute(&words("init"), &dir);
-        assert_eq!((outcome.code, outcome.stderr.clone()), (FAILED, format!("error: {}/mote.toml already exists\n", dir.display())));
+        assert_eq!((outcome.code, outcome.stderr.clone()), (FAILED, format!("error: {}/mote.toml already exists\n", mote_packages::shown(&dir))));
         assert_eq!(fs::read_to_string(dir.join("mote.toml")).unwrap(), "mine");
         assert!(!dir.join("src").exists());
     }

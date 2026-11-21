@@ -1,0 +1,17 @@
+// Constants and functions over Float.
+
+pub let PI = 3.141592653589793
+pub let E = 2.718281828459045
+
+pub fn sqrt(x: Float) -> Float { return @__math_sqrt(x) }
+pub fn floor(x: Float) -> Float { return @__math_floor(x) }
+pub fn ceil(x: Float) -> Float { return @__math_ceil(x) }
+pub fn round(x: Float) -> Float { return @__math_round(x) }
+pub fn pow(x: Float, y: Float) -> Float { return @__math_pow(x, y) }
+pub fn exp(x: Float) -> Float { return @__math_exp(x) }
+pub fn ln(x: Float) -> Float { return @__math_ln(x) }
+pub fn log10(x: Float) -> Float { return @__math_log10(x) }
+pub fn sin(x: Float) -> Float { return @__math_sin(x) }
+pub fn cos(x: Float) -> Float { return @__math_cos(x) }
+pub fn tan(x: Float) -> Float { return @__math_tan(x) }
+pub fn atan2(y: Float, x: Float) -> Float { return @__math_atan2(y, x) }

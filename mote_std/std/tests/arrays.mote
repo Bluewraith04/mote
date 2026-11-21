@@ -1,0 +1,264 @@
+// Array and FixedArray methods, [i; n] with @typeof(i), and std.array constructors.
+import { assert, assert_eq } from std.test
+import std.array as array
+
+test "dynamic array core, reductions, folds, search, and transforms" {
+    var xs: [Int] = [3, 1, 4, 1, 5]
+    assert_eq(xs.len(), 5)
+    assert(!xs.is_empty(), "non-empty")
+    assert_eq(xs.first()!, 3)
+    assert_eq(xs.last()!, 5)
+    assert_eq(xs.get(2), 4)
+    assert_eq(xs.get_or(99, -1), -1)
+
+    xs.set(1, 2)
+    assert_eq(xs[1], 2)
+    assert(xs.contains(4), "contains 4")
+    assert(!xs.contains(99), "not contains 99")
+    assert(xs.slice(1, 4) == [2, 4, 1], "slice")
+
+    let cloned = xs.clone()
+    xs[0] = 9
+    assert_eq(cloned[0], 3)
+
+    let fs: [Float] = [1.5, 2.5, 4.0]
+    assert_eq(fs.sum(), 8.0)
+    assert_eq(fs.product(), 15.0)
+    assert(fs.mean() > 2.66 && fs.mean() < 2.67, "float mean")
+
+    let a: [Int] = [4, 1, 7, 1, 3]
+    assert_eq(a.sum(), 16)
+    assert_eq(a.product(), 84)
+    assert_eq(a.mean(), 3.2)
+    assert_eq(a.min()!, 1)
+    assert_eq(a.max()!, 7)
+    assert_eq(a.argmin()!, 1)
+    assert_eq(a.argmax()!, 2)
+    assert_eq(a.norm_sq(), 76)
+    assert_eq(a.dot([1, 2, 0, 1, 2]), 13)
+    assert(a.clamp(2, 5) == [4, 2, 5, 2, 3], "clamp")
+    assert(a.sort() == [1, 1, 3, 4, 7], "sort")
+    assert(a.sort_by(|x, y| y - x) == [7, 4, 3, 1, 1], "sort_by")
+
+    let words: [String] = ["pear", "apple", "fig"]
+    assert_eq(words.min()!, "apple")
+    assert_eq(words.max()!, "pear")
+    assert_eq(words.argmin()!, 1)
+    assert_eq(words.argmax()!, 0)
+    assert(words.sort() == ["apple", "fig", "pear"], "string sort")
+
+    assert_eq(a.fold(10, |acc, x| acc + x), 26)
+    assert_eq(a.reduce(|x, y| x + y)!, 16)
+    assert(a.scan(0, |acc, x| acc + x) == [4, 5, 12, 13, 16], "scan")
+    assert_eq(a.find(|x| x > 5)!, 7)
+    assert_eq(a.find_index(|x| x > 5)!, 2)
+    assert_eq(a.index_of(1)!, 1)
+    assert_eq(a.count(1), 2)
+    assert_eq(a.count_by(|x| x > 2), 3)
+    assert(a.all_by(|x| x > 0), "all_by")
+    assert(a.any_by(|x| x == 7), "any_by")
+    assert(a.none_by(|x| x < 0), "none_by")
+
+    assert(a.map(|x| x * 2) == [8, 2, 14, 2, 6], "map")
+    let z_rhs: [String] = ["x", "y"]
+    let z = a.take(2).zip(z_rhs)
+    assert_eq(z.len(), 2)
+    assert_eq(z[0].0, 4)
+    assert_eq(z[1].1, "y")
+    let zw_rhs: [Int] = [10, 20]
+    assert(a.take(2).zip_with(zw_rhs, |x, y| x + y) == [14, 21], "zip_with")
+    let e = a.take(2).enumerate()
+    assert_eq(e[0].0, 0)
+    assert_eq(e[1].1, 1)
+    assert(a.reverse() == [3, 1, 7, 1, 4], "reverse")
+    assert(a.filter(|x| x >= 3) == [4, 7, 3], "filter")
+    assert(a.take(2).concat([8, 9]) == [4, 1, 8, 9], "concat")
+    assert(a.drop(3) == [1, 3], "drop")
+
+    var stream_sum = 0
+    for v in a.stream() { stream_sum += v }
+    assert_eq(stream_sum, 16)
+
+    var filled: [Int] = [0; 4]
+    filled.fill(7)
+    assert(filled == [7, 7, 7, 7], "fill")
+
+    let mask: [Bool] = [true, false, true]
+    assert(mask.any(), "mask any")
+    assert(!mask.all(), "mask not all")
+    assert(!mask.none(), "mask not none")
+    let btrue: [Bool] = [true, true]
+    let bfalse: [Bool] = [false, false]
+    assert(btrue.all(), "mask all")
+    assert(bfalse.none(), "mask none")
+    let m_true: [Int] = [1, 2, 3]
+    let m_false: [Int] = [10, 20, 30]
+    assert(mask.select(m_true, m_false) == [1, 20, 3], "mask select")
+
+    let empty: [Int] = []
+    assert_eq(empty.mean(), 0.0)
+    assert(empty.first() == null, "empty first")
+    assert(empty.last() == null, "empty last")
+    assert(empty.min() == null, "empty min")
+    assert(empty.max() == null, "empty max")
+}
+
+test "fixed array [T; N] methods match dynamic arrays" {
+    var fx: [Int; 4] = [4, 1, 7, 2]
+    assert_eq(fx.len(), 4)
+    assert(!fx.is_empty(), "non-empty fixed")
+    assert_eq(fx.first()!, 4)
+    assert_eq(fx.last()!, 2)
+    assert_eq(fx.get(2), 7)
+    assert_eq(fx.get_or(10, -1), -1)
+
+    fx.set(1, 5)
+    assert_eq(fx[1], 5)
+    assert(fx.contains(7), "fixed contains 7")
+    assert(!fx.contains(99), "fixed not contains 99")
+    assert(fx.slice(1, 3) == [5, 7], "fixed slice")
+    assert(fx.to_array() == [4, 5, 7, 2], "fixed to_array")
+    assert(fx.to_list() == [4, 5, 7, 2], "fixed to_list")
+
+    let copy = fx.clone()
+    fx[0] = 99
+    assert_eq(copy[0], 4)
+
+    var fx_fill: [Int; 3] = [0; 3]
+    fx_fill.fill(8)
+    assert_eq(fx_fill[0], 8)
+    assert_eq(fx_fill[2], 8)
+
+    let nums: [Int; 4] = [3, 1, 4, 2]
+    assert_eq(nums.sum(), 10)
+    assert_eq(nums.product(), 24)
+    assert_eq(nums.mean(), 2.5)
+    assert_eq(nums.min()!, 1)
+    assert_eq(nums.max()!, 4)
+    assert_eq(nums.argmin()!, 1)
+    assert_eq(nums.argmax()!, 2)
+    assert_eq(nums.norm_sq(), 30)
+    assert_eq(nums.dot([1, 1, 1, 1]), 10)
+
+    let clamped: [Int; 4] = nums.clamp(2, 3)
+    assert_eq(clamped[0], 3)
+    assert_eq(clamped[1], 2)
+    assert_eq(clamped[2], 3)
+
+    let sorted: [Int; 4] = nums.sort()
+    assert_eq(sorted[0], 1)
+    assert_eq(sorted[3], 4)
+
+    let rev: [Int; 4] = nums.reverse()
+    assert_eq(rev[0], 2)
+    assert_eq(rev[3], 3)
+
+    assert_eq(nums.fold(0, |acc, x| acc + x), 10)
+    assert_eq(nums.reduce(|a, b| a + b)!, 10)
+    let scanned: [Int; 4] = nums.scan(0, |acc, x| acc + x)
+    assert_eq(scanned[3], 10)
+    assert_eq(nums.find(|x| x > 3)!, 4)
+    assert_eq(nums.find_index(|x| x == 1)!, 1)
+    assert_eq(nums.index_of(4)!, 2)
+    assert_eq(nums.count(3), 1)
+    assert_eq(nums.count_by(|x| x >= 3), 2)
+    assert(nums.all_by(|x| x > 0), "fixed all_by")
+    assert(nums.any_by(|x| x == 4), "fixed any_by")
+    assert(nums.none_by(|x| x < 0), "fixed none_by")
+
+    let mapped: [Int; 4] = nums.map(|x| x * 10)
+    assert_eq(mapped[2], 40)
+    let z1: [Int; 2] = [1, 2]
+    let z2: [String; 2] = ["a", "b"]
+    let zipped: [(Int, String); 2] = z1.zip(z2)
+    assert_eq(zipped[1].1, "b")
+    let ones4: [Int; 4] = [1, 1, 1, 1]
+    let zw: [Int; 4] = nums.zip_with(ones4, |a, b| a + b)
+    assert_eq(zw[0], 4)
+    let en: [(Int, Int); 4] = nums.enumerate()
+    assert_eq(en[2].0, 2)
+    assert_eq(en[2].1, 4)
+
+    assert(nums.filter(|x| x > 2) == [3, 4], "fixed filter")
+    assert(nums.take(2) == [3, 1], "fixed take")
+    assert(nums.drop(2) == [4, 2], "fixed drop")
+
+    var fx_stream = 0
+    for v in nums.stream() { fx_stream += v }
+    assert_eq(fx_stream, 10)
+
+    let fmask: [Bool; 3] = [true, true, false]
+    assert(!fmask.all(), "fixed mask not all")
+    assert(fmask.any(), "fixed mask any")
+    assert(!fmask.none(), "fixed mask not none")
+    let ft: [Int; 3] = [1, 2, 3]
+    let ff: [Int; 3] = [10, 20, 30]
+    let picked: [Int; 3] = fmask.select(ft, ff)
+    assert_eq(picked[0], 1)
+    assert_eq(picked[2], 30)
+
+    let empty_fx: [Int; 0] = []
+    assert_eq(empty_fx.len(), 0)
+    assert(empty_fx.is_empty(), "empty fixed")
+    assert_eq(empty_fx.mean(), 0.0)
+    assert(empty_fx.first() == null, "empty fixed first")
+    assert(empty_fx.min() == null, "empty fixed min")
+}
+
+test "[i; n] assigns cleanly to [@typeof(i)] and const T = @typeof(i)" {
+    let i = 7
+    let a: [@typeof(i)] = [i; 10000]
+    assert_eq(a.len(), 10000)
+    assert_eq(a[0], 7)
+    assert_eq(a[9999], 7)
+    assert_eq(a.sum(), 70000)
+
+    let f: Float32 = 1.5
+    let fa: [@typeof(f); 4] = [f; 4]
+    assert_eq(fa.len(), 4)
+    assert_eq(typeof(fa), "[Float32; 4]")
+
+    const Elem = @typeof(f)
+    let fdyn: [Elem] = [f; 6]
+    assert_eq(fdyn.len(), 6)
+    assert_eq(typeof(fdyn), "[Float32]")
+
+    let small: Int16 = 3
+    let sa: [@typeof(small)] = [0; 5]
+    assert_eq(typeof(sa), "[Int16]")
+    assert_eq(sa[4] as Int, 0)
+}
+
+test "numpy-style array constructors in std.array" {
+    let z = array.zeros(4)
+    assert_eq(z.len(), 4)
+    assert_eq(z.sum(), 0.0)
+
+    let o = array.ones(3)
+    assert_eq(o.sum(), 3.0)
+
+    assert(array.zeros_int(3) == [0, 0, 0], "zeros_int")
+    assert(array.ones_int(3) == [1, 1, 1], "ones_int")
+    assert(array.full(4, 9) == [9, 9, 9, 9], "full")
+    assert(array.from_fn(5, |i| i * i) == [0, 1, 4, 9, 16], "from_fn")
+    assert(array.from_fn(0, |i| i) == [], "from_fn empty")
+
+    assert(array.range(0, 5) == [0, 1, 2, 3, 4], "range default step")
+    assert(array.range(1, 10, 3) == [1, 4, 7], "range step 3")
+    assert(array.range(5, 0, -2) == [5, 3, 1], "range negative step")
+    assert(array.range(5, 2) == [], "range empty")
+
+    let ar = array.arange(0.0, 1.0, 0.25)
+    assert(ar == [0.0, 0.25, 0.5, 0.75], "arange")
+    let ar_neg = array.arange(1.0, 0.0, -0.5)
+    assert(ar_neg == [1.0, 0.5], "arange negative")
+
+    assert(array.linspace(0.0, 10.0, 0) == [], "linspace 0")
+    assert(array.linspace(3.0, 10.0, 1) == [3.0], "linspace 1")
+    assert(array.linspace(0.0, 1.0, 5) == [0.0, 0.25, 0.5, 0.75, 1.0], "linspace 5")
+
+    let logs = array.logspace(0.0, 3.0, 4)
+    assert(logs == [1.0, 10.0, 100.0, 1000.0], "logspace base 10")
+    let pow2 = array.logspace(0.0, 3.0, 4, 2.0)
+    assert(pow2 == [1.0, 2.0, 4.0, 8.0], "logspace base 2")
+}

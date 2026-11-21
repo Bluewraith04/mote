@@ -1,0 +1,5 @@
+// Command-line parsing of a record type by reflection: flags from field names, help text from docs.
+pub import { Flag, flag } from .flag
+pub import { help_requested, parse } from .parse
+pub import usage from .usage
+pub import { Args, from_env, from_env_or_help, help_wanted, parse_args, usage_text } from .record

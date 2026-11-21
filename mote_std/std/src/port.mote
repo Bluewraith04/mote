@@ -1,0 +1,10 @@
+// Ports carry bytes from a library's own threads to a Receiver.
+
+pub enum PortMode {
+    Queue(Int)
+    Latest
+}
+
+pub struct Port {
+    pub fn open(mode: PortMode) -> (PortEnd, Receiver<[UInt8]>) { return @__port_open(mode) }
+}

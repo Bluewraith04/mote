@@ -1,0 +1,10 @@
+// The functions of the external library `env`.
+
+extern "env" {
+    pub fn env_get(name: String, buffer: [UInt8]) -> Int
+    pub fn env_set(name: String, value: String) -> Int
+    pub fn env_remove(name: String) -> Int
+    pub fn env_list(buffer: [UInt8]) -> Int
+    pub fn env_cwd(buffer: [UInt8]) -> Int
+    pub fn env_chdir(path: String) -> Int
+}

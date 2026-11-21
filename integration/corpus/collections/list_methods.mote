@@ -7,7 +7,7 @@ class Tag {
     var label: String
 }
 
-fn show(xs: List<Int>) {
+fn show(xs: Span<Int>) {
     var line = "${xs.len()}:"
     var i = 0
     while i < xs.len() {

@@ -1,0 +1,55 @@
+// A pseudo-terminal, to drive a terminal program.
+import Closeable from std.traits
+import Terminal from .terminal
+import { term_set_size, term_read, term_write, term_close, term_pty } from ._lib
+import { END_OF_INPUT, failure, text_of } from ._support
+
+/// A pseudo-terminal: what a program writes to its end appears on `read`, and `send` types at it. It lets a program or a test drive a terminal program.
+pub class Pty: (Closeable) {
+    master: Int
+    slave: Int
+    live: AtomicInt
+
+    pub fn open() -> Result<Pty, Error> {
+        let out: [Int] = [0; 2]
+        let code = term_pty(out)
+        if code < 0 { return Err(failure(code, "pseudo-terminal")) }
+        return Ok(Pty { master: out[0], slave: out[1], live: AtomicInt(1) })
+    }
+
+    /// The terminal side, which a program reads keys from and writes to.
+    pub fn terminal(self) -> Terminal { return Terminal.on(self.slave, self.slave) }
+
+    /// Types the text at the terminal side.
+    pub fn send(self, text: String) -> Result<Null, Error> {
+        let bytes = text.bytes()
+        let code = term_write(self.master, bytes, bytes.len())
+        if code < 0 { return Err(failure(code, "pseudo-terminal input")) }
+        return Ok(null)
+    }
+
+    /// What the terminal side wrote, waiting up to `timeout_ms` for the first bytes; empty when nothing came.
+    pub fn read(self, timeout_ms: Int) -> Result<String, Error> {
+        let buffer: [UInt8] = [0; 4096]
+        let got = term_read(self.master, buffer, timeout_ms)
+        if got == 0 || got == END_OF_INPUT { return Ok("") }
+        if got < 0 { return Err(failure(got, "pseudo-terminal output")) }
+        let text = text_of(buffer.slice(0, got).to_array())
+        if text == null { return Err(Error.new(ErrorKind.InvalidData, "pseudo-terminal output: not valid UTF-8")) }
+        return Ok(text)
+    }
+
+    /// Gives the terminal side a size.
+    pub fn resize(self, rows: Int, cols: Int) -> Result<Null, Error> {
+        let code = term_set_size(self.master, rows, cols)
+        if code < 0 { return Err(failure(code, "pseudo-terminal size")) }
+        return Ok(null)
+    }
+
+    pub fn close(self) -> Result<Null, Error> {
+        if self.live.swap(0) == 0 { return Ok(null) }
+        term_close(self.slave)
+        term_close(self.master)
+        return Ok(null)
+    }
+}

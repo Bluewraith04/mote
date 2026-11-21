@@ -1,0 +1,155 @@
+import { assert, assert_eq } from std.test
+import { Entry, EntryKind, Format, extract, pack, read, write } from archive
+import get as env_get from env
+import { create_dir_all, is_dir, is_file, read_string, remove_all, write_string } from fs
+
+let root = (env_get("TEMP") ?? env_get("TMP") ?? "/tmp") + "/mote-archive-tests"
+
+// A clean directory of the test's own.
+fn scratch(name: String) -> String {
+    let dir = root + "/" + name
+    remove_all(dir).is_err()
+    create_dir_all(dir)!
+    return dir
+}
+
+fn nibble(code: Int) -> Int {
+    return if code >= 97 { code - 87 } else { code - 48 }
+}
+
+fn unhex(text: String) -> [UInt8] {
+    let codes = text.bytes()
+    var out: [UInt8] = [0; codes.len() / 2]
+    for at in 0..out.len() {
+        out[at] = (nibble(codes[at * 2] as Int) * 16 + nibble(codes[at * 2 + 1] as Int)) as UInt8
+    }
+    return out
+}
+
+fn sample() -> List<Entry> {
+    return [
+        Entry.directory("docs").with_mtime(1700000000),
+        Entry.file("docs/a.txt", "hello\n".bytes()).with_mtime(1700000002),
+        Entry.file("run.sh", "#!/bin/sh\n".bytes()).with_mode(493).with_mtime(1700000004),
+        Entry.symlink("docs/latest", "a.txt").with_mtime(1700000006)
+    ]
+}
+
+fn check_sample(entries: List<Entry>) {
+    assert_eq(entries.len(), 4)
+    assert_eq(entries.get(0).path, "docs")
+    assert(entries.get(0).kind == EntryKind.Directory, "dir")
+    assert_eq(entries.get(0).mtime, 1700000000)
+    assert_eq(entries.get(1).path, "docs/a.txt")
+    assert(entries.get(1).kind == EntryKind.File, "file")
+    assert_eq(entries.get(1).text()!, "hello\n")
+    assert_eq(entries.get(1).mode, 420)
+    assert_eq(entries.get(1).mtime, 1700000002)
+    assert_eq(entries.get(2).mode, 493)
+    assert_eq(entries.get(2).text()!, "#!/bin/sh\n")
+    assert(entries.get(3).kind == EntryKind.Symlink, "link")
+    assert_eq(entries.get(3).target, "a.txt")
+}
+
+test "a tar round trips its entries" {
+    check_sample(read(Format.Tar, write(Format.Tar, sample())!)!)
+}
+
+test "a tar.gz round trips its entries and is gzip" {
+    let packed = write(Format.TarGz, sample())!
+    assert_eq(packed[0] as Int, 0x1f)
+    assert_eq(packed[1] as Int, 0x8b)
+    check_sample(read(Format.TarGz, packed)!)
+}
+
+test "a zip round trips its entries" {
+    let packed = write(Format.Zip, sample())!
+    assert_eq(packed[0] as Int, 0x50)
+    assert_eq(packed[1] as Int, 0x4b)
+    check_sample(read(Format.Zip, packed)!)
+}
+
+test "a tar of one small file is a header, a block and the end" {
+    let packed = write(Format.Tar, [Entry.file("a.txt", "hello\n".bytes())])!
+    assert_eq(packed.len(), 2048)
+    assert_eq(packed[257] as Int, 0x75)
+    assert_eq(packed[258] as Int, 0x73)
+}
+
+test "a zip made by the zip tool is read" {
+    let made = unhex("504b03040a0000000000715e5f5d20303a36060000000600000005000000612e74787468656c6c6f0a504b01021e030a0000000000715e5f5d20303a360600000006000000050000000000000001000000a48100000000612e747874504b0506000000000100010033000000290000000000")
+    let entries = read(Format.Zip, made)!
+    assert_eq(entries.len(), 1)
+    assert_eq(entries.get(0).path, "a.txt")
+    assert_eq(entries.get(0).text()!, "hello\n")
+    assert_eq(entries.get(0).mode, 420)
+    assert_eq(entries.get(0).mtime, 1793447494)
+}
+
+test "a long path and every byte value survive a tar" {
+    let name = "very/long/directory/name/that/goes/on/and/on/for/more/than/a/hundred/characters/in/total/so/that/the/tar/needs/an/extension/file.bin"
+    var data: [UInt8] = [0; 256]
+    for at in 0..256 { data[at] = at as UInt8 }
+    let entries = read(Format.Tar, write(Format.Tar, [Entry.file(name, data)])!)!
+    assert_eq(entries.get(0).path, name)
+    assert_eq(entries.get(0).data.len(), 256)
+    assert_eq(entries.get(0).data[255] as Int, 255)
+    assert_eq(entries.get(0).data[0] as Int, 0)
+}
+
+test "an archive of no entries reads as none" {
+    let none: List<Entry> = []
+    assert_eq(read(Format.Tar, write(Format.Tar, none)!)!.len(), 0)
+    assert_eq(read(Format.Zip, write(Format.Zip, none)!)!.len(), 0)
+    assert_eq(read(Format.TarGz, write(Format.TarGz, none)!)!.len(), 0)
+}
+
+test "a bad archive is an error" {
+    let junk: [UInt8] = [7; 700]
+    assert(read(Format.Zip, junk).is_err(), "zip")
+    assert(read(Format.Tar, junk).is_err(), "tar")
+    assert(read(Format.TarGz, junk).is_err(), "tar.gz")
+}
+
+test "a limit stops contents that are too big" {
+    let big: [UInt8] = [65; 5000]
+    let packed = write(Format.Tar, [Entry.file("big", big)])!
+    assert(read(Format.Tar, packed, 1000).is_err(), "tar")
+    assert_eq(read(Format.Tar, packed, 100000)!.get(0).data.len(), 5000)
+    let zipped = write(Format.Zip, [Entry.file("big", big)])!
+    assert(read(Format.Zip, zipped, 1000).is_err(), "zip")
+    assert(read(Format.TarGz, write(Format.TarGz, [Entry.file("big", big)])!, 2000).is_err(), "tar.gz")
+}
+
+test "a zip refuses a hard link" {
+    let link = Entry { path: "x", kind: EntryKind.Hardlink, mode: 420, mtime: 0, target: "y", data: [] }
+    assert(write(Format.Zip, [link]).is_err(), "hard link")
+}
+
+test "pack and extract carry a directory across" {
+    let dir = scratch("pack")
+    create_dir_all(dir + "/src/inner")!
+    write_string(dir + "/src/a.txt", "alpha")!
+    write_string(dir + "/src/inner/b.txt", "beta")!
+    for format in [Format.Tar, Format.TarGz, Format.Zip] {
+        let packed = pack(format, dir + "/src")!
+        let names = read(format, packed)!
+        assert_eq(names.len(), 3)
+        assert_eq(names.get(0).path, "a.txt")
+        assert_eq(names.get(1).path, "inner")
+        assert_eq(names.get(2).path, "inner/b.txt")
+        let out = dir + "/out"
+        remove_all(out).is_err()
+        assert_eq(extract(format, packed, out)!, 2)
+        assert_eq(read_string(out + "/a.txt")!, "alpha")
+        assert_eq(read_string(out + "/inner/b.txt")!, "beta")
+        assert(is_dir(out + "/inner"), "dir")
+    }
+}
+
+test "extract refuses a path that leaves the directory" {
+    let dir = scratch("escape")
+    assert(extract(Format.Zip, write(Format.Zip, [Entry.file("../outside.txt", "x".bytes())])!, dir + "/out").is_err(), "dot dot")
+    assert(extract(Format.Zip, write(Format.Zip, [Entry.file("/etc/x", "x".bytes())])!, dir + "/out").is_err(), "absolute")
+    assert(!is_file(dir + "/outside.txt"), "nothing written")
+}

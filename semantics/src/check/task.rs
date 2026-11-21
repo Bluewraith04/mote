@@ -5,9 +5,9 @@ use mote_syntax::{Ident, SpawnBody};
 use super::closure::{Code, Result};
 use super::FnCx;
 use crate::cx::Cx;
-use crate::defs::{DefKind, LangItem, Receiver};
+use crate::defs::{DefKind, Receiver};
 use crate::tree::{Expr, ExprKind, FnRef, Local, LocalKind, StmtKind};
-use crate::types::{TyId, TyKind};
+use crate::types::{BuiltinTy, TyId, TyKind};
 
 impl Cx<'_> {
     /// `spawn { … }` and `spawn f(args)`: a `Task` of what the body returns.
@@ -23,7 +23,7 @@ impl Cx<'_> {
             let message = format!("a task cannot return {}", self.show_ty(ret));
             self.error(span, message);
         }
-        let ty = self.lang_type(LangItem::Task, vec![ret], span);
+        let ty = self.program.types.builtin(BuiltinTy::Task, vec![ret]);
         f.body.expr(ExprKind::Spawn { task: Box::new(task), scoped }, ty, span)
     }
 
@@ -65,16 +65,16 @@ impl Cx<'_> {
         };
         let (found, ok) = match param {
             Some(index) => {
-                let bounded = f.bounds.get(index).is_some_and(|bounds| bounds.iter().any(|bound| self.program.defs[bound.def].lang == Some(LangItem::Closeable)));
+                let bounded = f.bounds.get(index).is_some_and(|bounds| bounds.iter().any(|bound| self.program.std.closeable == Some(bound.def)));
                 (None, bounded)
             }
             None => {
-                let found = self.method_owner(ty).and_then(|(owner, args)| {
-                    let method = self.methods_named(owner, closed).into_iter().find(|&method| {
-                        let item = &self.program.defs[method];
-                        self.visible(f, method, item.is_pub) && matches!(&item.kind, DefKind::Function(function) if function.receiver == Receiver::Read && function.params.is_empty())
-                    })?;
-                    Some(FnRef { def: method, args })
+                let candidates = self.methods_for_type(ty, closed);
+                let found = candidates.into_iter().find_map(|(method, args)| {
+                    let item = &self.program.defs[method];
+                    (self.visible(f, method, item.is_pub)
+                        && matches!(&item.kind, DefKind::Function(function) if function.receiver == Receiver::Read && function.params.is_empty()))
+                    .then_some(FnRef { def: method, args })
                 });
                 let ok = found.is_some();
                 (found, ok)

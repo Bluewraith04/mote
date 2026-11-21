@@ -1,4 +1,4 @@
-import { Task, await_all } from std.task
+import await_all from std.task
 
 fn fib(n: Int) -> Int {
     if n < 2 {

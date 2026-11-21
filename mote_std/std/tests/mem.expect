@@ -1,0 +1,7 @@
+start
+test "comptime @is_flat classifies flat vs GC reference types"
+passed
+test "Pointer<T> low-level alloc, alignment, indexing, realloc, copy, zero, cast, and free"
+passed
+test "Buffer<T> lifecycle, operations, with Closeable, and Span/MutSpan integration"
+passed

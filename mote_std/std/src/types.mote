@@ -1,0 +1,2 @@
+// Pointer<T> is a universal builtin type with an `.address` UInt64 field.
+// Keep this module valid in case any existing code imports from `std.types`.

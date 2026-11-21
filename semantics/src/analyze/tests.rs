@@ -8,7 +8,7 @@ use crate::program::{Init, Instance, Program};
 use crate::resolve::resolve;
 use crate::testing::{parse_sources, path_text};
 
-const SYNC: &str = "@lang(\"list\")\npub class List<T> {}\n@lang(\"stream\")\npub class Stream<T> {}\n@lang(\"task\")\npub class Task<T> {\n pub fn await(self) {}\n}\n@lang(\"sender\")\npub class Sender<T> {\n pub fn send(self, v: T) {}\n}\n@lang(\"receiver\")\npub class Receiver<T> {\n pub fn recv(self) {}\n}\n@lang(\"mutex\")\npub class Mutex<T> {\n pub fn lock(self, work: Send (var T) -> Null) {}\n pub fn get(self) {}\n pub fn set(self, v: T) {}\n}\n@link(\"lib\")\n@blocking\npub native fn sleep()";
+const SYNC: &str = "extend<T> Task<T> {\n pub fn await(self) {}\n}\nextend<T> Sender<T> {\n pub fn send(self, v: T) {}\n}\nextend<T> Receiver<T> {\n pub fn recv(self) {}\n}\nextend<T> Mutex<T> {\n pub fn lock(self, work: Send (var T) -> Null) {}\n pub fn get(self) {}\n pub fn set(self, v: T) {}\n}\nextern \"lib\" {\n @blocking\n pub fn sleep()\n}";
 
 struct Built {
     program: Program,
@@ -34,7 +34,7 @@ fn build(sources: &[(&str, &str)]) -> Built {
         .collect();
     entries.sort_by_key(|&def| program.defs[def].span.start);
     let entries: Vec<Instance> = entries.into_iter().map(|def| Instance { def, args: Vec::new() }).collect();
-    instantiate(&mut program, &parsed.interner, &mut parsed.sink, &entries);
+    instantiate(&mut program, &mut parsed.interner, &mut parsed.sink, &entries);
     analyze(&mut program, &parsed.interner, &mut parsed.sink);
     let errors = parsed.sink.iter().filter(|diagnostic| diagnostic.severity == Severity::Error).map(|diagnostic| diagnostic.message.clone()).collect();
     Built { program, interner: parsed.interner, errors }
@@ -44,9 +44,9 @@ fn main(text: &str) -> Built {
     build(&[("main", text)])
 }
 
-/// `main` with std's sync types imported.
+/// `main` with std's sync types extended and `sleep` imported.
 fn with_sync(text: &str) -> Built {
-    build(&[("std.sync", SYNC), ("main", &format!("import {{ List, Stream, Task, Sender, Receiver, Mutex, sleep }} from .std.sync\n{text}"))])
+    build(&[("std.sync", SYNC), ("main", &format!("import sleep from .std.sync\n{text}"))])
 }
 
 impl Built {

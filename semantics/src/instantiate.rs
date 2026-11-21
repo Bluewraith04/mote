@@ -3,66 +3,91 @@
 use std::collections::{HashSet, VecDeque};
 
 use mote_base::{Diagnostic, DiagnosticSink, Id, Interner, Span};
+use mote_syntax as ast;
 
-use crate::defs::{DefId, DefKind, LangItem};
+use crate::comptime;
+use crate::cx::Cx;
+use crate::defs::{DefId, DefKind, ModuleId};
 use crate::program::{Instance, Program};
-use crate::reflect::ReflectError;
-use crate::tree::{BinaryOp, Body, Callee, Expr, ExprKind, FnRef, PatternKind, StmtKind};
-use crate::types::TyId;
+use crate::tree::{BinaryOp, Body, Callee, Conversion, Expr, ExprKind, FnRef, PatternKind, StmtKind, UnaryOp};
+use crate::types::{BuiltinTy, GenericArg, TyId, TyKind};
 use crate::walk::reach;
 
 /// Type arguments nest no deeper than this; a function that grows its own arguments stops here.
 const MAX_DEPTH: usize = 32;
 
 /// Adds a body to `program.bodies` for each entry and every instance reachable from it, from a program with no errors.
-pub fn instantiate(program: &mut Program, interner: &Interner, sink: &mut DiagnosticSink, entries: &[Instance]) {
-    let mut work = Work { program, interner, sink, queue: VecDeque::new(), asked: HashSet::new() };
-    for entry in entries {
-        let span = work.program.defs[entry.def].span;
-        work.need(entry.clone(), span);
-    }
-    let globals: Vec<DefId> = work.program.defs.iter().map(|(id, _)| id).filter(|def| work.program.global_inits.contains_key(def)).collect();
-    for def in globals {
-        for (instance, span) in references(work.program, interner, &work.program.global_inits[&def]) {
-            work.need(instance, span);
+pub fn instantiate(program: &mut Program, interner: &mut Interner, sink: &mut DiagnosticSink, entries: &[Instance]) {
+    let globals: Vec<DefId> = program.defs.iter().map(|(id, _)| id).filter(|def| program.global_inits.contains_key(def)).collect();
+    for &def in &globals {
+        if let Some(mut body) = program.global_inits.remove(&def) {
+            comptime::lower_body(program, interner, sink, &mut body);
+            program.global_inits.insert(def, body);
         }
     }
-    let modules: Vec<_> = work.program.modules.iter().map(|(id, _)| id).filter(|module| work.program.top_level.contains_key(module)).collect();
-    for module in modules {
-        for (instance, span) in references(work.program, interner, &work.program.top_level[&module]) {
-            work.need(instance, span);
+    let modules: Vec<_> = program.modules.iter().map(|(id, _)| id).filter(|module| program.top_level.contains_key(module)).collect();
+    for &module in &modules {
+        if let Some(mut body) = program.top_level.remove(&module) {
+            comptime::lower_body(program, interner, sink, &mut body);
+            program.top_level.insert(module, body);
         }
     }
-    work.listing_checks();
-    while let Some(instance) = work.queue.pop_front() {
-        work.build(instance);
+
+    let module_ids: Vec<ModuleId> = program.modules.iter().map(|(id, _)| id).collect();
+    let asts: Vec<ast::Ast> = module_ids.iter().map(|&id| std::mem::take(&mut program.modules[id].ast)).collect();
+    {
+        let mut work = Work { program, interner, sink, asts: &asts, queue: VecDeque::new(), asked: HashSet::new() };
+        for entry in entries {
+            let span = work.program.defs[entry.def].span;
+            work.need(entry.clone(), span);
+        }
+        for def in globals {
+            for (instance, span) in references(work.program, work.interner, &work.program.global_inits[&def]) {
+                work.need(instance, span);
+            }
+        }
+        for module in modules {
+            for (instance, span) in references(work.program, work.interner, &work.program.top_level[&module]) {
+                work.need(instance, span);
+            }
+        }
+        work.listing_checks();
+        while let Some(instance) = work.queue.pop_front() {
+            work.build(instance);
+        }
+    }
+    for (id, ast) in module_ids.into_iter().zip(asts) {
+        program.modules[id].ast = ast;
     }
 }
 
 struct Work<'a> {
     program: &'a mut Program,
-    interner: &'a Interner,
+    interner: &'a mut Interner,
     sink: &'a mut DiagnosticSink,
+    asts: &'a [ast::Ast],
     queue: VecDeque<Instance>,
     asked: HashSet<Instance>,
 }
 
 impl Work<'_> {
-    /// Queues an instance that has a checked body and none yet.
+    /// Queues an instance that has a checked or comptime-deferred body and none yet.
     fn need(&mut self, instance: Instance, span: Span) {
         if self.program.bodies.contains_key(&instance) || !self.asked.insert(instance.clone()) {
             return;
         }
-        if instance.args.iter().any(|&arg| self.program.types.depth(arg) > MAX_DEPTH) {
+        if instance.args.iter().any(|arg| matches!(arg, GenericArg::Type(ty) if self.program.types.depth(*ty) > MAX_DEPTH)) {
             self.sink.emit(Diagnostic::error("type arguments nest too deeply", span));
             return;
         }
-        if self.program.checked.contains_key(&instance.def) {
+        let has_body = self.program.checked.contains_key(&instance.def)
+            || self.program.defs[instance.def].function().is_some_and(|f| f.has_body && f.link.is_none());
+        if has_body {
             self.queue.push_back(instance);
         }
     }
 
-    /// Queues each default method that a type without parameters got from a trait it lists and whose body calls `require`, so the listing is checked even when the method is never called.
+    /// Queues each default method that a type without parameters got from a trait it lists and whose body calls `@compile_error`/`@compile_assert`, so the listing is checked even when the method is never called.
     fn listing_checks(&mut self) {
         let mut copies: Vec<DefId> = self.program.listed_defaults.keys().copied().collect();
         copies.sort_by_key(|copy| copy.index());
@@ -78,67 +103,96 @@ impl Work<'_> {
                 continue;
             }
             let Some(body) = self.program.checked.get(&copy) else { continue };
-            if references(self.program, self.interner, body).iter().any(|(called, _)| self.is_require(called.def)) {
+            if self.has_compile_check(body) || self.ast_has_compile_check(copy) {
                 let span = self.program.defs[owner].span;
                 self.need(Instance { def: copy, args: Vec::new() }, span);
             }
         }
     }
 
-    fn is_require(&self, def: DefId) -> bool {
-        self.program.defs[def].function().and_then(|function| function.intrinsic).is_some_and(|name| self.interner.resolve(name) == "require")
+    fn ast_has_compile_check(&self, def: DefId) -> bool {
+        let item = &self.program.defs[def];
+        let Some(origin) = &item.origin else { return false };
+        let Some(member_idx) = origin.member else { return false };
+        let ast = &self.asts[item.module.index()];
+        let body_span = match &ast[origin.item].kind {
+            ast::ItemKind::Trait(tr) => tr.members.get(member_idx as usize).and_then(|m| m.body.as_ref()).map(|b| b.span),
+            _ => None,
+        };
+        let Some(span) = body_span else { return false };
+        ast.exprs.iter().any(|(_, expr)| {
+            expr.span.start >= span.start
+                && expr.span.end <= span.end
+                && matches!(
+                    &expr.kind,
+                    ast::ExprKind::Builtin { name, .. }
+                        if matches!(self.interner.resolve(name.name), "compile_error" | "compile_assert")
+                )
+        })
+    }
+
+    fn has_compile_check(&self, body: &Body) -> bool {
+        reach(body).exprs.into_iter().any(|id| match &body.exprs[id].kind {
+            ExprKind::Call { callee: Callee::Builtin { name, .. }, .. } => {
+                matches!(self.interner.resolve(*name), "compile_error" | "compile_assert")
+            }
+            _ => false,
+        })
     }
 
     fn build(&mut self, instance: Instance) {
-        let mut body = self.program.checked[&instance.def].clone();
-        self.rewrite(&mut body, &instance.args);
+        let mut body = if let Some(checked) = self.program.checked.get(&instance.def) {
+            let mut body = checked.clone();
+            self.rewrite(&mut body, &instance.args);
+            body
+        } else {
+            let mut cx = Cx::new(self.asts, self.program, self.interner, self.sink);
+            let Some(body) = cx.check_function_body(instance.def, Some(&instance.args)) else { return };
+            body
+        };
+        {
+            let mut cx = Cx::new(self.asts, self.program, self.interner, self.sink);
+            comptime::normalize_body_consts(&mut cx, &mut body);
+            if let Some(declared_ret) = cx.program.defs[instance.def].function().map(|function| function.ret) {
+                let raw_ret = cx.program.types.subst_generic(declared_ret, &instance.args);
+                let norm_ret = comptime::normalize_ty_consts(&mut cx, raw_ret);
+                cx.program.instance_returns.insert(instance.clone(), norm_ret);
+            }
+        }
+        self.resolve_post(&mut body);
+        comptime::lower_body(self.program, self.interner, self.sink, &mut body);
+        self.print_displays(&mut body);
+        self.equality_dunders(&mut body);
         let found = references(self.program, self.interner, &body);
-        self.reflect_calls(&body);
         self.program.add_body(instance, body);
         for (next, span) in found {
             self.need(next, span);
         }
     }
 
-    /// Describes the type each call to `type_id` names, so `std.meta` can answer for it.
-    fn reflect_calls(&mut self, body: &Body) {
-        for id in reach(body).exprs {
-            let (ExprKind::Function(function) | ExprKind::Call { callee: Callee::Function(function), .. }) = &body.exprs[id].kind else { continue };
-            let Some(name) = self.program.defs[function.def].function().and_then(|item| item.intrinsic) else { continue };
-            if self.interner.resolve(name) != "type_id" {
-                continue;
-            }
-            let Some(&ty) = function.args.first() else { continue };
-            let message = match self.program.reflect(ty, self.interner) {
-                Ok(_) => continue,
-                Err(ReflectError::Open) => "a type that still has a parameter cannot be described",
-                Err(ReflectError::TooMany) => "reflection reaches too many types",
-            };
-            self.sink.emit(Diagnostic::error(message, body.exprs[id].span));
-        }
-    }
-
-    /// Writes the type arguments into every type of the body and names the method each trait call reaches.
-    fn rewrite(&mut self, body: &mut Body, args: &[TyId]) {
+    /// Writes the type/const arguments into every type of the body and substitutes const params.
+    fn rewrite(&mut self, body: &mut Body, args: &[GenericArg]) {
         let types = &mut self.program.types;
         let locals: Vec<_> = body.locals.iter().map(|(id, _)| id).collect();
         for id in locals {
-            body.locals[id].ty = types.subst(body.locals[id].ty, args);
+            body.locals[id].ty = types.subst_generic(body.locals[id].ty, args);
         }
-        let mut trait_calls = Vec::new();
         let exprs: Vec<_> = body.exprs.iter().map(|(id, _)| id).collect();
         for id in exprs {
             let expr = &mut body.exprs[id];
-            expr.ty = types.subst(expr.ty, args);
+            expr.ty = types.subst_generic(expr.ty, args);
             match &mut expr.kind {
-                ExprKind::Is { ty, .. } => *ty = types.subst(*ty, args),
+                ExprKind::Is { ty, .. } => *ty = types.subst_generic(*ty, args),
+                ExprKind::ConstArg(arg) => *arg = types.subst_const(arg, args),
                 ExprKind::Function(function) | ExprKind::Call { callee: Callee::Function(function), .. } => {
-                    function.args = function.args.iter().map(|&arg| types.subst(arg, args)).collect();
+                    function.args = function.args.iter().map(|arg| subst_generic_arg(types, arg, args)).collect();
                 }
-                ExprKind::Call { callee: Callee::TraitMethod { method, self_ty, args: own }, .. } => {
-                    *self_ty = types.subst(*self_ty, args);
-                    *own = own.iter().map(|&arg| types.subst(arg, args)).collect();
-                    trait_calls.push((id, *method, *self_ty, own.clone()));
+                ExprKind::Call { callee: Callee::TraitMethod { self_ty, args: own, .. }, .. } => {
+                    *self_ty = types.subst_generic(*self_ty, args);
+                    *own = own.iter().map(|arg| subst_generic_arg(types, arg, args)).collect();
+                }
+                ExprKind::Call { callee: Callee::Builtin { generic_args, .. }, .. } => {
+                    *generic_args = generic_args.iter().map(|arg| subst_generic_arg(types, arg, args)).collect();
                 }
                 _ => {}
             }
@@ -146,11 +200,15 @@ impl Work<'_> {
         let patterns: Vec<_> = body.patterns.iter().map(|(id, _)| id).collect();
         for id in patterns {
             let pattern = &mut body.patterns[id];
-            pattern.ty = types.subst(pattern.ty, args);
+            pattern.ty = types.subst_generic(pattern.ty, args);
             if let PatternKind::Type { ty, .. } = &mut pattern.kind {
-                *ty = types.subst(*ty, args);
+                *ty = types.subst_generic(*ty, args);
             }
         }
+    }
+
+    /// Resolves deferred `with` close methods and trait calls after concrete types are known.
+    fn resolve_post(&mut self, body: &mut Body) {
         let stmts: Vec<_> = body.stmts.iter().map(|(id, _)| id).collect();
         for id in stmts {
             let StmtKind::With { local, close: None, .. } = body.stmts[id].kind else { continue };
@@ -167,7 +225,12 @@ impl Work<'_> {
                 }
             }
         }
-        for (id, method, self_ty, own) in trait_calls {
+        let exprs: Vec<_> = body.exprs.iter().map(|(id, _)| id).collect();
+        for id in exprs {
+            let ExprKind::Call { callee: Callee::TraitMethod { method, self_ty, args: own }, .. } = &body.exprs[id].kind else {
+                continue;
+            };
+            let (method, self_ty, own) = (*method, *self_ty, own.clone());
             match self.concrete_method(method, self_ty, own) {
                 Some(function) => {
                     if let ExprKind::Call { callee, .. } = &mut body.exprs[id].kind {
@@ -180,17 +243,16 @@ impl Work<'_> {
                 }
             }
         }
-        self.print_displays(body);
     }
 
-    /// `print(x)` and `println(x)` of a record or enum with its own `to_string` print `x.to_string()`.
+    /// `@print(x)` and `@println(x)` of a record or enum with its own `to_string` print `x.to_string()`.
     fn print_displays(&mut self, body: &mut Body) {
         let Some(name) = self.interner.get("to_string") else { return };
         let prints: Vec<_> = body
             .exprs
             .iter()
             .filter_map(|(id, expr)| match &expr.kind {
-                ExprKind::Call { callee: Callee::Function(function), args } if args.len() == 1 && self.is_print(function.def) => Some((id, args[0])),
+                ExprKind::Call { callee: Callee::Builtin { name: bname, .. }, args } if args.len() == 1 && self.is_print_builtin(*bname) => Some((id, args[0])),
                 _ => None,
             })
             .collect();
@@ -198,43 +260,81 @@ impl Work<'_> {
             let Some(method) = self.display_method(body.exprs[arg].ty, name) else { continue };
             let span = body.exprs[arg].span;
             let text = body.expr(ExprKind::Call { callee: Callee::Function(method), args: vec![arg] }, TyId::STRING, span);
-            if let ExprKind::Call { callee: Callee::Function(function), args } = &mut body.exprs[call].kind {
-                function.args = vec![TyId::STRING];
+            if let ExprKind::Call { callee: Callee::Builtin { generic_args, .. }, args } = &mut body.exprs[call].kind {
+                *generic_args = vec![GenericArg::Type(TyId::STRING)];
                 args[0] = text;
             }
         }
     }
 
-    fn is_print(&self, def: DefId) -> bool {
-        match &self.program.defs[def].kind {
-            DefKind::Function(function) => function.intrinsic.is_some_and(|name| matches!(self.interner.resolve(name), "print" | "println" | "eprint" | "eprintln")),
-            _ => false,
-        }
+    fn is_print_builtin(&self, name: mote_base::Symbol) -> bool {
+        matches!(self.interner.resolve(name), "print" | "println" | "eprint" | "eprintln")
     }
 
     /// The `to_string(self) -> String` a record or enum of the program writes, if it has one.
     fn display_method(&self, ty: TyId, name: mote_base::Symbol) -> Option<FnRef> {
-        let (owner, args) = self.program.method_owner(ty)?;
+        let (owner, _) = self.program.method_owner(ty)?;
         let item = &self.program.defs[owner];
-        if item.lang.is_some() || !matches!(item.kind, DefKind::Record(_) | DefKind::Enum(_)) {
+        if !matches!(item.kind, DefKind::Record(_) | DefKind::Enum(_)) {
             return None;
         }
-        let found = *self.program.methods_named(owner, name).first()?;
+        let (found, args) = self.program.resolve_method(ty, name)?;
         let DefKind::Function(function) = &self.program.defs[found].kind else { return None };
         (function.receiver == crate::defs::Receiver::Read && function.params.is_empty() && function.generics.is_empty() && function.ret == TyId::STRING).then_some(FnRef { def: found, args })
     }
 
+    /// Rewrites remaining `==`/`!=` on concrete types that define `__eq__` or `__ne__` (e.g. monomorphized `T: Eq`).
+    fn equality_dunders(&mut self, body: &mut Body) {
+        let rewrites: Vec<_> = body
+            .exprs
+            .iter()
+            .filter_map(|(id, expr)| match expr.kind {
+                ExprKind::Binary { op: op @ (BinaryOp::Eq | BinaryOp::NotEq), left, right }
+                    if expr.ty == TyId::BOOL && body.exprs[left].ty == body.exprs[right].ty =>
+                {
+                    Some((id, op, left, right, body.exprs[left].ty, expr.span))
+                }
+                _ => None,
+            })
+            .collect();
+        for (id, op, left, right, ty, span) in rewrites {
+            if op == BinaryOp::Eq {
+                if let Some(method) = self.equality_method(ty, "__eq__") {
+                    body.exprs[id].kind = ExprKind::Call { callee: Callee::Function(method), args: vec![left, right] };
+                }
+            } else if let Some(method) = self.equality_method(ty, "__ne__") {
+                body.exprs[id].kind = ExprKind::Call { callee: Callee::Function(method), args: vec![left, right] };
+            } else if let Some(method) = self.equality_method(ty, "__eq__") {
+                let eq = body.expr(ExprKind::Call { callee: Callee::Function(method), args: vec![left, right] }, TyId::BOOL, span);
+                body.exprs[id].kind = ExprKind::Unary { op: UnaryOp::Not, operand: eq };
+            }
+        }
+    }
+
+    /// The `__eq__` or `__ne__` dunder matching `fn(self, other: Self) -> Bool` on `ty`.
+    fn equality_method(&mut self, ty: TyId, name: &str) -> Option<FnRef> {
+        let sym = self.interner.get(name)?;
+        let (found, args) = self.program.resolve_method(ty, sym)?;
+        let DefKind::Function(function) = &self.program.defs[found].kind else { return None };
+        if function.receiver != crate::defs::Receiver::Read || !function.generics.is_empty() || function.params.len() != 1 || function.params[0].is_var {
+            return None;
+        }
+        let (param, ret) = (function.params[0].ty, function.ret);
+        let param_ty = self.program.types.subst_generic(param, &args);
+        let ret_ty = self.program.types.subst_generic(ret, &args);
+        (param_ty == ty && ret_ty == TyId::BOOL).then_some(FnRef { def: found, args })
+    }
+
     /// The `close` method of a resource type.
     fn close_method(&self, ty: TyId) -> Option<FnRef> {
-        let closeable = self.program.lang_item(LangItem::Closeable)?;
+        let closeable = self.program.std.closeable?;
         let DefKind::Trait(item) = &self.program.defs[closeable].kind else { return None };
         self.concrete_method(*item.methods.first()?, ty, Vec::new())
     }
 
     /// The method of the type that a trait's method stands for.
-    fn concrete_method(&self, method: DefId, self_ty: TyId, own: Vec<TyId>) -> Option<FnRef> {
-        let (owner, mut args) = self.program.method_owner(self_ty)?;
-        let found = *self.program.methods_named(owner, self.program.defs[method].name).first()?;
+    fn concrete_method(&self, method: DefId, self_ty: TyId, own: Vec<GenericArg>) -> Option<FnRef> {
+        let (found, mut args) = self.program.resolve_method(self_ty, self.program.defs[method].name)?;
         let trait_args = match self.program.defs[method].owner.map(|owner| &self.program.defs[owner].kind) {
             Some(crate::defs::DefKind::Trait(item)) => item.generics.len(),
             _ => 0,
@@ -244,12 +344,62 @@ impl Work<'_> {
     }
 }
 
-/// The std methods an expression runs for the language: indexing a `Map`, a `Map` literal, and `==` on two `Map`s or two `Set`s.
+fn subst_generic_arg(types: &mut crate::types::Types, arg: &GenericArg, args: &[GenericArg]) -> GenericArg {
+    match arg {
+        GenericArg::Type(t) => GenericArg::Type(types.subst_generic(*t, args)),
+        GenericArg::Const(c) => GenericArg::Const(types.subst_const(c, args)),
+    }
+}
+
+/// Collects view coercion helpers reached through an `Adapt` conversion.
+fn collect_adapt_view_fns(program: &Program, interner: &Interner, from: TyId, to: TyId, out: &mut Vec<FnRef>) {
+    match (program.types.kind(from), program.types.kind(to)) {
+        (TyKind::Function(source), TyKind::Function(target)) => {
+            for (want, have) in target.params.iter().zip(&source.params) {
+                collect_plan_view_fns(program, interner, want.ty, have.ty, out);
+            }
+            if target.ret != TyId::UNIT {
+                collect_plan_view_fns(program, interner, source.ret, target.ret, out);
+            }
+        }
+        (TyKind::Builtin { kind: sk, args: s_args }, TyKind::Builtin { kind: tk, args: t_args })
+            if sk == tk && matches!(sk, BuiltinTy::Stream | BuiltinTy::Task) =>
+        {
+            if let (Some(&s), Some(&t)) = (s_args.first(), t_args.first()) {
+                collect_plan_view_fns(program, interner, s, t, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn collect_plan_view_fns(program: &Program, interner: &Interner, from: TyId, to: TyId, out: &mut Vec<FnRef>) {
+    let Some(steps) = crate::check::plan(program, from, to) else { return };
+    let mut cur = from;
+    for (conv, step_ty) in steps {
+        match conv {
+            Conversion::ToView => {
+                if let Some(fn_ref) = crate::check::view_coercion_fn(program, interner, cur, step_ty) {
+                    out.push(fn_ref);
+                }
+            }
+            Conversion::Adapt => collect_adapt_view_fns(program, interner, cur, step_ty, out),
+            _ => {}
+        }
+        cur = step_ty;
+    }
+}
+
+/// The std methods an expression runs for the language: indexing a `Map`, a `Map` literal, or adapted view coercions.
 fn language_calls(program: &Program, interner: &Interner, body: &Body, id: Id<Expr>) -> Vec<FnRef> {
     let (names, ty): (&[&str], TyId) = match &body.exprs[id].kind {
         ExprKind::Index { object, .. } => (&["get", "set"], body.exprs[*object].ty),
         ExprKind::Map(_) => (&["new", "set"], body.exprs[id].ty),
-        ExprKind::Binary { op: BinaryOp::Eq | BinaryOp::NotEq, left, right } if body.exprs[*left].ty == body.exprs[*right].ty => (&["equals"], body.exprs[*left].ty),
+        ExprKind::Convert { conversion: Conversion::Adapt, expr } => {
+            let mut out = Vec::new();
+            collect_adapt_view_fns(program, interner, body.exprs[*expr].ty, body.exprs[id].ty, &mut out);
+            return out;
+        }
         _ => return Vec::new(),
     };
     names.iter().filter_map(|name| program.collection_method(ty, interner.get(name)?)).collect()
@@ -258,7 +408,11 @@ fn language_calls(program: &Program, interner: &Interner, body: &Body, id: Id<Ex
 /// The functions a body calls or names, with where.
 fn references(program: &Program, interner: &Interner, body: &Body) -> Vec<(Instance, Span)> {
     let reached = reach(body);
-    let language: Vec<(Instance, Span)> = reached.exprs.iter().flat_map(|&id| language_calls(program, interner, body, id).into_iter().map(move |function| (function, body.exprs[id].span))).collect();
+    let language: Vec<(Instance, Span)> = reached
+        .exprs
+        .iter()
+        .flat_map(|&id| language_calls(program, interner, body, id).into_iter().map(move |function| (function, body.exprs[id].span)))
+        .collect();
     let called = reached.exprs.into_iter().filter_map(|id| match &body.exprs[id].kind {
         ExprKind::Function(function) | ExprKind::Call { callee: Callee::Function(function), .. } => Some((function.clone(), body.exprs[id].span)),
         _ => None,
@@ -294,7 +448,7 @@ mod tests {
         check(&mut program, &mut parsed.interner, &mut parsed.sink);
         let mut built = Built { program, interner: parsed.interner, errors: Vec::new() };
         let main = built.def("main");
-        instantiate(&mut built.program, &built.interner, &mut parsed.sink, &[Instance { def: main, args: Vec::new() }]);
+        instantiate(&mut built.program, &mut built.interner, &mut parsed.sink, &[Instance { def: main, args: Vec::new() }]);
         built.errors = parsed.sink.iter().filter(|diagnostic| diagnostic.severity == Severity::Error).map(|diagnostic| diagnostic.message.clone()).collect();
         built
     }
@@ -319,7 +473,14 @@ mod tests {
                     if instance.args.is_empty() {
                         name
                     } else {
-                        let args: Vec<String> = instance.args.iter().map(|&arg| self.program.render(arg, &self.interner)).collect();
+                        let args: Vec<String> = instance
+                            .args
+                            .iter()
+                            .map(|arg| match arg {
+                                GenericArg::Type(ty) => self.program.render(*ty, &self.interner),
+                                GenericArg::Const(c) => self.program.render_const(c, &self.interner),
+                            })
+                            .collect();
                         format!("{name}<{}>", args.join(","))
                     }
                 })

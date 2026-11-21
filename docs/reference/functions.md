@@ -831,8 +831,6 @@ struct S {
 * A function declared `-> Stream<T>` that holds `yield e` is a generator. Calling it returns a lazy `Stream<T>` that runs as `for`, `.next()` or an adapter consumes it. <!-- block -->
 
 ```mote
-import { Stream } from std.collections
-
 fn count(n: Int) -> Stream<Int> {
     for i in 0..n {
         println("make ${i}")
@@ -860,8 +858,6 @@ make 1
 * A generator's `return` takes no value and ends the stream. `yield` outside a generator, in a lambda or in a nested function is an error. <!-- block -->
 
 ```mote
-import { Stream } from std.collections
-
 fn upto(n: Int) -> Stream<Int> {
     for i in 0..10 {
         if i == n {
@@ -884,8 +880,6 @@ fn main() {
 ```
 
 ```mote
-import { Stream } from std.collections
-
 fn bad() -> Stream<Int> {
     yield 1
     return 2 // error
@@ -899,8 +893,6 @@ fn bad() {
 ```
 
 ```mote
-import { Stream } from std.collections
-
 fn bad() -> Stream<Int> {
     let f = || { yield 1 } // error
     yield 2
@@ -908,8 +900,6 @@ fn bad() -> Stream<Int> {
 ```
 
 ```mote
-import { Stream } from std.collections
-
 fn bad() -> Stream<Int> {
     fn inner() {
         yield 1 // error
@@ -921,8 +911,6 @@ fn bad() -> Stream<Int> {
 * A generator cannot `yield` inside a `with` or a `scope`: a reader that stops early would leave the resource open. Close the resource before the `yield`, or open it again after. <!-- block -->
 
 ```mote
-import { Stream } from std.collections
-
 class Res {
     fn close(self) {}
 }
@@ -935,8 +923,6 @@ fn bad() -> Stream<Int> {
 ```
 
 ```mote
-import { Stream } from std.collections
-
 fn bad() -> Stream<Int> {
     scope {
         yield 1 // error
@@ -1000,13 +986,14 @@ fn main() {
 3
 ```
 
-## Native functions
+## Extern functions
 
-* `native fn name(params) -> Ret` declares a function implemented outside Mote; it has no body. See [modules.md](modules.md). <!-- block -->
+* `extern "lib" { ... }` declares functions implemented in an external library; declarations inside the block have no body. See [modules.md](modules.md). <!-- block -->
 
 ```mote
-@link("m")
-native fn sqrt(x: Float) -> Float
+extern "m" {
+    fn sqrt(x: Float) -> Float
+}
 
 fn main() {
     println("declared")
@@ -1018,7 +1005,9 @@ declared
 ```
 
 ```mote
-native fn sqrt(x: Float) -> Float { // error
-    return x
+extern "m" {
+    fn sqrt(x: Float) -> Float { // error
+        return x
+    }
 }
 ```

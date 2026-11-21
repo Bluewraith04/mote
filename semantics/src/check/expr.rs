@@ -3,10 +3,11 @@ use mote_syntax as ast;
 use mote_syntax::{ElseExpr, FloatLiteral, FloatSuffix, IntLiteral, IntSuffix};
 
 use super::FnCx;
+use crate::comptime;
 use crate::cx::Cx;
-use crate::defs::{Bound, DefId, DefKind, LangItem, Receiver, Resolved};
+use crate::defs::{DefId, DefKind, GenericParam, Receiver, Resolved};
 use crate::tree::{Conversion, Expr, ExprKind, FnRef};
-use crate::types::{FnParam, TyId, TyKind};
+use crate::types::{ConstArg, ConstVal, FnParam, GenericArg, TyId, TyKind};
 
 fn is_int(kind: &TyKind) -> bool {
     matches!(kind, TyKind::Int(_))
@@ -69,11 +70,14 @@ impl Cx<'_> {
             ast::ExprKind::Binary { op, left, right } => self.binary(f, *op, *left, *right, expected, span),
             ast::ExprKind::Cast { expr, ty } => self.cast(f, *expr, *ty, span),
             ast::ExprKind::Call { callee, args } => self.call(f, *callee, args, expected, span),
-            ast::ExprKind::Member { object, name } => self.member(f, *object, *name, expected, span),
+            ast::ExprKind::Builtin { name, generic_args, args } => self.check_builtin(f, *name, generic_args, args, expected, span),
+            ast::ExprKind::Member { object, name, .. } => self.member(f, *object, *name, expected, span),
             ast::ExprKind::StructInit { path, args, fields } => self.struct_init(f, path, args, fields, expected, span),
+            ast::ExprKind::Comptime(block) => self.comptime_expr(f, block, expected, span),
+            ast::ExprKind::ComptimeIf { condition, then, otherwise } => self.comptime_value_if(f, condition, *then, otherwise, expected, span),
             ast::ExprKind::If { condition, then, otherwise } => self.value_if(f, condition, *then, otherwise, expected, span),
             ast::ExprKind::Match { subject, arms } => self.value_match(f, *subject, arms, expected, span),
-            ast::ExprKind::OptionalMember { object, name } => self.optional_member(f, *object, *name, span),
+            ast::ExprKind::OptionalMember { object, name, .. } => self.optional_member(f, *object, *name, span),
             ast::ExprKind::Propagate(operand) => self.propagate(f, *operand, span),
             ast::ExprKind::Unwrap(operand) => self.unwrap(f, *operand, span),
             ast::ExprKind::TypeTest { expr, ty } => self.type_test(f, *expr, *ty, span),
@@ -82,8 +86,8 @@ impl Cx<'_> {
             ast::ExprKind::ArrayRepeat { value, len } => self.array_repeat(f, *value, *len, expected, span),
             ast::ExprKind::Map(entries) => self.map_literal(f, entries, expected, span),
             ast::ExprKind::Range { start, end, inclusive } => self.range_expr(f, *start, *end, *inclusive, expected, span),
-            ast::ExprKind::Index { object, index } => self.index_expr(f, *object, *index, span),
-            ast::ExprKind::Slice { object, start, end, inclusive, step } => self.slice_expr(f, *object, *start, *end, *inclusive, *step, span),
+            ast::ExprKind::Index { object, index } => self.index_expr(f, *object, *index, expected, span),
+            ast::ExprKind::Slice { object, start, end, inclusive, step } => self.slice_expr(f, *object, *start, *end, *inclusive, *step, expected, span),
             ast::ExprKind::Spawn(body) => self.spawn_expr(f, body, span),
             ast::ExprKind::TypeApply { .. } => {
                 self.error(span, "a type is not a value");
@@ -168,50 +172,62 @@ impl Cx<'_> {
         f.body.expr(ExprKind::Float(value), ty, span)
     }
 
-    /// Whether `to_string` is built in for the type: a tuple, union or function whose parts can be written.
-    pub(crate) fn builtin_show(&self, f: &FnCx, ty: TyId) -> bool {
-        match self.program.types.kind(ty) {
-            TyKind::Tuple(members) | TyKind::Union(members) => members.iter().all(|&member| self.can_show(f, member)),
-            TyKind::Function(_) => true,
+    /// Whether `to_string` is built in for the type: a tuple, union, array, fixed array or function whose parts can be written.
+    pub(crate) fn builtin_show(&mut self, f: &FnCx, ty: TyId) -> bool {
+        match self.program.types.kind(ty).clone() {
+            TyKind::Tuple(members) | TyKind::Union(members) => members.into_iter().all(|member| self.can_show(f, member)),
+            TyKind::Array(element) | TyKind::FixedArray(element, _) => self.can_show(f, element),
+            TyKind::Function(_) | TyKind::Any => true,
             _ => false,
         }
     }
 
-    fn can_show(&self, f: &FnCx, ty: TyId) -> bool {
+    fn can_show(&mut self, f: &FnCx, ty: TyId) -> bool {
         match self.program.types.kind(ty) {
             TyKind::String | TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Unit => true,
-            TyKind::Param { index, .. } => f.bounds.get(*index as usize).is_some_and(|bounds| bounds.iter().any(|bound| self.program.defs[bound.def].lang == Some(LangItem::Display))),
-            TyKind::Tuple(_) | TyKind::Union(_) | TyKind::Function(_) => self.builtin_show(f, ty),
+            TyKind::Param { index, .. } => f.bounds.get(*index as usize).is_some_and(|bounds| bounds.iter().any(|bound| self.program.std.display == Some(bound.def))),
+            TyKind::Tuple(_) | TyKind::Union(_) | TyKind::Any | TyKind::Array(_) | TyKind::FixedArray(..) | TyKind::Function(_) => self.builtin_show(f, ty),
             _ => {
                 let Some(name) = self.interner.get("to_string") else { return false };
-                self.method_owner(ty).is_some_and(|(owner, _)| {
-                    self.methods_named(owner, name).into_iter().any(|method| matches!(self.program.defs[method].function(), Some(function) if function.receiver == Receiver::Read && function.params.is_empty()))
-                })
+                self.methods_for_type(ty, name)
+                    .into_iter()
+                    .any(|(method, _)| matches!(self.program.defs[method].function(), Some(function) if function.receiver == Receiver::Read && function.params.is_empty()))
             }
         }
     }
 
     /// A value as the text an interpolation writes.
     fn show(&mut self, f: &mut FnCx, value: Id<Expr>) -> Id<Expr> {
-        let ty = f.body.exprs[value].ty;
+        let ty = self.solved(f, f.body.exprs[value].ty);
         let span = f.body.exprs[value].span;
-        match self.program.types.kind(ty) {
+        let to_string = self.interner.intern("to_string");
+        let has_to_string = !matches!(self.program.types.kind(ty), TyKind::Param { .. }) && !self.methods_for_type(ty, to_string).is_empty();
+        let is_builtin_show = self.builtin_show(f, ty);
+        match self.program.types.kind(ty).clone() {
             TyKind::String | TyKind::Error => value,
             TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool => f.body.expr(ExprKind::Show(value), TyId::STRING, span),
-            _ if self.builtin_show(f, ty) => f.body.expr(ExprKind::Show(value), TyId::STRING, span),
-            kind if !matches!(kind, TyKind::Param { .. }) && self.method_owner(ty).is_none() => {
+            _ if has_to_string => self.method_call_on(f, value, mote_syntax::Ident { name: to_string, span }, &[], &[], Some(TyId::STRING), span),
+            _ if is_builtin_show => f.body.expr(ExprKind::Show(value), TyId::STRING, span),
+            TyKind::Tuple(_) | TyKind::Union(_) | TyKind::Array(_) | TyKind::FixedArray(..) =>
+            {
                 let message = format!("{} cannot be written in a string", self.show_ty(ty));
                 self.error(span, message);
                 self.error_expr(f, span)
             }
-            _ => {
-                let name = self.interner.intern("to_string");
-                self.method_call_on(f, value, mote_syntax::Ident { name, span }, &[], Some(TyId::STRING), span)
-            }
+            _ => self.method_call_on(f, value, mote_syntax::Ident { name: to_string, span }, &[], &[], Some(TyId::STRING), span),
         }
     }
 
     pub(crate) fn ident(&mut self, f: &mut FnCx, name: Symbol, expected: Option<TyId>, span: Span) -> Id<Expr> {
+        if let Some((val, mut ty)) = f.lookup_const(name) {
+            if let (ConstVal::Int(n, _), Some(exp)) = (&val, expected)
+                && let TyKind::Int(int) = self.program.types.kind(exp)
+                && int.fits(*n)
+            {
+                ty = exp;
+            }
+            return comptime::const_val_to_expr(self.program, &mut f.body, &val, ty, span);
+        }
         if let Some(local) = f.lookup(name) {
             let ty = f.body.locals[local].ty;
             let node = f.body.expr(ExprKind::Local(local), ty, span);
@@ -219,6 +235,11 @@ impl Cx<'_> {
                 Some(narrow) if narrow != ty => f.body.expr(ExprKind::Convert { conversion: Conversion::Narrow, expr: node }, narrow, span),
                 _ => node,
             };
+        }
+        if let Some(pos) = f.scope.params.iter().position(|&p| p == name)
+            && f.scope.is_const_param(pos)
+        {
+            return f.body.expr(ExprKind::ConstArg(ConstArg::Param { index: pos as u32, name }), TyId::INT, span);
         }
         match self.lookup(f.module, name) {
             Some(Resolved::Def(def)) => self.def_value(f, def, expected, span),
@@ -249,31 +270,41 @@ impl Cx<'_> {
                 let ty = self.global_type(def);
                 f.body.expr(ExprKind::Global(def), ty, span)
             }
+            DefKind::Const(_) => {
+                let val = self.ensure_const_def(def);
+                let ty = match &self.program.defs[def].kind {
+                    DefKind::Const(c) => c.ty,
+                    _ => TyId::ERROR,
+                };
+                comptime::const_val_to_expr(self.program, &mut f.body, &val, ty, span)
+            }
             DefKind::Function(function) if function.generics.is_empty() => {
                 let ty = self.fn_type(def);
                 let ty = self.sendable_function(f, ty, expected);
                 f.body.expr(ExprKind::Function(FnRef { def, args: Vec::new() }), ty, span)
             }
             DefKind::Function(function) => {
-                let bounds: Vec<Vec<Bound>> = function.generics.iter().map(|param| param.bounds.clone()).collect();
-                let Some(args) = self.own_type_args(f, def, &[], span) else { return self.error_expr(f, span) };
+                let params_spec = function.generics.clone();
+                let Some(args) = self.own_generic_args(f, def, &[], span) else { return self.error_expr(f, span) };
                 let declared = self.fn_type(def);
-                let ty = self.program.types.subst(declared, &args);
+                let ty = self.program.types.subst_generic(declared, &args);
                 if let Some(expected) = expected {
                     self.unify(f, ty, expected);
                 }
                 let mut found = Vec::new();
-                for (index, &argument) in args.iter().enumerate() {
-                    let argument = self.solved(f, argument);
-                    if self.program.types.has_infer(argument) {
+                for (index, argument) in args.iter().enumerate() {
+                    let argument = self.solved_generic(f, argument);
+                    if self.program.types.generic_has_infer(&argument) {
                         let missing = self.text(self.generic_names(def)[index]);
-                        self.error(span, format!("cannot infer the type argument `{missing}`"));
+                        self.error(span, format!("cannot infer the generic argument `{missing}`"));
                         return self.error_expr(f, span);
                     }
                     found.push(argument);
                 }
-                for (index, bound) in bounds.iter().enumerate() {
-                    self.check_bounds(f, found[index], bound, &found, span);
+                for (index, param) in params_spec.iter().enumerate() {
+                    if let (GenericParam::Type { bounds, .. }, GenericArg::Type(ty_arg)) = (param, &found[index]) {
+                        self.check_bounds(f, *ty_arg, bounds, &found, span);
+                    }
                 }
                 let ty = self.solved(f, ty);
                 let ty = self.sendable_function(f, ty, expected);
@@ -348,6 +379,52 @@ impl Cx<'_> {
         f.pop_scope();
         let (then, otherwise, ty) = self.join(f, then, otherwise, span);
         f.body.expr(ExprKind::If { condition, then, otherwise }, ty, span)
+    }
+
+    /// Checks `comptime { ... }` expression by evaluating it at compile time.
+    fn comptime_expr(&mut self, f: &mut FnCx, block: &ast::Block, expected: Option<TyId>, span: Span) -> Id<Expr> {
+        match comptime::eval_comptime_block(self, f, block) {
+            Ok(Some((val, mut ty))) => {
+                if let (ConstVal::Int(n, _), Some(exp)) = (&val, expected)
+                    && let TyKind::Int(int) = self.program.types.kind(exp)
+                    && int.fits(*n)
+                {
+                    ty = exp;
+                }
+                comptime::const_val_to_expr(self.program, &mut f.body, &val, ty, span)
+            }
+            Ok(None) => f.body.expr(ExprKind::Null, TyId::UNIT, span),
+            Err(msg) => {
+                self.error(span, msg);
+                self.error_expr(f, span)
+            }
+        }
+    }
+
+    /// Checks `comptime if cond then a else b` as an expression, evaluating `cond` and checking only the taken branch.
+    fn comptime_value_if(&mut self, f: &mut FnCx, condition: &ast::Condition, then: Id<ast::Expr>, otherwise: &ElseExpr, expected: Option<TyId>, span: Span) -> Id<Expr> {
+        let ast::Condition::Expr(cond_e) = condition else {
+            self.error(span, "`comptime if` does not support pattern conditions");
+            return self.error_expr(f, span);
+        };
+        let take = match comptime::eval_ast_const_in_fn(self, f, *cond_e) {
+            Ok(ConstVal::Bool(b)) => b,
+            Ok(_) => {
+                self.error(span, "`comptime if` condition must be a Bool");
+                return self.error_expr(f, span);
+            }
+            Err(msg) => {
+                self.error(span, msg);
+                return self.error_expr(f, span);
+            }
+        };
+        if take {
+            self.expr(f, then, expected)
+        } else {
+            match otherwise {
+                ElseExpr::If(inner) | ElseExpr::Value(inner) => self.expr(f, *inner, expected),
+            }
+        }
     }
 
     /// The type two branches share: one fits the other, or a `null` branch makes the other optional.

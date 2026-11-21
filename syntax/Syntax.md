@@ -36,7 +36,10 @@
 - `Import` ↔ `import`
 - `From` ↔ `from`
 - `As` ↔ `as`
-- `Native` ↔ `native`
+- `Extern` ↔ `extern`
+- `Extend` ↔ `extend`
+- `Const` ↔ `const`
+- `Comptime` ↔ `comptime`
 - `Scope` ↔ `scope`
 - `Spawn` ↔ `spawn`
 - `With` ↔ `with`
@@ -121,27 +124,31 @@
 - `Block` ↔ `{` (`Stmt` | `;`)* `}`
 
 - `Program` ↔ (`Item` | `Separator`)*
-- `Item` ↔ `Doc`? `Attribute`* (`Function` | `NativeFunction` | `Test` | `Record` | `Enum` | `Trait` | `TypeAlias` | `Import` | `TopLevelStmt`)
+- `Item` ↔ `Doc`? `Attribute`* (`Function` | `ExternBlock` | `Extend` | `Const` | `Test` | `Record` | `Enum` | `Trait` | `TypeAlias` | `Import` | `TopLevelStmt`)
 - `ErrorItem` ↔ any tokens up to the next token that starts an `Item`
 - `Attribute` ↔ `@` `Name` (`(` (`AttributeArg` (`,` `AttributeArg`)* `,`?)? `)`)?
 - `AttributeArg` ↔ (`Path` `=`)? `AttributeValue`
 - `AttributeValue` ↔ `Path` | `String` | `Int` | `Float` | `true` | `false`
 
 - `Function` ↔ `pub`? `fn` `MemberName` `Generics`? `(` `Params` `)` (`->` `Type`)? `Block`
-- `NativeFunction` ↔ `pub`? `native` `fn` `Name` `Generics`? `(` `Params` `)` (`->` `Type`)?
+- `ExternBlock` ↔ `pub`? `extern` `String` `{` `ExternFn`* `}`
+- `ExternFn` ↔ `Doc`? `Attribute`* `pub`? `fn` `MemberName` `(` `Params` `)` (`->` `Type`)?
+- `Extend` ↔ `extend` `Generics`? `Type` `Traits`? `{` `Function`* `}`
+- `Const` ↔ `pub`? `const` `Name` (`:` `Type`)? `=` `Expr`
 - `Test` ↔ `test` `String` `Block`
 - `Record` ↔ `pub`? (`struct` | `class`) `Name` `Generics`? `Traits`? `{` (`Field` | `Function`)* `}`
 - `Enum` ↔ `pub`? `enum` `Name` `Generics`? `Traits`? `{` (`Variant` `,`?)* `Function`* `}`
 - `Trait` ↔ `pub`? `trait` `Name` `Generics`? `{` `TraitMember`* `}`
 - `TypeAlias` ↔ `pub`? `type` `Name` `Generics`? `=` `Type`
 - `Import` ↔ `pub`? `import` `ModulePath` (`as` `Name`)?
-- `Import` ↔ `pub`? `import` `{` (`ImportName` (`,` `ImportName`)* `,`? | `*`) `}` `from` `ModulePath`
+- `Import` ↔ `pub`? `import` (`ImportName` | `*` | `{` (`ImportName` (`,` `ImportName`)* `,`? | `*`) `}`) `from` `ModulePath`
+- `Import` ↔ `pub`? `import` `ModulePath` `.` (`*` | `{` (`ImportName` (`,` `ImportName`)* `,`? | `*`) `}`)
 - `ImportName` ↔ `Name` (`as` `Name`)?
 - `ModulePath` ↔ (`.` | `..`)* (`super` `.`)* `Name` (`.` `Name`)*
 - `TopLevelStmt` ↔ `pub` `Binding` | `Stmt`
 
 - `Generics` ↔ `<` `GenericParam` (`,` `GenericParam`)* `,`? `>`
-- `GenericParam` ↔ `Name` (`:` `Type` (`+` `Type`)*)?
+- `GenericParam` ↔ `Name` (`:` `Type` (`+` `Type`)*)? | `const` `Name` `:` `Type`
 - `Traits` ↔ `:` `(` `Type` (`,` `Type`)* `,`? `)`
 - `Params` ↔ (`Param` (`,` `Param`)* `,`?)?
 - `Param` ↔ `SelfParam` | `VariadicParam` | `NamedParam`
@@ -153,7 +160,8 @@
 - `TraitMember` ↔ `fn` `Name` `Generics`? `(` `Params` `)` (`->` `Type`)? `Block`?
 
 - `NamedType` ↔ `Path`
-- `GenericType` ↔ `Path` `<` `Type` (`,` `Type`)* `,`? `>`
+- `GenericType` ↔ `Path` `<` `GenericArg` (`,` `GenericArg`)* `,`? `>`
+- `BuiltinType` ↔ `@` `Name` (`<` `GenericArg` (`,` `GenericArg`)* `,`? `>`)? `(` (`Arg` (`,` `Arg`)* `,`?)? `)`
 - `NullableType` ↔ `Type` `?`
 - `NullableType` of `NullableType` ↔ `Type` `??`
 - `TupleType` ↔ `(` `)` | `(` `Type` `,` `)` | `(` `Type` (`,` `Type`)+ `,`? `)`
@@ -164,14 +172,18 @@
 - `GroupedType` ↔ `(` `Type` `)`
 
 - `Binding` ↔ (`let` | `var`) `Pattern` (`:` `Type`)? `=` `Expr`
+- `ConstStmt` ↔ `const` `Name` (`:` `Type`)? `=` `Expr`
 - `Assign` ↔ `Expr` (`=` | `+=` | `-=` | `*=` | `/=` | `%=` | `&=` | `|=` | `^=` | `<<=` | `>>=` | `??=`) `Expr`
 - `If` ↔ `if` `Condition` `Block` (`else` (`If` | `Block`))?
+- `ComptimeIf` ↔ `comptime` `if` `Condition` `Block` (`else` (`comptime`? `If` | `Block`))?
 - `While` ↔ `while` `Condition` `Block`
 - `For` ↔ `for` `Pattern` `in` `Expr` `Block`
+- `ComptimeFor` ↔ `comptime` `for` `Pattern` `in` `Expr` `Block`
 - `Match` ↔ `match` `Expr` `{` (`MatchArm` `,`?)* `}`
 - `MatchArm` ↔ `Pattern` (`if` `Expr`)? `=>` (`Block` | `Stmt`)
 - `Condition` ↔ `let` `Pattern` `=` `Expr` | `Expr`
 - `Scope` ↔ `scope` `Block`
+- `ComptimeBlock` ↔ `comptime` `Block`
 - `With` ↔ `with` `Name` `=` `Expr` `Block`
 - `SpawnStmt` ↔ `spawn` (`Block` | `Expr`)
 - `Return` ↔ `return` `Expr`?
@@ -179,7 +191,7 @@
 - `Continue` ↔ `continue`
 - `Yield` ↔ `yield` `Expr`
 - `ExprStmt` ↔ `Expr`
-- `Stmt` ↔ `Binding` | `Assign` | `If` | `While` | `For` | `Match` | `Scope` | `With` | `SpawnStmt` | `Return` | `Break` | `Continue` | `Yield` | `Function` | `ExprStmt` | `ErrorStmt`
+- `Stmt` ↔ `Binding` | `ConstStmt` | `Assign` | `If` | `ComptimeIf` | `While` | `For` | `ComptimeFor` | `Match` | `Scope` | `ComptimeBlock` | `With` | `SpawnStmt` | `Return` | `Break` | `Continue` | `Yield` | `Function` | `ExprStmt` | `ErrorStmt`
 - `ErrorStmt` ↔ any tokens up to the next token that starts a `Stmt` or `}`
 
 - `WildcardPattern` ↔ `_`
@@ -213,13 +225,14 @@
 - `Lambda` ↔ (`|` (`LambdaParam` (`,` `LambdaParam`)* `,`?)? `|` | `||`) (`->` `Type`)? (`Block` | `Expr`)
 - `LambdaParam` ↔ `var`? `Name` (`:` `Type`)?
 - `Call` ↔ `Expr` `(` (`Arg` (`,` `Arg`)* `,`?)? `)`
+- `BuiltinExpr` ↔ `@` `Name` (`<` `GenericArg` (`,` `GenericArg`)* `,`? `>`)? `(` (`Arg` (`,` `Arg`)* `,`?)? `)`
 - `Arg` ↔ (`Name` `=`)? `Expr`
 - `Member` ↔ `Expr` `.` `MemberName`
 - `TupleIndex` ↔ `Expr` `.` `Int`
 - `OptionalMember` ↔ `Expr` `?.` `MemberName`
 - `Index` ↔ `Expr` `[` `Expr` `]`
 - `Slice` ↔ `Expr` `[` `Expr`? (`..` | `..=`) `Expr`? (`..` `Expr`)? `]`
-- `TypeApply` ↔ `Path` `<` `Type` (`,` `Type`)* `,`? `>`
+- `TypeApply` ↔ `Path` `<` `GenericArg` (`,` `GenericArg`)* `,`? `>`
 - `Unwrap` ↔ `Expr` `!`
 - `Propagate` ↔ `Expr` `?`
 - `Unary` ↔ (`-` | `!` | `~`) `Expr`
@@ -229,11 +242,13 @@
 - `Range` ↔ `Expr` (`..` | `..=`) `Expr`
 - `SpawnExpr` ↔ `spawn` (`Block` | `Expr`)
 - `IfExpr` ↔ `if` `Condition` `{` `Expr` `}` `else` (`IfExpr` | `{` `Expr` `}`)
+- `ComptimeExpr` ↔ `comptime` `Block`
+- `ComptimeIfExpr` ↔ `comptime` `if` `Condition` `{` `Expr` `}` `else` (`comptime`? `IfExpr` | `{` `Expr` `}`)
 - `MatchExpr` ↔ `match` `Expr` `{` (`ValueArm` `,`?)* `}`
 - `ValueArm` ↔ `Pattern` (`if` `Expr`)? `=>` `Expr`
-- `Expr` ↔ `IntLiteral` | `FloatLiteral` | `StringLiteral` | `InterpolatedString` | `BoolLiteral` | `NullLiteral` | `Ident` | `SelfValue` | `Grouped` | `TupleLiteral` | `ListLiteral` | `ArrayRepeat` | `MapLiteral` | `StructInit` | `Lambda` | `Call` | `Member` | `TupleIndex` | `OptionalMember` | `Index` | `Slice` | `TypeApply` | `Unwrap` | `Propagate` | `Unary` | `Binary` | `TypeTest` | `Cast` | `Range` | `SpawnExpr` | `IfExpr` | `MatchExpr`
+- `Expr` ↔ `IntLiteral` | `FloatLiteral` | `StringLiteral` | `InterpolatedString` | `BoolLiteral` | `NullLiteral` | `Ident` | `SelfValue` | `Grouped` | `TupleLiteral` | `ListLiteral` | `ArrayRepeat` | `MapLiteral` | `StructInit` | `Lambda` | `Call` | `BuiltinExpr` | `Member` | `TupleIndex` | `OptionalMember` | `Index` | `Slice` | `TypeApply` | `Unwrap` | `Propagate` | `Unary` | `Binary` | `TypeTest` | `Cast` | `Range` | `SpawnExpr` | `IfExpr` | `ComptimeExpr` | `ComptimeIfExpr` | `MatchExpr`
 - `Pattern` ↔ `WildcardPattern` | `LiteralPattern` | `RangePattern` | `BindingPattern` | `AtPattern` | `OrPattern` | `TuplePattern` | `PathPattern` | `TupleStructPattern` | `StructPattern` | `TypePattern`
-- `Type` ↔ `NamedType` | `GenericType` | `NullableType` | `TupleType` | `ArrayType` | `FunctionType` | `UnionType` | `SelfType` | `GroupedType`
+- `Type` ↔ `NamedType` | `GenericType` | `BuiltinType` | `NullableType` | `TupleType` | `ArrayType` | `FunctionType` | `UnionType` | `SelfType` | `GroupedType`
 
 - `Precedence 1` ↔ `??`
 - `Precedence 2` ↔ `||`

@@ -119,14 +119,9 @@ var h = Holder { box: Box() }
 h.box.n = 1 // error
 ```
 
-* A struct may hold only values that cannot change under it: scalars, `String`, other structs, tuples and optionals of these, `Task`, `Sender`, `Receiver`, `Mutex`, `Once`, `atomic.Int64`, `atomic.Bool`, `PortEnd`, and immutable classes. A `List`, `Map`, `Set`, array or class with `var` fields is an error. <!-- block -->
+* A struct may hold only values that cannot change under it: scalars, `String`, other structs, tuples, optionals and fixed arrays of these, `Task`, `Sender`, `Receiver`, `Mutex`, `Once`, `AtomicInt`, `AtomicBool`, `PortEnd`, and immutable classes. A `List`, `Map`, `Set`, array `[T]` or class with `var` fields is an error. <!-- block -->
 
 ```mote
-import { Mutex, Sender, Receiver, Once } from std.sync
-import { Task } from std.task
-import { PortEnd } from std.port
-import std.atomic as atomic
-
 class Frozen {
     n: Int
 }
@@ -148,10 +143,11 @@ struct Holds {
     j: Receiver<Int>
     k: Mutex<Int>
     l: Once<Int>
-    m: atomic.Int64
-    n: atomic.Bool
+    m: AtomicInt
+    n: AtomicBool
     o: PortEnd
     p: Frozen
+    q: [Int; 2]
 }
 
 fn main() {
@@ -176,7 +172,7 @@ struct Bad {
 ```
 
 ```mote
-import { Set } from std.collections
+import Set from std.collections
 
 struct Bad {
     s: Set<Int> // error
@@ -185,7 +181,7 @@ struct Bad {
 
 ```mote
 struct Bad {
-    a: [Int; 2] // error
+    a: [Int] // error
 }
 ```
 

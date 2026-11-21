@@ -3,25 +3,24 @@ use std::collections::HashSet;
 use mote_base::{Diagnostic, DiagnosticSink, Id, Interner, Span};
 
 use super::method_of;
-use crate::defs::{DefId, LangItem};
+use crate::builtins::PARKING_BUILTINS;
+use crate::defs::DefId;
 use crate::program::{Instance, Program};
 use crate::tree::{Body, Callee, Expr, ExprKind, ForKind, StmtKind};
+use crate::types::BuiltinTy;
 use crate::walk::{reach, search, Reach};
 
-const PARKING: [(LangItem, &str); 9] = [
-    (LangItem::Task, "await"),
-    (LangItem::Task, "await_timeout"),
-    (LangItem::Sender, "send"),
-    (LangItem::Receiver, "recv"),
-    (LangItem::Receiver, "recv_timeout"),
-    (LangItem::Mutex, "lock"),
-    (LangItem::Mutex, "get"),
-    (LangItem::Mutex, "set"),
-    (LangItem::Once, "get_or_init"),
+const PARKING: [(BuiltinTy, &str); 9] = [
+    (BuiltinTy::Task, "await"),
+    (BuiltinTy::Task, "await_timeout"),
+    (BuiltinTy::Sender, "send"),
+    (BuiltinTy::Receiver, "recv"),
+    (BuiltinTy::Receiver, "recv_timeout"),
+    (BuiltinTy::Mutex, "lock"),
+    (BuiltinTy::Mutex, "get"),
+    (BuiltinTy::Mutex, "set"),
+    (BuiltinTy::Once, "get_or_init"),
 ];
-
-/// The `@intrinsic` names whose call can suspend the task; `ir` tests that its table agrees.
-pub const PARKING_INTRINSICS: [&str; 9] = ["stream_next", "task_await", "task_await_timeout", "sleep", "sender_send", "receiver_recv", "receiver_recv_timeout", "mutex_take", "once_begin"];
 
 /// Reports each `Mutex.lock` whose body reaches an operation that parks.
 pub(super) fn check(program: &Program, interner: &Interner, bodies: &[&Body], sink: &mut DiagnosticSink) {
@@ -30,7 +29,7 @@ pub(super) fn check(program: &Program, interner: &Interner, bodies: &[&Body], si
     for body in bodies {
         for id in reach(body).exprs {
             let ExprKind::Call { callee: Callee::Function(function), args } = &body.exprs[id].kind else { continue };
-            if method_of(program, interner, function.def) != Some((LangItem::Mutex, "lock")) {
+            if method_of(program, interner, function.def) != Some((BuiltinTy::Mutex, "lock")) {
                 continue;
             }
             let Some(&arg) = args.get(1) else { continue };
@@ -86,6 +85,10 @@ impl Scan<'_> {
         }
         reached.exprs.iter().find_map(|&id| match &body.exprs[id].kind {
             ExprKind::Function(function) | ExprKind::Call { callee: Callee::Function(function), .. } => self.op(function.def),
+            ExprKind::Call { callee: Callee::Builtin { name, .. }, .. } => {
+                let raw = self.interner.resolve(*name);
+                PARKING_BUILTINS.contains(&raw).then(|| raw.to_string())
+            }
             _ => None,
         })
     }
@@ -93,13 +96,13 @@ impl Scan<'_> {
     /// What a function is called when calling it parks.
     fn op(&self, def: DefId) -> Option<String> {
         let item = &self.program.defs[def];
-        if let Some((lang, name)) = method_of(self.program, self.interner, def)
-            && PARKING.iter().any(|&(parks, method)| parks == lang && method == name)
+        if let Some((builtin, name)) = method_of(self.program, self.interner, def)
+            && PARKING.iter().any(|&(parks, method)| parks == builtin && method == name)
         {
-            return Some(format!("{}.{name}", self.interner.resolve(self.program.defs[item.owner?].name)));
+            return Some(format!("{}.{name}", builtin.name()));
         }
         let function = item.function()?;
-        let parks = function.link.is_some_and(|link| link.blocking) || function.intrinsic.is_some_and(|name| PARKING_INTRINSICS.contains(&self.interner.resolve(name)));
+        let parks = function.link.is_some_and(|link| link.blocking);
         parks.then(|| self.interner.resolve(item.name).to_string())
     }
 }

@@ -1,0 +1,360 @@
+// Rows of a result, and parameter lists and result sets as the C/Rust library holds them.
+import Kind from std.reflect
+import { SqlValue, Value, to_value } from .value
+import {
+    sqlite_params_blob, sqlite_params_free, sqlite_params_int, sqlite_params_new, sqlite_params_null, sqlite_params_real, sqlite_params_text,
+    sqlite_rows_bytes, sqlite_rows_columns, sqlite_rows_count, sqlite_rows_int, sqlite_rows_name, sqlite_rows_real, sqlite_rows_type,
+    sqlite_stmt_bind, sqlite_stmt_col_bytes, sqlite_stmt_col_int, sqlite_stmt_col_name,
+    sqlite_stmt_col_real, sqlite_stmt_col_type, sqlite_stmt_columns, sqlite_stmt_reset,
+    sqlite_stmt_step
+} from ._lib
+
+pub fn failed(code: Int, error: [UInt8]) -> Error {
+    let size = if -code - 1 < error.len() { -code - 1 } else { error.len() }
+    let message = String.from_bytes(error.slice(0, size))
+    return Error.new(ErrorKind.Other, "sqlite: " + (if message == null { "failed" } else { message }))
+}
+
+// An external list of the parameters.
+pub fn bind(values: List<SqlValue>) -> Int {
+    let handle = sqlite_params_new()
+    for param in values {
+        match to_value(param) {
+            Null => sqlite_params_null(handle)
+            Integer(number) => sqlite_params_int(handle, number)
+            Real(number) => sqlite_params_real(handle, number)
+            Text(text) => sqlite_params_text(handle, text.bytes())
+            Blob(bytes) => sqlite_params_blob(handle, bytes)
+        }
+    }
+    return handle
+}
+
+pub fn cell(handle: Int, row: Int, column: Int) -> Value {
+    let kind = sqlite_rows_type(handle, row, column)
+    if kind == 1 { return Value.Integer(sqlite_rows_int(handle, row, column)) }
+    if kind == 2 { return Value.Real(sqlite_rows_real(handle, row, column)) }
+    if kind == 3 || kind == 4 {
+        var empty: [UInt8] = []
+        var out: [UInt8] = [0; sqlite_rows_bytes(handle, row, column, empty)]
+        sqlite_rows_bytes(handle, row, column, out)
+        if kind == 4 { return Value.Blob(out) }
+        let text = String.from_bytes(out)
+        return Value.Text(if text == null { "" } else { text })
+    }
+    return Value.Null
+}
+
+pub fn rows_of(handle: Int) -> List<Row> {
+    let col_count = sqlite_rows_columns(handle)
+    var names: [String] = [""; col_count]
+    for column in 0..col_count {
+        var empty: [UInt8] = []
+        var out: [UInt8] = [0; sqlite_rows_name(handle, column, empty)]
+        sqlite_rows_name(handle, column, out)
+        let name = String.from_bytes(out)
+        names.set(column, if name == null { "" } else { name })
+    }
+    var rows: List<Row> = []
+    for row in 0..sqlite_rows_count(handle) {
+        var types: [UInt8] = [0; col_count]
+        var ints: [Int] = [0; col_count]
+        var reals: [Float] = [0.0; col_count]
+        var texts: [String] = [""; col_count]
+        var blob_starts: [Int] = [-1; col_count]
+        var blob_lens: [Int] = [0; col_count]
+        var blob_parts: List<[UInt8]> = []
+        var total_blob_bytes = 0
+
+        for column in 0..col_count {
+            let kind = sqlite_rows_type(handle, row, column)
+            types.set(column, kind as UInt8)
+            if kind == 1 {
+                ints.set(column, sqlite_rows_int(handle, row, column))
+            } else if kind == 2 {
+                reals.set(column, sqlite_rows_real(handle, row, column))
+            } else if kind == 3 || kind == 4 {
+                var empty: [UInt8] = []
+                let byte_len = sqlite_rows_bytes(handle, row, column, empty)
+                var out: [UInt8] = [0; byte_len]
+                sqlite_rows_bytes(handle, row, column, out)
+                if kind == 4 {
+                    blob_starts.set(column, total_blob_bytes)
+                    blob_lens.set(column, byte_len)
+                    blob_parts.push(out)
+                    total_blob_bytes += byte_len
+                } else {
+                    let text = String.from_bytes(out)
+                    texts.set(column, if text == null { "" } else { text })
+                }
+            }
+        }
+
+        var blobs: [UInt8] = [0; total_blob_bytes]
+        var blob_offset = 0
+        for part in blob_parts {
+            for b in 0..part.len() {
+                blobs.set(blob_offset + b, part.get(b))
+            }
+            blob_offset += part.len()
+        }
+
+        rows.push(Row {
+            names: names,
+            types: types,
+            ints: ints,
+            reals: reals,
+            texts: texts,
+            blobs: blobs,
+            blob_starts: blob_starts,
+            blob_lens: blob_lens
+        })
+    }
+    return rows
+}
+
+/// One row of a result. Sendable across tasks.
+pub class Row {
+    names: [String]
+    types: [UInt8]
+    ints: [Int]
+    reals: [Float]
+    texts: [String]
+    blobs: [UInt8]
+    blob_starts: [Int]
+    blob_lens: [Int]
+
+    /// How many columns the row has.
+    pub fn len(self) -> Int { return self.names.len() }
+
+    /// The names of the columns in order.
+    pub fn columns(self) -> List<String> {
+        return self.names.to_list()
+    }
+
+    /// The value in a column by position.
+    pub fn get(self, index: Int) -> Value {
+        if !(index >= 0 && index < self.names.len()) { @fault("the row has no such column") }
+        let kind = self.types.get(index)
+        if kind == 1 { return Value.Integer(self.ints.get(index)) }
+        if kind == 2 { return Value.Real(self.reals.get(index)) }
+        if kind == 3 { return Value.Text(self.texts.get(index)) }
+        if kind == 4 {
+            let start = self.blob_starts.get(index)
+            let len = self.blob_lens.get(index)
+            return Value.Blob(self.blobs.slice(start, start + len).to_array())
+        }
+        return Value.Null
+    }
+
+    /// The value in the first column with a name; null when there is none.
+    pub fn named(self, name: String) -> Value? {
+        for index in 0..self.names.len() {
+            if self.names.get(index) == name { return self.get(index) }
+        }
+        return null
+    }
+
+    /// The column value by `Int` position or `String` name (`null` if out of bounds or missing).
+    pub fn __getitem__(self, key: Int | String) -> Value? {
+        if key is Int {
+            if key < 0 || key >= self.names.len() { return null }
+            return self.get(key)
+        }
+        return self.named(key)
+    }
+
+    /// Decodes this row into a struct or class `T` by matching field names to column names.
+    pub fn decode<T>(self) -> Result<T, Error> {
+        const info = @type_info(T)
+        comptime if info.kind != Kind.Struct && info.kind != Kind.Class {
+            return Err(Error.new(ErrorKind.InvalidData, "sqlite: ${info.name} is not a struct or class"))
+        } else {
+            var out: T = @__default<T>()
+            comptime for f in @fields(T) {
+                let v = decode_cell<@FieldType(T, f.name)>(row_value(self, f.name))?
+                @set_field(out, f.name, v)
+            }
+            return Ok(out)
+        }
+    }
+}
+
+pub fn read_stepped_row(stmt_handle: Int, names: [String]) -> Row {
+    let col_count = names.len()
+    var types: [UInt8] = [0; col_count]
+    var ints: [Int] = [0; col_count]
+    var reals: [Float] = [0.0; col_count]
+    var texts: [String] = [""; col_count]
+    var blob_starts: [Int] = [-1; col_count]
+    var blob_lens: [Int] = [0; col_count]
+    var blob_parts: List<[UInt8]> = []
+    var total_blob_bytes = 0
+
+    for col in 0..col_count {
+        let kind = sqlite_stmt_col_type(stmt_handle, col)
+        types.set(col, kind as UInt8)
+        if kind == 1 {
+            ints.set(col, sqlite_stmt_col_int(stmt_handle, col))
+        } else if kind == 2 {
+            reals.set(col, sqlite_stmt_col_real(stmt_handle, col))
+        } else if kind == 3 || kind == 4 {
+            var empty: [UInt8] = []
+            let byte_len = sqlite_stmt_col_bytes(stmt_handle, col, empty)
+            var out: [UInt8] = [0; byte_len]
+            sqlite_stmt_col_bytes(stmt_handle, col, out)
+            if kind == 4 {
+                blob_starts.set(col, total_blob_bytes)
+                blob_lens.set(col, byte_len)
+                blob_parts.push(out)
+                total_blob_bytes += byte_len
+            } else {
+                let text = String.from_bytes(out)
+                texts.set(col, if text == null { "" } else { text })
+            }
+        }
+    }
+
+    var blobs: [UInt8] = [0; total_blob_bytes]
+    var blob_offset = 0
+    for part in blob_parts {
+        for b in 0..part.len() {
+            blobs.set(blob_offset + b, part.get(b))
+        }
+        blob_offset += part.len()
+    }
+
+    return Row {
+        names: names,
+        types: types,
+        ints: ints,
+        reals: reals,
+        texts: texts,
+        blobs: blobs,
+        blob_starts: blob_starts,
+        blob_lens: blob_lens
+    }
+}
+
+/// Generator yielding rows one by one from a bound statement without pre-buffering.
+pub fn stream_rows(stmt_handle: Int, bound: Int) -> Stream<Row> {
+    var error: [UInt8] = [0; 512]
+    let bind_code = sqlite_stmt_bind(stmt_handle, bound, error)
+    sqlite_params_free(bound)
+    if bind_code < 0 {
+        return
+    }
+    let col_count = sqlite_stmt_columns(stmt_handle)
+    var names: [String] = [""; col_count]
+    for col in 0..col_count {
+        var empty: [UInt8] = []
+        var out: [UInt8] = [0; sqlite_stmt_col_name(stmt_handle, col, empty)]
+        sqlite_stmt_col_name(stmt_handle, col, out)
+        let name = String.from_bytes(out)
+        names.set(col, if name == null { "" } else { name })
+    }
+    while true {
+        let rc = sqlite_stmt_step(stmt_handle, error)
+        if rc <= 0 {
+            break
+        }
+        yield read_stepped_row(stmt_handle, names)
+    }
+    sqlite_stmt_reset(stmt_handle)
+}
+
+fn row_value(row: Row, name: String) -> Value? {
+    let direct = row.named(name)
+    if direct != null { return direct }
+    let lower = name.to_lower()
+    let cols = row.columns()
+    for i in 0..cols.len() {
+        if cols.get(i).to_lower() == lower {
+            return row.get(i)
+        }
+    }
+    return null
+}
+
+fn decode_cell<T>(val: Value?) -> Result<T, Error> {
+    const info = @type_info(T)
+    comptime if info.kind == Kind.Optional {
+        if val == null || val.is_null() {
+            let empty: T = null
+            return Ok(empty)
+        }
+        let inner = decode_cell<@TypeArg(T, 0)>(val)?
+        let wrapped: T = inner
+        return Ok(wrapped)
+    } else {
+        if val == null || val.is_null() {
+            return Err(Error.new(ErrorKind.InvalidData, "sqlite: missing or null value for ${info.name}"))
+        }
+        let cell = val
+        comptime if info.kind == Kind.Int {
+            let n = cell.as_int()
+            if n == null { return Err(Error.new(ErrorKind.InvalidData, "sqlite: expected integer")) }
+            comptime if info.name == "Int" || info.name == "Int64" { return Ok(n) }
+            comptime if info.name == "Int8" {
+                if n < -128 || n > 127 { return Err(Error.new(ErrorKind.InvalidData, "sqlite: integer out of range for Int8")) }
+                return Ok(n as Int8)
+            }
+            comptime if info.name == "Int16" {
+                if n < -32768 || n > 32767 { return Err(Error.new(ErrorKind.InvalidData, "sqlite: integer out of range for Int16")) }
+                return Ok(n as Int16)
+            }
+            comptime if info.name == "Int32" {
+                if n < -2147483648 || n > 2147483647 { return Err(Error.new(ErrorKind.InvalidData, "sqlite: integer out of range for Int32")) }
+                return Ok(n as Int32)
+            }
+            comptime if info.name == "UInt8" {
+                if n < 0 || n > 255 { return Err(Error.new(ErrorKind.InvalidData, "sqlite: integer out of range for UInt8")) }
+                return Ok(n as UInt8)
+            }
+            comptime if info.name == "UInt16" {
+                if n < 0 || n > 65535 { return Err(Error.new(ErrorKind.InvalidData, "sqlite: integer out of range for UInt16")) }
+                return Ok(n as UInt16)
+            }
+            comptime if info.name == "UInt32" {
+                if n < 0 || n > 4294967295 { return Err(Error.new(ErrorKind.InvalidData, "sqlite: integer out of range for UInt32")) }
+                return Ok(n as UInt32)
+            }
+            comptime if info.name == "UInt64" {
+                if n < 0 { return Err(Error.new(ErrorKind.InvalidData, "sqlite: integer out of range for UInt64")) }
+                return Ok(n as UInt64)
+            }
+        } else comptime if info.kind == Kind.Float {
+            let f = cell.as_float()
+            if f == null { return Err(Error.new(ErrorKind.InvalidData, "sqlite: expected float")) }
+            comptime if info.name == "Float32" { return Ok(f as Float32) }
+            return Ok(f)
+        } else comptime if info.kind == Kind.String {
+            let s = cell.as_text()
+            if s == null { return Err(Error.new(ErrorKind.InvalidData, "sqlite: expected text")) }
+            return Ok(s)
+        } else comptime if info.kind == Kind.Bool {
+            let n = cell.as_int()
+            if n != null { return Ok(n != 0) }
+            return Err(Error.new(ErrorKind.InvalidData, "sqlite: expected boolean"))
+        } else comptime if info.kind == Kind.Array {
+            const elem_info = @type_info(@TypeArg(T, 0))
+            comptime if elem_info.name == "UInt8" {
+                let b = cell.as_blob()
+                if b != null { return Ok(b) }
+                return Err(Error.new(ErrorKind.InvalidData, "sqlite: expected blob"))
+            }
+        } else comptime if info.kind == Kind.FixedArray {
+            const elem_info = @type_info(@TypeArg(T, 0))
+            comptime if elem_info.name == "UInt8" {
+                let b = cell.as_blob()
+                if b == null { return Err(Error.new(ErrorKind.InvalidData, "sqlite: expected blob")) }
+                const wanted = @array_len(T)
+                if b.len() != wanted { return Err(Error.new(ErrorKind.InvalidData, "sqlite: expected ${wanted}-byte blob, got ${b.len()}")) }
+                var out: T = @__default<T>()
+                for i in 0..wanted { out[i] = b[i] }
+                return Ok(out)
+            }
+        }
+        return Err(Error.new(ErrorKind.InvalidData, "sqlite: unsupported field type ${info.name}"))
+    }
+}

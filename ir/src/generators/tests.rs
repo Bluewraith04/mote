@@ -3,7 +3,7 @@ use mote_semantics::{compile, Compiled};
 use crate::lower::lower_bodies;
 use crate::{lower, print_function, verify, Function, FunctionKind, Lowered, Op, Terminator};
 
-const HEAD: &str = "import { Stream } from std.collections\n";
+const HEAD: &str = "";
 
 fn lowered(source: &str) -> (Compiled, Lowered) {
     let mut compiled = compile(&format!("{HEAD}{source}"));

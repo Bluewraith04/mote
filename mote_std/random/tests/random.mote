@@ -1,0 +1,207 @@
+import { assert, assert_eq } from std.test
+import { Random, system_bytes, system_int, rand, randn, uniform, normal, randint, randbool, permutation } from random
+
+test "a seed gives the numbers xoshiro256++ gives" {
+    var zero = Random.seeded(0)
+    assert_eq(zero.next_bits(), 5987356902031041503)
+    assert_eq(zero.next_bits(), 7051070477665621255)
+    assert_eq(zero.next_bits(), 6633766593972829180)
+    assert_eq(zero.next_bits(), 211316841551650330)
+    assert_eq(zero.next_bits(), 9136120204379184874)
+    var other = Random.seeded(12345)
+    assert_eq(other.next_bits(), 10201931350592234856)
+    assert_eq(other.next_bits(), 3780764549115216544)
+    assert_eq(other.next_bits(), 1570246627180645737)
+}
+
+test "the same seed repeats and another seed differs" {
+    var a = Random.seeded(7)
+    var b = Random.seeded(7)
+    var c = Random.seeded(8)
+    assert_eq(a.next_bits(), b.next_bits())
+    assert_eq(a.next_bits(), b.next_bits())
+    assert(a.next_bits() != c.next_bits(), "differs")
+}
+
+test "an integer in a range stays inside it and reaches both ends" {
+    var random = Random.seeded(1)
+    var seen_low = false
+    var seen_high = false
+    for _ in 0..500 {
+        let n = random.between(-3, 4)
+        assert(n >= -3 && n < 4, "inside")
+        if n == -3 { seen_low = true }
+        if n == 3 { seen_high = true }
+    }
+    assert(seen_low && seen_high, "ends")
+    assert_eq(random.below(1), 0)
+}
+
+test "a float is in the unit interval and the mean is near a half" {
+    var random = Random.seeded(2)
+    var total = 0.0
+    for _ in 0..2000 {
+        let x = random.float()
+        assert(x >= 0.0 && x < 1.0, "unit")
+        total += x
+    }
+    let mean = total / 2000.0
+    assert(mean > 0.45 && mean < 0.55, "mean")
+}
+
+test "a bool falls both ways" {
+    var random = Random.seeded(3)
+    var trues = 0
+    for _ in 0..1000 {
+        if random.bool() { trues += 1 }
+    }
+    assert(trues > 400 && trues < 600, "balanced")
+}
+
+test "a shuffle keeps the items and moves them" {
+    var random = Random.seeded(4)
+    let items = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    let shuffled = random.shuffled(items)
+    assert_eq(shuffled.len(), 10)
+    var total = 0
+    for n in shuffled {
+        total += n
+    }
+    assert_eq(total, 55)
+    assert(shuffled != items, "moved")
+    assert_eq(items.get(0), 1)
+    let empty: List<Int> = []
+    assert_eq(random.shuffled(empty).len(), 0)
+}
+
+test "a choice comes from the list" {
+    var random = Random.seeded(5)
+    let words = ["a", "b", "c"]
+    for _ in 0..20 {
+        assert(words.contains(random.choose(words)!), "member")
+    }
+    let none: List<String> = []
+    assert(random.choose(none) == null, "empty")
+}
+
+test "bytes come in the count asked" {
+    var random = Random.seeded(6)
+    assert_eq(random.bytes(0).len(), 0)
+    assert_eq(random.bytes(33).len(), 33)
+}
+
+test "the system source gives bytes and numbers that differ" {
+    assert_eq(system_bytes(16)!.len(), 16)
+    assert_eq(system_bytes(0)!.len(), 0)
+    assert(system_int()! != system_int()!, "differs")
+    var random = Random.system()!
+    assert(random.below(10) < 10, "inside")
+}
+
+test "seeded random array initializers are deterministic and bounded" {
+    var a = Random.seeded(99)
+    var b = Random.seeded(99)
+    assert(a.rand(10) == b.rand(10), "rand deterministic")
+    assert(a.randn(7) == b.randn(7), "randn deterministic")
+    assert(a.randint(8, -5, 10) == b.randint(8, -5, 10), "randint deterministic")
+    assert(a.randbool(12) == b.randbool(12), "randbool deterministic")
+    assert(a.permutation(10) == b.permutation(10), "permutation deterministic")
+
+    var rng = Random.seeded(123)
+    assert_eq(rng.rand(0).len(), 0)
+    assert_eq(rng.randn(0).len(), 0)
+    assert_eq(rng.uniform_array(0, 1.0, 2.0).len(), 0)
+    assert_eq(rng.normal_array(0, 0.0, 1.0).len(), 0)
+    assert_eq(rng.randint(0, 0, 5).len(), 0)
+    assert_eq(rng.randbool(0).len(), 0)
+    assert_eq(rng.permutation(0).len(), 0)
+
+    let us = rng.uniform_array(200, -2.5, 4.5)
+    assert_eq(us.len(), 200)
+    for u in us {
+        assert(u >= -2.5 && u < 4.5, "uniform range")
+    }
+    let u_mean = us.mean()
+    assert(u_mean > 0.4 && u_mean < 1.6, "uniform mean")
+
+    let zs = rng.randn(500)
+    assert_eq(zs.len(), 500)
+    let z_mean = zs.mean()
+    assert(z_mean > -0.2 && z_mean < 0.2, "randn mean")
+
+    let ns = rng.normal_array(400, 10.0, 2.0)
+    let n_mean = ns.mean()
+    assert(n_mean > 9.4 && n_mean < 10.6, "normal_array mean")
+
+    let ints = rng.randint(100, -3, 3)
+    for x in ints {
+        assert(x >= -3 && x < 3, "randint range")
+    }
+
+    let bs = rng.randbool(200)
+    var t_count = 0
+    for flag in bs {
+        if flag { t_count += 1 }
+    }
+    assert(t_count > 60 && t_count < 140, "randbool balance")
+}
+
+test "permutation, choice, shuffled_array, and in-place MutSpan shuffle" {
+    var rng = Random.seeded(77)
+    let p = rng.permutation(12)
+    assert_eq(p.len(), 12)
+    let sorted = p.sort()
+    var i = 0
+    while i < 12 {
+        assert_eq(sorted[i], i)
+        i += 1
+    }
+
+    let pool: [String] = ["red", "green", "blue"]
+    let empty_pool: [String] = []
+    assert_eq(rng.choice(empty_pool, 0).len(), 0)
+    let picks = rng.choice(pool, 15)
+    assert_eq(picks.len(), 15)
+    for pick in picks {
+        assert(pool.contains(pick), "choice member")
+    }
+
+    let base: [Int] = [1, 2, 3, 4, 5, 6, 7, 8]
+    let shuf = rng.shuffled_array(base)
+    assert_eq(shuf.len(), 8)
+    assert(shuf.sum() == 36, "shuffled_array preserves sum")
+    assert(base == [1, 2, 3, 4, 5, 6, 7, 8], "source untouched")
+
+    var arr: [Int] = [10, 20, 30, 40, 50, 60]
+    rng.shuffle(arr.mut_span())
+    assert_eq(arr.sum(), 210)
+    assert(arr.sort() == [10, 20, 30, 40, 50, 60], "in-place array shuffle")
+
+    var lst: List<Int> = [1, 2, 3, 4, 5]
+    rng.shuffle(lst.mut_span())
+    assert_eq(lst.len(), 5)
+    var sum_lst = 0
+    for v in lst { sum_lst += v }
+    assert_eq(sum_lst, 15)
+}
+
+test "top-level system-seeded array initializers" {
+    let a = rand(10)!
+    assert_eq(a.len(), 10)
+    for x in a { assert(x >= 0.0 && x < 1.0, "rand in [0,1)") }
+
+    assert_eq(randn(8)!.len(), 8)
+    let u = uniform(10, 5.0, 6.0)!
+    assert_eq(u.len(), 10)
+    for x in u { assert(x >= 5.0 && x < 6.0, "uniform in [5,6)") }
+
+    assert_eq(normal(8, -1.0, 0.5)!.len(), 8)
+    let ri = randint(12, 10, 20)!
+    assert_eq(ri.len(), 12)
+    for x in ri { assert(x >= 10 && x < 20, "randint in [10,20)") }
+
+    assert_eq(randbool(6)!.len(), 6)
+    let perm = permutation(5)!
+    assert_eq(perm.len(), 5)
+    assert(perm.sort() == [0, 1, 2, 3, 4], "system permutation")
+}

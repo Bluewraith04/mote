@@ -72,6 +72,9 @@ impl Parser<'_> {
                     }
                 }
                 _ => {
+                    if self.ctx.no_gt && matches!(kind, T::Gt | T::GtEq | T::Shr) {
+                        break;
+                    }
                     let Some((prec, op)) = binary_op(kind) else { break };
                     if prec < min {
                         break;
@@ -129,13 +132,15 @@ impl Parser<'_> {
                         ExprKind::TupleIndex { object: expr, index }
                     } else {
                         let name = self.member_name();
-                        ExprKind::Member { object: expr, name }
+                        let args = self.member_type_args();
+                        ExprKind::Member { object: expr, name, args }
                     }
                 }
                 T::QuestionDot => {
                     self.bump();
                     let name = self.member_name();
-                    ExprKind::OptionalMember { object: expr, name }
+                    let args = self.member_type_args();
+                    ExprKind::OptionalMember { object: expr, name, args }
                 }
                 T::Bang => {
                     self.bump();
@@ -152,13 +157,21 @@ impl Parser<'_> {
         expr
     }
 
-    fn arg(&mut self) -> Arg {
+    pub(super) fn arg(&mut self) -> Arg {
         if matches!(self.peek(), T::Ident(_)) && self.peek_at(1) == T::Eq {
             let name = self.name();
             self.bump();
             return Arg { name: Some(name), value: self.expr() };
         }
         Arg { name: None, value: self.expr() }
+    }
+
+    fn member_type_args(&mut self) -> Vec<GenericArg> {
+        if self.at(T::Lt) && self.type_args_follow(0) {
+            self.generic_args()
+        } else {
+            Vec::new()
+        }
     }
 
     fn index(&mut self, object: Id<Expr>) -> ExprKind {
@@ -214,6 +227,8 @@ impl Parser<'_> {
             T::Pipe | T::OrOr => return self.lambda(),
             T::If => return self.if_expr(),
             T::Match => return self.match_expr(),
+            T::At => return self.builtin_expr(),
+            T::Comptime => return self.comptime_expr(),
             T::Spawn => {
                 self.bump();
                 ExprKind::Spawn(self.spawn_body(false))
@@ -303,7 +318,7 @@ impl Parser<'_> {
         match self.peek_at(after) {
             T::Lt if self.type_args_follow(after) => {
                 let path = self.path();
-                let args = self.type_args();
+                let args = self.generic_args();
                 if self.at(T::OpenBrace) {
                     return self.struct_init(path, args, start);
                 }
@@ -323,7 +338,16 @@ impl Parser<'_> {
         }
     }
 
-    fn struct_init(&mut self, path: Path, args: Vec<Id<Type>>, start: u32) -> Id<Expr> {
+    fn builtin_expr(&mut self) -> Id<Expr> {
+        let start = self.start();
+        self.bump();
+        let name = self.name();
+        let generic_args = if self.at(T::Lt) && self.type_args_follow(0) { self.generic_args() } else { Vec::new() };
+        let args = if self.expect(T::OpenParen) { self.list(T::CloseParen, |p| p.arg()) } else { Vec::new() };
+        self.expr_node(ExprKind::Builtin { name, generic_args, args }, start)
+    }
+
+    fn struct_init(&mut self, path: Path, args: Vec<GenericArg>, start: u32) -> Id<Expr> {
         self.bump();
         let fields = self.free(|p| p.items_until(T::CloseBrace, Self::field_init));
         self.expr_node(ExprKind::StructInit { path, args, fields }, start)
@@ -337,37 +361,62 @@ impl Parser<'_> {
         if self.eat(T::Colon) { FieldInit::Named { name, value: self.expr() } } else { FieldInit::Shorthand(name) }
     }
 
-    fn type_args_follow(&self, offset: usize) -> bool {
+    pub(super) fn type_args_follow(&self, offset: usize) -> bool {
         let mut depth = 0i32;
+        let mut group = 0i32;
         let mut i = offset;
         loop {
-            depth += match self.peek_at(i) {
-                T::Lt => 1,
-                T::Gt => -1,
-                T::Shr => -2,
+            let tok = self.peek_at(i);
+            match tok {
+                T::OpenParen | T::OpenBracket => group += 1,
+                T::CloseParen | T::CloseBracket => {
+                    if group == 0 {
+                        return false;
+                    }
+                    group -= 1;
+                }
+                _ if group > 0 => {
+                    if tok == T::Eof {
+                        return false;
+                    }
+                }
+                T::Lt => depth += 1,
+                T::Gt => depth -= 1,
+                T::Shr => depth -= 2,
                 T::Ident(_)
                 | T::SelfUpper
                 | T::Comma
                 | T::Dot
                 | T::Question
                 | T::QuestionQuestion
-                | T::OpenParen
-                | T::CloseParen
-                | T::OpenBracket
-                | T::CloseBracket
                 | T::Arrow
                 | T::Pipe
                 | T::Var
-                | T::Semicolon
-                | T::Int(_) => 0,
+                | T::Plus
+                | T::Minus
+                | T::Star
+                | T::Slash
+                | T::Percent
+                | T::Ampersand
+                | T::Caret
+                | T::Shl
+                | T::Bang
+                | T::Tilde
+                | T::True
+                | T::False
+                | T::Null
+                | T::Int(_)
+                | T::Float(_)
+                | T::String(_)
+                | T::At => {}
                 _ => return false,
-            };
+            }
             if depth < 0 {
                 return false;
             }
             i += 1;
-            if depth == 0 {
-                return matches!(self.peek_at(i), T::OpenParen | T::Dot) || (self.peek_at(i) == T::OpenBrace && self.struct_init_follows(i));
+            if depth == 0 && group == 0 {
+                return matches!(self.peek_at(i), T::OpenParen | T::Dot | T::CloseParen | T::Comma | T::Question | T::Pipe) || (self.peek_at(i) == T::OpenBrace && self.struct_init_follows(i));
             }
         }
     }
@@ -492,7 +541,26 @@ impl Parser<'_> {
     }
 
     fn if_expr(&mut self) -> Id<Expr> {
+        self.if_expr_inner(false, self.start())
+    }
+
+    fn comptime_expr(&mut self) -> Id<Expr> {
         let start = self.start();
+        self.bump();
+        match self.peek() {
+            T::If => self.if_expr_inner(true, start),
+            T::OpenBrace => {
+                let block = self.block();
+                self.expr_node(ExprKind::Comptime(block), start)
+            }
+            _ => {
+                self.unexpected("`if` or `{`");
+                self.error_expr()
+            }
+        }
+    }
+
+    fn if_expr_inner(&mut self, comptime: bool, start: u32) -> Id<Expr> {
         if !self.enter() {
             self.leave();
             return self.error_expr();
@@ -502,14 +570,24 @@ impl Parser<'_> {
         let then = self.branch();
         let otherwise = if self.else_follows() {
             self.bump();
-            if self.at(T::If) { ElseExpr::If(self.if_expr()) } else { ElseExpr::Value(self.branch()) }
+            let next_comptime = comptime && self.eat(T::Comptime);
+            if self.at(T::If) {
+                ElseExpr::If(self.if_expr_inner(comptime || next_comptime, self.start()))
+            } else {
+                ElseExpr::Value(self.branch())
+            }
         } else {
             let span = self.span();
             self.error("a value `if` needs an `else`", span);
             ElseExpr::Value(self.error_expr())
         };
         self.leave();
-        self.expr_node(ExprKind::If { condition, then, otherwise }, start)
+        let kind = if comptime {
+            ExprKind::ComptimeIf { condition, then, otherwise }
+        } else {
+            ExprKind::If { condition, then, otherwise }
+        };
+        self.expr_node(kind, start)
     }
 
     fn branch(&mut self) -> Id<Expr> {
@@ -553,7 +631,10 @@ impl Parser<'_> {
 
     /// Whether the `{` here opens statements: it starts with a statement keyword, or holds no `:` outside its nested brackets.
     fn block_follows(&self) -> bool {
-        if matches!(self.peek_at(1), T::Return | T::Let | T::Var | T::Break | T::Continue | T::Yield | T::While | T::For | T::With | T::Scope) {
+        if matches!(
+            self.peek_at(1),
+            T::Return | T::Let | T::Var | T::Const | T::Comptime | T::Break | T::Continue | T::Yield | T::While | T::For | T::With | T::Scope
+        ) {
             return true;
         }
         let mut depth = 0u32;

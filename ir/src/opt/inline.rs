@@ -3,6 +3,7 @@
 use std::collections::{HashMap, HashSet};
 
 use mote_base::Interner;
+use mote_semantics::{Program, Receiver};
 
 use super::cfg::targets_mut;
 use super::copies;
@@ -12,30 +13,8 @@ use crate::uses::{operands_mut, terminator_operands_mut, writes};
 /// The most a function weighs and is still inlined at every call.
 const SMALL: usize = 8;
 
-/// The most a function that reads the reflection table weighs and is still inlined at every call, so that the reads can fold at a known type.
-const READS_TABLE: usize = 400;
-
-/// Which functions read the reflection table, directly or through a call.
-fn reading_table(module: &Module, interner: &Interner) -> Vec<bool> {
-    let mut reads = vec![false; module.functions.len()];
-    for (id, function) in module.functions.iter() {
-        reads[id.index()] = function.blocks.iter().any(|(_, block)| {
-            block.insts.iter().any(|inst| matches!(&inst.op, Op::Call { callee: Callee::Intrinsic(name), .. } if matches!(interner.resolve(*name), "meta_ints" | "meta_texts")))
-        });
-    }
-    loop {
-        let mut changed = false;
-        for (id, function) in module.functions.iter() {
-            if !reads[id.index()] && function.blocks.iter().any(|(_, block)| block.insts.iter().any(|inst| matches!(&inst.op, Op::Call { callee: Callee::Function(callee), .. } if reads[callee.index()]))) {
-                reads[id.index()] = true;
-                changed = true;
-            }
-        }
-        if !changed {
-            return reads;
-        }
-    }
-}
+/// The most an operator dunder method weighs and is still inlined at every call, so that temporary records and copies fold away.
+const DUNDER: usize = 128;
 
 /// What a call of a function weighs against `SMALL`; a body made of calls gains little from being copied. An intrinsic weighs one.
 const CALL: usize = 4;
@@ -60,6 +39,59 @@ fn template(function: &Function) -> Template {
 /// The instructions of a function, a call counting as `CALL`.
 fn size(function: &Function) -> usize {
     function.blocks.iter().map(|(_, block)| block.insts.iter().map(|inst| if matches!(inst.op, Op::Call { callee: Callee::Function(_) | Callee::Value(_), .. }) { CALL } else { 1 }).sum::<usize>()).sum()
+}
+
+/// Whether the function is a method implementing an operator dunder.
+fn is_dunder(program: &Program, interner: &Interner, function: &Function) -> bool {
+    let FunctionKind::Instance(instance) = &function.kind else { return false };
+    let def = &program.defs[instance.def];
+    if !def.function().is_some_and(|f| f.receiver != Receiver::None) {
+        return false;
+    }
+    matches!(
+        interner.resolve(def.name),
+        "__neg__"
+            | "__not__"
+            | "__bit_not__"
+            | "__add__"
+            | "__radd__"
+            | "__sub__"
+            | "__rsub__"
+            | "__mul__"
+            | "__rmul__"
+            | "__div__"
+            | "__rdiv__"
+            | "__rem__"
+            | "__rrem__"
+            | "__bit_and__"
+            | "__rbit_and__"
+            | "__bit_or__"
+            | "__rbit_or__"
+            | "__bit_xor__"
+            | "__rbit_xor__"
+            | "__shl__"
+            | "__rshl__"
+            | "__shr__"
+            | "__rshr__"
+            | "__eq__"
+            | "__ne__"
+            | "__lt__"
+            | "__le__"
+            | "__gt__"
+            | "__ge__"
+            | "__iadd__"
+            | "__isub__"
+            | "__imul__"
+            | "__idiv__"
+            | "__irem__"
+            | "__ibit_and__"
+            | "__ibit_or__"
+            | "__ibit_xor__"
+            | "__ishl__"
+            | "__ishr__"
+            | "__getitem__"
+            | "__setitem__"
+    )
 }
 
 /// Whether a call can be replaced by the body: a plain function that keeps no state in its frame.
@@ -103,13 +135,20 @@ fn references(module: &Module, retired: &HashSet<FuncId>) -> (Vec<usize>, Vec<us
     (calls, others)
 }
 
+/// The most instructions a caller may grow to from non-single-call inlining.
+const CALLER_LIMIT: usize = 1500;
+
 /// Where the first call to inline in the block is, and whether the callee has no other caller.
-fn find(module: &Module, caller: FuncId, block: BlockId, calls: &[usize], others: &[usize], table: &[bool]) -> Option<(usize, FuncId, bool)> {
+fn find(module: &Module, caller: FuncId, caller_size: usize, block: BlockId, calls: &[usize], others: &[usize], dunders: &[bool]) -> Option<(usize, FuncId, bool)> {
     module.functions[caller].blocks[block].insts.iter().enumerate().find_map(|(at, inst)| {
         let Op::Call { callee: Callee::Function(callee), args, .. } = &inst.op else { return None };
         let target = &module.functions[*callee];
         let single = calls[callee.index()] == 1 && others[callee.index()] == 0;
-        let fits = *callee != caller && args.len() == target.params.len() && inlinable(*callee, target) && (single || size(target) <= SMALL || (table[callee.index()] && size(target) <= READS_TABLE));
+        let small_enough = caller_size <= CALLER_LIMIT && (size(target) <= SMALL || (dunders[callee.index()] && size(target) <= DUNDER));
+        let fits = *callee != caller
+            && args.len() == target.params.len()
+            && inlinable(*callee, target)
+            && (single || small_enough);
         fits.then_some((at, *callee, single))
     })
 }
@@ -175,23 +214,26 @@ fn splice(caller: &mut Function, block: BlockId, at: usize, callee: &Template, c
 }
 
 /// Inlines calls across the module; true when a call went.
-pub(super) fn run(module: &mut Module, interner: &Interner) -> bool {
+pub(super) fn run(module: &mut Module, program: &Program, interner: &Interner) -> bool {
+    let dunders: Vec<bool> = module.functions.iter().map(|(_, function)| is_dunder(program, interner, function)).collect();
     let mut retired = HashSet::new();
     let mut changed = false;
     for _ in 0..ROUNDS {
         let (calls, others) = references(module, &retired);
-        let table = reading_table(module, interner);
         let callers: Vec<FuncId> = module.functions.iter().map(|(id, _)| id).collect();
         let mut round = false;
         for caller in callers {
             if retired.contains(&caller) {
                 continue;
             }
+            let mut caller_size = size(&module.functions[caller]);
             let mut work: Vec<BlockId> = module.functions[caller].blocks.iter().map(|(id, _)| id).collect();
             while let Some(block) = work.pop() {
-                let Some((at, callee, single)) = find(module, caller, block, &calls, &others, &table) else { continue };
+                let Some((at, callee, single)) = find(module, caller, caller_size, block, &calls, &others, &dunders) else { continue };
+                let added = size(&module.functions[callee]);
                 let copy = template(&module.functions[callee]);
                 work.push(splice(&mut module.functions[caller], block, at, &copy, &[]));
+                caller_size += added;
                 if single {
                     retired.insert(callee);
                 }

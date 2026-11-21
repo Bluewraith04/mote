@@ -1,0 +1,14 @@
+// The process id, and sending a signal to a process.
+import Signal from .signal
+import failure from ._support
+import { signal_send, signal_pid } from ._lib
+
+/// The process id of this program.
+pub fn pid() -> Int { return signal_pid() }
+
+/// Sends a signal to a process, this one included; a signal to this program is handled before `send` returns.
+pub fn send(process: Int, signal: Signal) -> Result<Null, Error> {
+    let code = signal_send(process, signal.number())
+    if code < 0 { return Err(failure(code, "signal")) }
+    return Ok(null)
+}

@@ -1,0 +1,208 @@
+// The element of a view: what it shows, how it looks, and what a click on it does to the state.
+import Font from .theme
+
+/// What an element is.
+pub enum ElementKind {
+    Text
+    Row
+    Column
+    Box
+    Spacer
+}
+
+/// One layout attribute of an element, as the layout reads it.
+pub struct Attr {
+    pub name: String
+    pub value: String
+}
+
+fn digit(n: Int) -> String {
+    return "0123456789abcdef".slice(n, n + 1).to_string()
+}
+
+// A colour 0xRRGGBBAA as `#rrggbbaa`.
+fn color_text(color: Int) -> String {
+    var rest = color
+    var text = ""
+    for _ in 0..8 {
+        text = digit(rest % 16) + text
+        rest = rest / 16
+    }
+    return "#" + text
+}
+
+fn color_value(color: Int | String) -> String {
+    if color is String { return color }
+    return color_text(color)
+}
+
+/// A part of a view. Every modifier answers a changed copy, so they chain: `pane.text("Done").color(0x16a34aff).size(20)`.
+pub class Element {
+    pub var kind: ElementKind
+    pub var label: String
+    pub var kids: List<Element>
+    pub var attrs: List<Attr>
+    pub var grows: Bool
+    pub var outer: Int
+    pub var click: ((Any) -> Any)?
+
+    // Another element of the same parts, which a modifier then changes.
+    fn copy(self) -> Element {
+        return Element { kind: self.kind, label: self.label, kids: self.kids, attrs: self.attrs, grows: self.grows, outer: self.outer, click: self.click }
+    }
+
+    // The element with one attribute set, replacing an earlier value.
+    fn attr(self, name: String, value: String) -> Element {
+        var made = self.copy()
+        var attrs: List<Attr> = []
+        for each in self.attrs {
+            if each.name != name { attrs.push(each) }
+        }
+        attrs.push(Attr { name: name, value: value })
+        made.attrs = attrs
+        return made
+    }
+
+    /// Space inside, in pixels.
+    pub fn pad(self, px: Int) -> Element { return self.attr("padding", "${px}") }
+
+    /// Space inside: `across` on the left and right, `down` above and below.
+    pub fn pad_xy(self, across: Int, down: Int) -> Element { return self.attr("padding", "${across} ${down}") }
+
+    /// Space inside on all four sides (`left`, `top`, `right`, `bottom`).
+    pub fn pad_edges(self, left: Int, top: Int, right: Int, bottom: Int) -> Element {
+        return self.attr("padding", "${left} ${top} ${right} ${bottom}")
+    }
+
+    /// Space outside, in pixels; a click in it misses the element.
+    pub fn margin(self, px: Int) -> Element {
+        var made = self.copy()
+        made.outer = px
+        return made
+    }
+
+    /// Space between the children, in pixels.
+    pub fn gap(self, px: Int) -> Element { return self.attr("gap", "${px}") }
+
+    /// A width in pixels.
+    pub fn width(self, px: Int) -> Element { return self.attr("width", "${px}") }
+
+    /// A height in pixels.
+    pub fn height(self, px: Int) -> Element { return self.attr("height", "${px}") }
+
+    /// A width as a percentage (0..100) of the parent.
+    pub fn width_pct(self, pct: Int) -> Element { return self.attr("width", "${pct}%") }
+
+    /// A height as a percentage (0..100) of the parent.
+    pub fn height_pct(self, pct: Int) -> Element { return self.attr("height", "${pct}%") }
+
+    /// Takes the room the parent leaves along its own axis, or both ways at the top.
+    pub fn grow(self) -> Element {
+        var made = self.copy()
+        made.grows = true
+        return made
+    }
+
+    /// The background, as `0xRRGGBBAA` or a CSS colour string (`"#rrggbb"`, `"white"`, ...).
+    pub fn bg(self, color: Int | String) -> Element { return self.attr("background", color_value(color)) }
+
+    /// The colour of the text in the element and under it, as `0xRRGGBBAA` or a CSS colour string.
+    pub fn color(self, color: Int | String) -> Element { return self.attr("color", color_value(color)) }
+
+    /// The corner radius, in pixels.
+    pub fn radius(self, px: Int) -> Element { return self.attr("radius", "${px}") }
+
+    /// A border of `px` pixels in a colour (`0xRRGGBBAA` or CSS colour string).
+    pub fn border(self, px: Int, color: Int | String) -> Element {
+        return self.attr("border", "${px} ${color_value(color)}")
+    }
+
+    /// The text height in the element and under it, in pixels.
+    pub fn size(self, px: Int) -> Element { return self.attr("size", "${px}") }
+
+    /// The typeface used by text in the element and under it.
+    pub fn font(self, face: Font) -> Element {
+        let name = match face {
+            Sans => "sans"
+            Bold => "bold"
+            Serif => "serif"
+            Mono => "mono"
+        }
+        return self.attr("font", name)
+    }
+
+    /// Bold typeface shorthand.
+    pub fn bold(self) -> Element { return self.font(Font.Bold) }
+
+    /// Serif typeface shorthand.
+    pub fn serif(self) -> Element { return self.font(Font.Serif) }
+
+    /// Monospace typeface shorthand.
+    pub fn mono(self) -> Element { return self.font(Font.Mono) }
+
+    /// Text wrapping mode (`"words"` or `"none"`).
+    pub fn wrap(self, mode: String) -> Element { return self.attr("wrap", mode) }
+
+    /// Disables text wrapping (`wrap="none"`).
+    pub fn nowrap(self) -> Element { return self.attr("wrap", "none") }
+
+    /// Line height in pixels.
+    pub fn line_height(self, px: Int) -> Element { return self.attr("line-height", "${px}") }
+
+    /// Clips children outside this element's bounds.
+    pub fn clip(self) -> Element { return self.attr("clip", "true") }
+
+    /// Horizontal child/text alignment (`"left"`, `"center"`, `"right"`).
+    pub fn align_x(self, align: String) -> Element {
+        if self.kind == ElementKind.Text { return self.attr("align", align) }
+        return self.attr("align-x", align)
+    }
+
+    /// Vertical child alignment (`"top"`, `"middle"`, `"bottom"`).
+    pub fn align_y(self, align: String) -> Element { return self.attr("align-y", align) }
+
+    /// The children, or the text, in the middle across and down.
+    pub fn center(self) -> Element {
+        if self.kind == ElementKind.Text { return self.attr("align", "center") }
+        return self.attr("align-x", "center").attr("align-y", "middle")
+    }
+
+    /// The children in the middle down, whatever their height.
+    pub fn middle(self) -> Element { return self.attr("align-y", "middle") }
+
+    /// Left-aligns children (or text).
+    pub fn left(self) -> Element { return self.align_x("left") }
+
+    /// Right-aligns children (or text).
+    pub fn right(self) -> Element { return self.align_x("right") }
+
+    /// Top-aligns children.
+    pub fn top(self) -> Element { return self.align_y("top") }
+
+    /// Bottom-aligns children.
+    pub fn bottom(self) -> Element { return self.align_y("bottom") }
+
+    /// A name for the element, which its area in the layout carries.
+    pub fn id(self, name: String) -> Element { return self.attr("id", name) }
+
+    /// Runs when the element, or something in it that handles no click, is clicked. The handler is a function over `var` state, or a lambda whose parameter says the type: `|var s: Counter| { s.count += 1 }`.
+    pub fn on_click<S>(self, run: (var S) -> Null) -> Element {
+        var made = self.copy()
+        made.click = |boxed: Any| -> Any {
+            var state = boxed.to<S>()!
+            run(state)
+            return state
+        }
+        return made
+    }
+
+    /// Runs a zero-argument action when clicked (useful when capturing channels or handles without state parameters).
+    pub fn on_tap(self, run: () -> Null) -> Element {
+        var made = self.copy()
+        made.click = |boxed: Any| -> Any {
+            run()
+            return boxed
+        }
+        return made
+    }
+}

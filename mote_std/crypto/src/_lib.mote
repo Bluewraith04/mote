@@ -1,0 +1,11 @@
+// The functions of the external library `crypto`.
+
+extern "crypto" {
+    pub fn crypto_hasher_new(algorithm: Int) -> Int
+    pub fn crypto_hasher_update(handle: Int, data: [UInt8]) -> Int
+    pub fn crypto_hasher_finish(handle: Int, var out: [UInt8; 64]) -> Int
+    pub fn crypto_hasher_free(handle: Int) -> Int
+    pub fn crypto_hmac(algorithm: Int, key: [UInt8], data: [UInt8], var out: [UInt8; 64]) -> Int
+    pub fn crypto_hkdf(algorithm: Int, salt: [UInt8], secret: [UInt8], info: [UInt8], length: Int, out: [UInt8]) -> Int
+    pub fn crypto_equal(a: [UInt8], b: [UInt8]) -> Int
+}

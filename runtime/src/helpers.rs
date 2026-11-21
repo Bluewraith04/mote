@@ -27,6 +27,18 @@ pub const TEXT: &str = "mote_text";
 /// The symbol of the `Float` functions the machine has no instruction for.
 pub const MATH: &str = "mote_math";
 
+/// The symbol of off-heap memory operations (`alloc`, `realloc`, `free`, `copy`, `zero`).
+pub const MEM: &str = "mote_mem";
+
+/// The codes `mote_mem` is given.
+pub mod mem {
+    pub const ALLOC: u32 = 0;
+    pub const REALLOC: u32 = 1;
+    pub const FREE: u32 = 2;
+    pub const COPY: u32 = 3;
+    pub const ZERO: u32 = 4;
+}
+
 /// The codes `mote_math` is given.
 pub mod math {
     pub const ROUND: u32 = 0;
@@ -165,7 +177,121 @@ pub extern "C" fn mote_system(context: *mut TaskContext, op: u32, a: u64, t1: u3
             }
         }
         system::EXIT => runtime.exit(context, a as i32),
-        system::NOW => mote_scheduler::now(),
+        system::NOW => {
+            if mote_scheduler::in_a_task() {
+                mote_scheduler::now()
+            } else {
+                runtime.monotonic_now()
+            }
+        }
+        _ => 0,
+    }
+}
+
+/// Allocates a SIMD-aligned (`>= 64` bytes) off-heap block prefixed by its `(raw_ptr, total_size, align)` header.
+fn mem_alloc(count: u64, stride: u64, align: u64) -> u64 {
+    if count == 0 {
+        return 0;
+    }
+    let Ok(count) = usize::try_from(count) else { return 0 };
+    let Ok(stride) = usize::try_from(stride) else { return 0 };
+    let Ok(align) = usize::try_from(align) else { return 0 };
+    let user_align = align.max(64).next_power_of_two();
+    let Some(data_bytes) = count.checked_mul(stride) else { return 0 };
+    let Some(total_size) = user_align.checked_add(data_bytes.max(1)) else { return 0 };
+    let Ok(layout) = std::alloc::Layout::from_size_align(total_size, user_align) else { return 0 };
+    // SAFETY: `layout` has non-zero `total_size` and power-of-two `user_align`.
+    let raw = unsafe { std::alloc::alloc(layout) };
+    if raw.is_null() {
+        return 0;
+    }
+    // SAFETY: `raw` is followed by `total_size >= user_align >= 64 >= 3 * size_of::<usize>()` bytes.
+    unsafe {
+        let user_ptr = raw.add(user_align);
+        let header = user_ptr.cast::<usize>();
+        header.sub(3).write(raw as usize);
+        header.sub(2).write(total_size);
+        header.sub(1).write(user_align);
+        user_ptr as u64
+    }
+}
+
+/// Frees an off-heap allocation previously returned by `mem_alloc`.
+fn mem_free(ptr: u64) {
+    if ptr == 0 {
+        return;
+    }
+    let header = ptr as usize as *const usize;
+    // SAFETY: non-null pointers from `mem_alloc` store `[raw, total_size, user_align]` in the 3 preceding words.
+    unsafe {
+        let raw = header.sub(3).read() as *mut u8;
+        let total_size = header.sub(2).read();
+        let user_align = header.sub(1).read();
+        let layout = std::alloc::Layout::from_size_align_unchecked(total_size, user_align);
+        std::alloc::dealloc(raw, layout);
+    }
+}
+
+/// Reallocates an off-heap allocation to hold `new_count` elements while preserving up to the overlapping byte length.
+fn mem_realloc(old_ptr: u64, new_count: u64, stride: u64, align: u64) -> u64 {
+    if new_count == 0 {
+        mem_free(old_ptr);
+        return 0;
+    }
+    if old_ptr == 0 {
+        return mem_alloc(new_count, stride, align);
+    }
+    let Ok(new_count_usize) = usize::try_from(new_count) else { return 0 };
+    let Ok(stride_usize) = usize::try_from(stride) else { return 0 };
+    let Some(new_data) = new_count_usize.checked_mul(stride_usize) else { return 0 };
+    let new_ptr = mem_alloc(new_count, stride, align);
+    if new_ptr == 0 {
+        return 0;
+    }
+    let old_header = old_ptr as usize as *const usize;
+    // SAFETY: `old_ptr` came from `mem_alloc` and `new_ptr` was just allocated with at least `new_data` bytes.
+    unsafe {
+        let old_raw = old_header.sub(3).read() as *mut u8;
+        let old_total = old_header.sub(2).read();
+        let old_align = old_header.sub(1).read();
+        let old_data = old_total - old_align;
+        let copy_bytes = old_data.min(new_data);
+        if copy_bytes > 0 {
+            std::ptr::copy_nonoverlapping(old_ptr as usize as *const u8, new_ptr as usize as *mut u8, copy_bytes);
+        }
+        std::alloc::dealloc(old_raw, std::alloc::Layout::from_size_align_unchecked(old_total, old_align));
+    }
+    new_ptr
+}
+
+/// Performs an off-heap allocation, reallocation, free, copy, or zero operation by its code in `mem`.
+#[unsafe(no_mangle)]
+pub extern "C" fn mote_mem(op: u32, a: u64, b: u64, c: u64, d: u64) -> u64 {
+    match op {
+        mem::ALLOC => mem_alloc(a, b, c),
+        mem::REALLOC => mem_realloc(a, b, c, d),
+        mem::FREE => {
+            mem_free(a);
+            0
+        }
+        mem::COPY => {
+            let (Ok(count), Ok(stride)) = (usize::try_from(c), usize::try_from(d)) else { return 1 };
+            let Some(bytes) = count.checked_mul(stride) else { return 1 };
+            if bytes > 0 {
+                // SAFETY: caller validates non-null dst (`a`) and src (`b`) covering `bytes` bytes.
+                unsafe { std::ptr::copy(b as usize as *const u8, a as usize as *mut u8, bytes) };
+            }
+            0
+        }
+        mem::ZERO => {
+            let (Ok(count), Ok(stride)) = (usize::try_from(b), usize::try_from(c)) else { return 1 };
+            let Some(bytes) = count.checked_mul(stride) else { return 1 };
+            if bytes > 0 {
+                // SAFETY: caller validates non-null dst (`a`) covering `bytes` bytes.
+                unsafe { std::ptr::write_bytes(a as usize as *mut u8, 0, bytes) };
+            }
+            0
+        }
         _ => 0,
     }
 }
@@ -364,15 +490,20 @@ pub extern "C" fn mote_value(context: *mut TaskContext, op: u32, ty: u32, a: u64
             value::KEY_EQ => u64::from(Walk::new(table, shown, true).same(ty, a as *const u8, b as *const u8)),
             value::HASH => Walk::new(table, shown, true).hash_of(ty, a as *const u8),
             value::CONTAINS => {
-                let (element, first, length) = match table.get(ty).kind {
-                    mote_abi::Kind::Array(element) => (element, a as usize, *((a as usize + LENGTH_OFFSET as usize) as *const u64)),
-                    mote_abi::Kind::List(element) => (element, *((a as usize + LIST_BUFFER_OFFSET as usize) as *const u64) as usize, *((a as usize + LENGTH_OFFSET as usize) as *const u64)),
+                let (element, base, length) = match table.get(ty).kind {
+                    mote_abi::Kind::Array(element) => (element, a as usize + ELEMENTS_OFFSET as usize, *((a as usize + LENGTH_OFFSET as usize) as *const u64)),
+                    mote_abi::Kind::List(element) => (
+                        element,
+                        *((a as usize + LIST_BUFFER_OFFSET as usize) as *const u64) as usize + ELEMENTS_OFFSET as usize,
+                        *((a as usize + LENGTH_OFFSET as usize) as *const u64),
+                    ),
+                    mote_abi::Kind::FixedArray(element, count) => (element, a as usize, u64::from(count)),
                     _ => return 0,
                 };
                 let layout = table.layout(element);
                 let stride = mote_abi::align_up(layout.size, layout.align) as usize;
                 let walk = Walk::new(table, shown, false);
-                u64::from((0..length as usize).any(|at| walk.same(element, (first + ELEMENTS_OFFSET as usize + at * stride) as *const u8, b as *const u8)))
+                u64::from((0..length as usize).any(|at| walk.same(element, (base + at * stride) as *const u8, b as *const u8)))
             }
             value::DEEP_CLONE => u64::from(Copier::new(table, shown, context).copy(ty, a as *const u8, b as *mut u8).is_some()),
             value::PRINT | value::SHOW => {
@@ -511,5 +642,42 @@ mod tests {
         assert_ne!(made, 0);
         // SAFETY: `made` is a string object the call allocated.
         assert_eq!(unsafe { string_bytes(made) }, "é".as_bytes());
+    }
+
+    #[test]
+    fn helpers_mem_allocates_64_byte_aligned_blocks_reallocs_copies_zeroes_and_frees() {
+        assert_eq!(mote_mem(mem::ALLOC, 0, 8, 8, 0), 0);
+        mote_mem(mem::FREE, 0, 0, 0, 0);
+
+        let p = mote_mem(mem::ALLOC, 4, 8, 8, 0);
+        assert_ne!(p, 0);
+        assert_eq!(p % 64, 0);
+
+        // SAFETY: `p` holds 4 `u64` words.
+        unsafe {
+            let slice = std::slice::from_raw_parts_mut(p as *mut u64, 4);
+            slice.copy_from_slice(&[10, 20, 30, 40]);
+        }
+
+        let grown = mote_mem(mem::REALLOC, p, 8, 8, 8);
+        assert_ne!(grown, 0);
+        assert_eq!(grown % 64, 0);
+        // SAFETY: `grown` preserves the first 4 `u64` words and has room for 8.
+        unsafe {
+            assert_eq!(std::slice::from_raw_parts(grown as *const u64, 4), &[10, 20, 30, 40]);
+            std::slice::from_raw_parts_mut(grown as *mut u64, 8)[4..].copy_from_slice(&[50, 60, 70, 80]);
+            assert_eq!(mote_mem(mem::COPY, (grown as *mut u64).add(2) as u64, grown, 4, 8), 0);
+            assert_eq!(std::slice::from_raw_parts(grown as *const u64, 6), &[10, 20, 10, 20, 30, 40]);
+            assert_eq!(mote_mem(mem::ZERO, (grown as *mut u64).add(1) as u64, 3, 8, 0), 0);
+            assert_eq!(std::slice::from_raw_parts(grown as *const u64, 5), &[10, 0, 0, 0, 30]);
+        }
+
+        let shrunk = mote_mem(mem::REALLOC, grown, 2, 8, 8);
+        assert_ne!(shrunk, 0);
+        assert_eq!(shrunk % 64, 0);
+        // SAFETY: `shrunk` keeps the first 2 `u64` words.
+        unsafe { assert_eq!(std::slice::from_raw_parts(shrunk as *const u64, 2), &[10, 0]) };
+
+        assert_eq!(mote_mem(mem::REALLOC, shrunk, 0, 8, 8), 0);
     }
 }

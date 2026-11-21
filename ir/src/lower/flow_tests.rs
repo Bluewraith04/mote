@@ -81,9 +81,9 @@ fn a_tuple_pattern_in_a_for_takes_the_elements_apart() {
 
 #[test]
 fn a_stream_and_a_receiver_loop_call_their_next_intrinsic() {
-    let stream = blocks("import { Stream } from std.collections\nfn f(xs: Stream<Int>) -> Int {\n var s = 0\n for x in xs { s += x }\n return s\n}");
+    let stream = blocks("fn f(xs: Stream<Int>) -> Int {\n var s = 0\n for x in xs { s += x }\n return s\n}");
     assert!(stream.contains("  b1:\n    r4 = call intrinsic stream_next(r2) -> r3\n    r5 = is_some r4\n    branch r5, b2, b3\n  b2:\n    r6 = some_payload r4\n    r7 = copy r6\n"), "{stream}");
-    let receiver = blocks("import { Receiver } from std.sync\nfn f(xs: Receiver<Int>) -> Int {\n var s = 0\n for x in xs { s += x }\n return s\n}");
+    let receiver = blocks("fn f(xs: Receiver<Int>) -> Int {\n var s = 0\n for x in xs { s += x }\n return s\n}");
     assert!(receiver.contains("  b1:\n    r3 = call intrinsic receiver_recv(r2)\n    r4 = is_some r3\n    branch r4, b2, b3\n  b2:\n    r5 = some_payload r3\n    r6 = copy r5\n"), "{receiver}");
 }
 

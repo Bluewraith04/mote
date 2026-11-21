@@ -1,0 +1,116 @@
+// Option methods and Result.
+
+pub fn fault<T>(message: String) -> T {
+    return @fault(message)
+}
+
+extend<T> Option<T> {
+    pub fn is_some(self) -> Bool {
+        return match self {
+            Some(_) => true
+            None => false
+        }
+    }
+    pub fn is_none(self) -> Bool {
+        return match self {
+            Some(_) => false
+            None => true
+        }
+    }
+    pub fn unwrap(self) -> T {
+        return match self {
+            Some(value) => value
+            None => @fault("unwrap on None")
+        }
+    }
+    pub fn unwrap_or(self, fallback: T) -> T {
+        return match self {
+            Some(value) => value
+            None => fallback
+        }
+    }
+    pub fn unwrap_or_else(self, make: () -> T) -> T {
+        return match self {
+            Some(value) => value
+            None => make()
+        }
+    }
+    pub fn map<U>(self, change: (T) -> U) -> U? {
+        return match self {
+            Some(value) => Some(change(value))
+            None => None
+        }
+    }
+    pub fn and_then<U>(self, next: (T) -> U?) -> U? {
+        return match self {
+            Some(value) => next(value)
+            None => None
+        }
+    }
+    pub fn ok_or<E>(self, reason: E) -> Result<T, E> {
+        return match self {
+            Some(value) => Ok(value)
+            None => Err(reason)
+        }
+    }
+}
+
+pub enum Result<T, E> {
+    Ok(T)
+    Err(E)
+
+    pub fn is_ok(self) -> Bool {
+        return match self {
+            Ok(_) => true
+            Err(_) => false
+        }
+    }
+    pub fn is_err(self) -> Bool {
+        return match self {
+            Ok(_) => false
+            Err(_) => true
+        }
+    }
+    pub fn unwrap(self) -> T {
+        return match self {
+            Ok(value) => value
+            Err(_) => @fault("unwrap on Err")
+        }
+    }
+    pub fn unwrap_or(self, fallback: T) -> T {
+        return match self {
+            Ok(value) => value
+            Err(_) => fallback
+        }
+    }
+    pub fn unwrap_or_else(self, make: () -> T) -> T {
+        return match self {
+            Ok(value) => value
+            Err(_) => make()
+        }
+    }
+    pub fn map<U>(self, change: (T) -> U) -> Result<U, E> {
+        return match self {
+            Ok(value) => Ok(change(value))
+            Err(reason) => Err(reason)
+        }
+    }
+    pub fn and_then<U>(self, next: (T) -> Result<U, E>) -> Result<U, E> {
+        return match self {
+            Ok(value) => next(value)
+            Err(reason) => Err(reason)
+        }
+    }
+    pub fn or(self, other: Result<T, E>) -> Result<T, E> {
+        return match self {
+            Ok(_) => self
+            Err(_) => other
+        }
+    }
+    pub fn or_else(self, make: () -> Result<T, E>) -> Result<T, E> {
+        return match self {
+            Ok(_) => self
+            Err(_) => make()
+        }
+    }
+}

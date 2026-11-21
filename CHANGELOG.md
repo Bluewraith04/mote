@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.2.1
+
+* Generics on concrete methods (`obj.method<T>()`, static methods, and structs/classes).
+* Operator overloading with statically analyzed, auto-inlined dunder methods, reverse dunder fallback, compound assignment laddering, and post-monomorphization `__eq__`/`__ne__` dispatch on generic `T: Eq`.
+* Sized array (`[T; N]`) element-wise / SIMD operations, random array initializers, and `std.array` helpers.
+* Universal builtin types (`List`, `Array`, `Map`, `Set`, `Range`, `Stream`, `Option`, `Result`, `Error`, `ErrorKind`, `Pointer`, `Task`, `Sender`, `Receiver`, `Mutex`, `Once`, `PortEnd`, `AtomicInt`, `AtomicBool`), `Any`, `comptime`, const generics, `@` builtins (`@type_info`, `@type_name`, `@size_of`, `@align_of`, `@is_flat`, `@typeof`), `extend` blocks, and `extern` declarations.
+* Consolidated `mote_std/` core libraries alongside `std`, and full `x86_64-windows` (`x86_64-pc-windows-msvc`) toolchain and native support.
+* Path-first imports (`import path.{ a, b }`, `import path.*`).
+* Direct single-threaded runtime fast path when no `spawn`, channels, ports, locks, sleep, or blocking externs are reachable.
+* Off-heap explicit memory helpers in `std.mem` (`Buffer<T>`, `Pointer<T>` allocation/access guarded by `@is_flat`).
+* Restructured zero-copy views (`StrView` in `std.string`, `Span<T>`/`MutSpan<T>` in `std.collections`, zero-copy slicing on `String`/`[T]`/`List<T>`, and Owner-to-View coercions).
+* Upgraded Zed extension highlighting (`0.2.1`), outline, and interpolation overrides.
+
 ## 0.2.0
 
 A rewrite of the toolchain on Cranelift. Source written for 0.1 does not build unchanged.

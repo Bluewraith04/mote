@@ -88,12 +88,9 @@ List<String | Int>
 let c = [1, "a"] // error
 ```
 
-* `Set`, `Stream` and `Task` need imports: `import { Set } from std.collections`. <!-- block -->
+* `Set`, `Stream`, `Task`, `List`, `Map`, `Option` and `Result` are in scope everywhere without imports. <!-- block -->
 
 ```mote
-import { Set, Stream } from std.collections
-import { Task } from std.task
-
 fn count() -> Stream<Int> {
     yield 1
 }
@@ -114,20 +111,6 @@ Ok(1)
 1
 ```
 
-```mote
-let s = Set<Int>() // error
-```
-
-```mote
-fn count() -> Stream<Int> { // error
-    yield 1
-}
-```
-
-```mote
-fn run(t: Task<Int>) {} // error
-```
-
 ## List
 
 <!-- block -->
@@ -140,7 +123,7 @@ fn run(t: Task<Int>) {} // error
 | `get_or(i, d)` | the element, else `d` |
 | `set(i, v)` | writes |
 | `contains(v)` | `Bool`, by `==` |
-| `slice(a, b)` `set_slice(a, b, v)` | see [operators.md](operators.md) |
+| `slice(a, b)` `set_slice(a, b, v)` | zero-copy `Span<T>` view; replace range see [operators.md](operators.md) |
 | `clear()` | empties |
 | `to_array()` | a `[T]` of the elements; a copy |
 | `stream()` | a lazy form |
@@ -245,7 +228,7 @@ fn main() {
 1
 1
 2
-true
+[true, true]
 false
 1
 2
@@ -280,6 +263,87 @@ var a: [Int] = [1, 2]
 let x = a.pop() // error
 ```
 
+* `[T]` and `[T; N]` share core access (`len()`, `is_empty()`, `first()`, `last()`, `get()`, `get_or()`, `set()`, `fill()`, `contains()`, `slice()`, `clone()`, `deep_clone()`, `to_list()`, `stream()`), reductions (`sum()`, `product()`, `mean()`, `min()`, `max()`, `argmin()`, `argmax()`, `dot()`, `norm_sq()`), folds and searches (`fold()`, `reduce()`, `scan()`, `find()`, `find_index()`, `index_of()`, `count()`, `count_by()`, `all_by()`, `any_by()`, `none_by()`), and transforms (`map()`, `zip()`, `zip_with()`, `enumerate()`, `reverse()`, `clamp()`, `sort()`, `sort_by()`, `filter()`, `take()`, `drop()`). `[Bool]` and `[Bool; N]` also provide `all()`, `any()`, `none()`, and `select()`. `std.array` adds array constructors (`zeros`, `ones`, `zeros_int`, `ones_int`, `full`, `from_fn`, `range`, `arange`, `linspace`, `logspace`). <!-- block -->
+
+```mote
+import { linspace, range } from std.array
+
+fn main() {
+    let nums: [Int; 4] = [4, 1, 3, 2]
+    println(nums.len())
+    println(nums.min())
+    println(nums.max())
+    println(nums.mean())
+    println(nums.sum())
+    println(range(0, 6, 2))
+    println(linspace(0.0, 1.0, 3))
+}
+```
+
+```output
+4
+1
+4
+2.5
+10
+[0, 2, 4]
+[0.0, 0.5, 1.0]
+```
+
+## Views
+
+* `Span<T>` and `MutSpan<T>` live in `std.collections` and `StrView` lives in `std.string` (all re-exported in the prelude). Slicing `[T]`, `List<T>`, `std.mem.Buffer<T>`, or `String` returns a zero-copy view; `.to_array()`, `.to_list()`, and `.to_string()` allocate an owned copy. <!-- block -->
+
+* Owner values implicitly coerce zero-copy to views where a view type is expected (`[T]`, `List<T>`, `Buffer<T>`, `Bytes`, `MutSpan<T>` to `Span<T>`; writable `var` owners to `MutSpan<T>`; `String` to `StrView`). <!-- block -->
+
+```mote
+fn sum_view(xs: Span<Int>) -> Int {
+    return xs.sum()
+}
+
+fn main() {
+    var data: [Int] = [10, 20, 30, 40, 50]
+    var mv: MutSpan<Int> = data
+    mv[1..4].fill(0)
+    println(data)
+    let ro = data.span().step(2)
+    println(ro.to_array())
+    println(sum_view(ro))
+    println(sum_view(data))
+    let sv = "  hello world  ".view().trim()
+    println(sv.slice(0, 5).to_string())
+}
+```
+
+```output
+[10, 0, 0, 0, 50]
+[10, 0, 50]
+60
+60
+hello
+```
+
+## Off-heap buffers
+
+* `Buffer<T>` in `std.mem` owns a 64-byte-aligned off-heap block of flat (`@is_flat(T)`) elements and implements `Closeable`, so a `with` block frees it deterministically without GC scanning. `.span()` and `.mut_span()` view it without copying. <!-- block -->
+
+```mote
+import std.mem.{Buffer}
+
+fn main() {
+    var buf = Buffer<Int>.from_array([2, 4, 6, 8])
+    var mv = buf.mut_span()
+    mv[1] = 40
+    with closed = buf {
+        println(closed.span().sum())
+    }
+}
+```
+
+```output
+56
+```
+
 ## Bytes
 
 * `Bytes` in `std.bytes` is a growable buffer of `UInt8`; it is a class, so a copy shares it unless `clone()` is called. <!-- block -->
@@ -298,7 +362,7 @@ let x = a.pop() // error
 | `to_string()` | `String?`, `null` when the bytes are not UTF-8 |
 
 ```mote
-import { Bytes } from std.bytes
+import Bytes from std.bytes
 
 fn main() {
     var b = Bytes.from_string("ab")
@@ -426,8 +490,7 @@ let x = m["b"] // faults Raised
 | `List`, `[T]`, `Map`, `Set`, or any type holding one | no |
 
 ```mote
-import { Channel, Sender } from std.sync
-import { Task } from std.task
+import Channel from std.sync
 
 struct P {
     x: Int
@@ -527,7 +590,7 @@ let m: Map<Map<Int, Int>, Int> = {} // error
 ```
 
 ```mote
-import { Set } from std.collections
+import Set from std.collections
 
 let m: Map<Set<Int>, Int> = {} // error
 ```
@@ -543,7 +606,7 @@ let m: Map<H, Int> = {} // error
 * The rule is the marker trait `Key`, which the compiler checks and a type does not list. `Map<K: Key, V>` and `Set<T: Key>` check it at each use, and a type parameter used as a key is written `K: Key`. <!-- block -->
 
 ```mote
-import { Key } from std.traits
+import Key from std.traits
 
 fn count<K: Key>(keys: List<K>) -> Int {
     var m: Map<K, Int> = {}
@@ -572,7 +635,7 @@ fn count<K>(keys: List<K>) -> Int {
 ```
 
 ```mote
-import { Key } from std.traits
+import Key from std.traits
 
 fn count<K: Key>(keys: List<K>) -> Int {
     return keys.len()
@@ -679,14 +742,14 @@ let c = s[0] // error
 | `len()` `is_empty()` | size in bytes |
 | `concat(s)` `a + b` | joined |
 | `replace(from, to)` | all occurrences replaced |
-| `slice(a, b)` `s[a..b]` | substring |
+| `slice(a, b)` `s[a..b]` | zero-copy `StrView` substring |
 | `to_upper()` `to_lower()` `trim()` | case and whitespace |
 | `repeat(n)` | repeated |
 | `contains(s)` `starts_with(s)` `ends_with(s)` | `Bool` |
 | `split(sep)` | `List<String>` |
 | `find(s)` `rfind(s)` | byte offset, `Int?` |
 | `bytes()` | the UTF-8 bytes |
-| `String.from_bytes(a)` | the string of `[UInt8]` bytes, or `null` |
+| `String.from_bytes(a)` | the string of `Span<UInt8>` bytes, or `null` |
 
 ```mote
 fn main() {
@@ -815,7 +878,7 @@ let huge = "ab".repeat(100000000) // faults MemoryLimit
 * `"${expr}"` inserts `expr.to_string()`; a number, `Bool` or `String` needs no method, and a type parameter needs a `Display` bound. <!-- block -->
 
 ```mote
-import { Display } from std.traits
+import Display from std.traits
 
 struct P: (Display) {
     x: Int
@@ -1015,21 +1078,18 @@ custom
 ab
 ```
 
-* `typeof(v)` is its type name as a `String`. A type the prelude does not export carries its module path, package first, so `std.atomic.Int64` and `Int` differ. The blocks on this page run as package `docs`. <!-- block -->
+* `typeof(v)` is its type name as a `String`. A universal type renders by its short name, while a user type carries its module path, package first, so `AtomicInt` and `docs.main.P` differ. The blocks on this page run as package `docs`. <!-- block -->
 
 <!-- block -->
 | `typeof` of | Text |
 |---|---|
 | `[1]` | `List<Int>` |
 | `Some(1)` | `Int?` |
-| a `Set<Int>` | `std.collections.Set<Int>` |
-| `atomic.Int64(0)` | `std.atomic.Int64` |
+| a `Set<Int>` | `Set<Int>` |
+| `AtomicInt(0)` | `AtomicInt` |
 | a struct `P` in module `main` of package `docs` | `docs.main.P` |
 
 ```mote
-import { Set } from std.collections
-import std.atomic as atomic
-
 struct P {
     x: Int
 }
@@ -1038,7 +1098,7 @@ fn main() {
     println(typeof([1]))
     println(typeof(Some(1)))
     println(typeof(Set<Int>()))
-    println(typeof(atomic.Int64(0)))
+    println(typeof(AtomicInt(0)))
     println(typeof(P { x: 1 }))
     println(typeof(1))
 }
@@ -1047,8 +1107,8 @@ fn main() {
 ```output
 List<Int>
 Int?
-std.collections.Set<Int>
-std.atomic.Int64
+Set<Int>
+AtomicInt
 docs.main.P
 Int
 ```

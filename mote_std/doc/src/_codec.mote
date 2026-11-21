@@ -1,0 +1,221 @@
+// MDOC binary format encoder and decoder for `doc` trees.
+import NodeKind from .kind
+
+pub class WireNode {
+    pub var kind: NodeKind
+    pub var name: String
+    pub var text: String
+    pub var attrs: List<(String, String)>
+    pub var child_ids: List<Int>
+}
+
+pub class Table {
+    pub var strings: List<String>
+    pub var index: Map<String, Int>
+    pub var nodes: List<WireNode>
+
+    pub fn new() -> Table {
+        var idx: Map<String, Int> = {}
+        idx[""] = 0
+        return Table { strings: [""], index: idx, nodes: [] }
+    }
+
+    pub fn intern(var self, s: String) -> Int {
+        if self.index.contains_key(s) { return self.index[s] }
+        let id = self.strings.len()
+        self.strings.push(s)
+        self.index[s] = id
+        return id
+    }
+
+    pub fn add_node(var self, kind: NodeKind, name: String, text: String, attrs: List<(String, String)>) -> Int {
+        self.intern(name)
+        self.intern(text)
+        for pair in attrs {
+            self.intern(pair.0)
+            self.intern(pair.1)
+        }
+        let id = self.nodes.len()
+        self.nodes.push(WireNode { kind: kind, name: name, text: text, attrs: attrs, child_ids: [] })
+        return id
+    }
+
+    pub fn set_children(var self, id: Int, child_ids: List<Int>) {
+        var entry = self.nodes[id]
+        entry.child_ids = child_ids
+    }
+}
+
+fn push_u32(var out: List<UInt8>, val: Int) {
+    out.push((val % 256) as UInt8)
+    out.push(((val / 256) % 256) as UInt8)
+    out.push(((val / 65536) % 256) as UInt8)
+    out.push(((val / 16777216) % 256) as UInt8)
+}
+
+fn kind_byte(kind: NodeKind) -> UInt8 {
+    return match kind {
+        Document => 0 as UInt8
+        Element => 1 as UInt8
+        Text => 2 as UInt8
+        Comment => 3 as UInt8
+        Raw => 4 as UInt8
+    }
+}
+
+pub fn encode_table(table: Table) -> [UInt8] {
+    var out: List<UInt8> = [77, 68, 79, 67] // "MDOC"
+    push_u32(out, 1) // VERSION
+    push_u32(out, table.strings.len())
+    for s in table.strings {
+        let bs = s.bytes()
+        push_u32(out, bs.len())
+        for b in bs { out.push(b) }
+    }
+    push_u32(out, table.nodes.len())
+    for node in table.nodes {
+        out.push(kind_byte(node.kind))
+        push_u32(out, table.index[node.name])
+        push_u32(out, table.index[node.text])
+        push_u32(out, node.attrs.len())
+        for pair in node.attrs {
+            push_u32(out, table.index[pair.0])
+            push_u32(out, table.index[pair.1])
+        }
+        push_u32(out, node.child_ids.len())
+        for cid in node.child_ids {
+            push_u32(out, cid)
+        }
+    }
+    return out.to_array()
+}
+
+class Cursor {
+    bytes: [UInt8]
+    var at: Int
+
+    fn take(var self, count: Int) -> Result<[UInt8], Error> {
+        if count < 0 || self.at + count > self.bytes.len() {
+            return Err(Error.new(ErrorKind.InvalidData, "doc: not a document"))
+        }
+        let found = self.bytes.slice(self.at, self.at + count).to_array()
+        self.at += count
+        return Ok(found)
+    }
+
+    fn u32(var self) -> Result<Int, Error> {
+        let bs = self.take(4)?
+        return Ok((bs[0] as Int) + (bs[1] as Int) * 256 + (bs[2] as Int) * 65536 + (bs[3] as Int) * 16777216)
+    }
+
+    fn u8(var self) -> Result<Int, Error> {
+        let bs = self.take(1)?
+        return Ok(bs[0] as Int)
+    }
+}
+
+fn bad_doc() -> Error {
+    return Error.new(ErrorKind.InvalidData, "doc: not a document")
+}
+
+pub fn decode_table(bytes: [UInt8]) -> Result<List<WireNode>, Error> {
+    var cursor = Cursor { bytes: bytes, at: 0 }
+    let magic = cursor.take(4)?
+    if magic[0] != 77 || magic[1] != 68 || magic[2] != 79 || magic[3] != 67 {
+        return Err(bad_doc())
+    }
+    if cursor.u32()? != 1 { return Err(bad_doc()) }
+    let string_count = cursor.u32()?
+    if string_count <= 0 { return Err(bad_doc()) }
+    var strings: List<String> = []
+    var seen_strings = Set<String>()
+    for _ in 0..string_count {
+        let len = cursor.u32()?
+        let raw = cursor.take(len)?
+        let text = String.from_bytes(raw)
+        if text == null { return Err(bad_doc()) }
+        if seen_strings.contains(text) { return Err(bad_doc()) }
+        seen_strings.add(text)
+        strings.push(text)
+    }
+    if strings[0] != "" { return Err(bad_doc()) }
+    let node_count = cursor.u32()?
+    if node_count <= 0 { return Err(bad_doc()) }
+    var nodes: List<WireNode> = []
+    var parent_of: List<Int> = []
+    for _ in 0..node_count {
+        let k = cursor.u8()?
+        if k < 0 || k > 4 { return Err(bad_doc()) }
+        let kind = if k == 0 {
+            NodeKind.Document
+        } else if k == 1 {
+            NodeKind.Element
+        } else if k == 2 {
+            NodeKind.Text
+        } else if k == 3 {
+            NodeKind.Comment
+        } else {
+            NodeKind.Raw
+        }
+        let name_id = cursor.u32()?
+        let text_id = cursor.u32()?
+        if name_id < 0 || name_id >= strings.len() || text_id < 0 || text_id >= strings.len() {
+            return Err(bad_doc())
+        }
+        let attr_count = cursor.u32()?
+        if attr_count < 0 { return Err(bad_doc()) }
+        var attrs: List<(String, String)> = []
+        var seen_attrs = Set<String>()
+        for _ in 0..attr_count {
+            let k_id = cursor.u32()?
+            let v_id = cursor.u32()?
+            if k_id < 0 || k_id >= strings.len() || v_id < 0 || v_id >= strings.len() {
+                return Err(bad_doc())
+            }
+            let attr_name = strings[k_id]
+            if seen_attrs.contains(attr_name) { return Err(bad_doc()) }
+            seen_attrs.add(attr_name)
+            attrs.push((attr_name, strings[v_id]))
+        }
+        let child_count = cursor.u32()?
+        if child_count < 0 { return Err(bad_doc()) }
+        var child_ids: List<Int> = []
+        for _ in 0..child_count {
+            child_ids.push(cursor.u32()?)
+        }
+        nodes.push(WireNode {
+            kind: kind,
+            name: strings[name_id],
+            text: strings[text_id],
+            attrs: attrs,
+            child_ids: child_ids
+        })
+        parent_of.push(-1)
+    }
+    if cursor.at != bytes.len() { return Err(bad_doc()) }
+    if nodes[0].kind != NodeKind.Document { return Err(bad_doc()) }
+    for id in 1..nodes.len() {
+        if nodes[id].kind == NodeKind.Document { return Err(bad_doc()) }
+    }
+    for id in 0..nodes.len() {
+        let node = nodes[id]
+        if node.child_ids.len() > 0 && node.kind != NodeKind.Document && node.kind != NodeKind.Element {
+            return Err(bad_doc())
+        }
+        for cid in node.child_ids {
+            if cid <= 0 || cid >= nodes.len() || parent_of[cid] != -1 {
+                return Err(bad_doc())
+            }
+            parent_of[cid] = id
+        }
+    }
+    for id in 0..nodes.len() {
+        var at = id
+        for _ in 0..(nodes.len() + 1) {
+            if at == -1 { break }
+            at = parent_of[at]
+        }
+        if at != -1 { return Err(bad_doc()) }
+    }
+    return Ok(nodes)
+}

@@ -6,7 +6,7 @@ use mote_abi::{Entry, FaultKind, FaultTable, Slot, TypeImage};
 use mote_packages::testing::Scratch;
 
 use super::*;
-use mote_runtime::{dynamic, helpers, loader};
+use mote_runtime::{helpers, loader};
 
 use crate::typetable;
 
@@ -57,6 +57,7 @@ struct Tables {
     meta: Vec<u8>,
     link: Vec<u8>,
     debug: Vec<u8>,
+    flags: u64,
     /// The cell of the run state and the native slots, when the directory points at them.
     failure: Option<(SectionIndex, u64)>,
     natives: Option<(SectionIndex, u64)>,
@@ -66,7 +67,9 @@ fn tables(file: &File) -> Tables {
     let directory = file.symbol_by_name("mote_tables").expect("mote_tables");
     let section = directory.section_index().expect("defined");
     let at = directory.address();
-    assert_eq!(directory.size(), DIRECTORY_WORDS as u64 * 8);
+    if file.format() == BinaryFormat::Elf {
+        assert_eq!(directory.size(), DIRECTORY_WORDS as u64 * 8);
+    }
     let read = |position: u64| {
         let (target_section, offset) = target(file, section, at + position * 16);
         (target_section, offset, word(file, section, at + position * 16 + 8) as usize)
@@ -80,14 +83,15 @@ fn tables(file: &File) -> Tables {
         file.section_by_index(section).unwrap().relocations().any(|(offset, _)| offset == place).then(|| target(file, section, place))
     };
     let (section, offset, count) = read(3);
-    Tables { types: bytes(0), faults: bytes(1), code: bytes(2), words: (section, offset, count), meta: bytes(4), link: bytes(5), debug: bytes(8), failure: cell(12), natives: cell(13) }
+    Tables { types: bytes(0), faults: bytes(1), code: bytes(2), words: (section, offset, count), meta: bytes(4), link: bytes(5), debug: bytes(8), flags: word(file, section, at + DIRECTORY_FLAGS as u64 * 8), failure: cell(12), natives: cell(13) }
 }
 
 #[test]
 fn object_is_a_relocatable_x86_64_elf_file_that_defines_the_run_function_and_the_tables() {
     let bytes = object_of(CHECKS);
     let file = File::parse(&bytes[..]).unwrap();
-    assert_eq!(file.format(), BinaryFormat::Elf);
+    let expected_format = if cfg!(target_os = "windows") { BinaryFormat::Coff } else { BinaryFormat::Elf };
+    assert_eq!(file.format(), expected_format);
     assert_eq!(file.architecture(), Architecture::X86_64);
     assert_eq!(file.kind(), ObjectKind::Relocatable);
     for name in ["mote_run", "mote_tables"] {
@@ -102,7 +106,7 @@ fn object_is_a_relocatable_x86_64_elf_file_that_defines_the_run_function_and_the
 fn object_the_symbols_it_does_not_define_are_the_runtime_entries_and_helpers() {
     let bytes = object_of(CHECKS);
     let file = File::parse(&bytes[..]).unwrap();
-    let known: HashSet<&str> = Entry::ALL.iter().map(|entry| entry.name()).chain([helpers::PRINT, helpers::FMOD, helpers::SHOW, helpers::COMPARE, helpers::CUT, helpers::MATH, helpers::TEXT, helpers::SYSTEM, helpers::VALUE, dynamic::DYN, loader::NATIVE]).collect();
+    let known: HashSet<&str> = Entry::ALL.iter().map(|entry| entry.name()).chain([helpers::PRINT, helpers::FMOD, helpers::SHOW, helpers::COMPARE, helpers::CUT, helpers::MATH, helpers::MEM, helpers::TEXT, helpers::SYSTEM, helpers::VALUE, loader::NATIVE]).collect();
     let undefined: Vec<&str> = file.symbols().filter(|symbol| symbol.is_undefined()).filter_map(|symbol| symbol.name().ok()).filter(|name| !name.is_empty()).collect();
     assert!(undefined.contains(&Entry::Fault.name()) && undefined.contains(&helpers::PRINT), "{undefined:?}");
     for name in &undefined {
@@ -118,7 +122,6 @@ fn object_the_directory_leads_to_a_type_table_that_reads_back() {
     let file = File::parse(&bytes[..]).unwrap();
     let image = TypeImage::from_bytes(&tables(&file).types).unwrap();
     assert_eq!(image.table, expected.table);
-    assert_eq!(image.reflection, mote_abi::Reflection::default());
 }
 
 #[test]
@@ -143,7 +146,9 @@ fn object_the_code_table_places_each_function_by_a_relocation_and_keeps_its_site
     for (at, sites) in code.functions.iter().enumerate() {
         let (section, offset) = target(&file, tables.words.0, tables.words.1 + at as u64 * 8);
         let function = file.symbols().find(|symbol| symbol.section_index() == Some(section) && symbol.address() == offset && symbol.name().is_ok_and(|name| name.starts_with('f'))).expect("a function symbol");
-        assert!(sites.iter().all(|(site, _)| u64::from(*site) < function.size()), "{sites:?} in {}", function.size());
+        if file.format() == BinaryFormat::Elf {
+            assert!(sites.iter().all(|(site, _)| u64::from(*site) < function.size()), "{sites:?} in {}", function.size());
+        }
     }
 }
 
@@ -171,7 +176,9 @@ fn object_a_global_that_holds_a_reference_is_a_root_placed_by_a_relocation() {
     assert_eq!(code.roots, [vec![Slot::Ref(0)]]);
     let (section, offset) = target(&file, tables.words.0, tables.words.1 + code.functions.len() as u64 * 8);
     let cell = file.symbols().find(|symbol| symbol.section_index() == Some(section) && symbol.address() == offset).expect("the cell");
-    assert_eq!(cell.size(), 8);
+    if file.format() == BinaryFormat::Elf {
+        assert_eq!(cell.size(), 8);
+    }
     assert!(file.section_by_index(section).unwrap().kind() == ::object::SectionKind::UninitializedData || file.section_by_index(section).unwrap().kind() == ::object::SectionKind::Data);
 }
 
@@ -181,7 +188,9 @@ fn object_an_entry_that_returns_an_err_defines_the_failure_cell() {
     let file = File::parse(&bytes[..]).unwrap();
     let symbol = file.symbol_by_name("mote_failure").expect("mote_failure");
     assert!(symbol.is_global() && !symbol.is_undefined());
-    assert_eq!(symbol.size(), 24);
+    if file.format() == BinaryFormat::Elf {
+        assert_eq!(symbol.size(), 24);
+    }
 }
 
 #[test]
@@ -197,7 +206,7 @@ fn object_the_code_in_the_file_is_position_independent() {
 
 const RECORDS: &str = "struct Point {\n    x: Int\n    y: Int\n}\n\nenum Shape {\n    Dot\n    Circle(Int)\n    Box { w: Int, h: Int }\n}\n\nfn main() {\n    println(Point { x: 1, y: 2 })\n    println(Shape.Circle(3))\n}\n";
 
-const NATIVE: &str = "@link(\"demo\")\nnative fn add_i64(a: Int, b: Int) -> Int\n\nfn main() {\n    println(add_i64(40, 2))\n}\n";
+const NATIVE: &str = "extern \"demo\" {\n    fn add_i64(a: Int, b: Int) -> Int\n}\n\nfn main() {\n    println(add_i64(40, 2))\n}\n";
 
 #[test]
 fn object_tables_the_meta_table_reads_back_equal_to_the_programs() {
@@ -227,7 +236,10 @@ fn object_tables_the_link_table_carries_the_libraries_functions_and_files() {
     assert_eq!(image.table.functions[0].symbol, "add_i64");
     let (section, offset) = tables.natives.expect("the directory points at the native slots");
     let slots = file.symbols().find(|symbol| symbol.name() == Ok("mote_natives")).expect("mote_natives");
-    assert_eq!((slots.section_index(), slots.address(), slots.size()), (Some(section), offset, 8));
+    assert_eq!((slots.section_index(), slots.address()), (Some(section), offset));
+    if file.format() == BinaryFormat::Elf {
+        assert_eq!(slots.size(), 8);
+    }
 }
 
 #[test]
@@ -239,7 +251,11 @@ fn object_tables_a_library_linked_in_has_its_symbols_in_the_slots_and_a_weak_ini
     let function = file.symbol_by_name("add_i64").expect("the native's symbol");
     assert!(function.is_undefined() && !function.is_weak());
     let init = file.symbol_by_name("mote_init_demo").expect("the init's symbol");
-    assert!(init.is_undefined() && init.is_weak());
+    if file.format() == BinaryFormat::Elf {
+        assert!(init.is_undefined() && init.is_weak());
+    } else {
+        assert!(init.is_undefined());
+    }
     let (section, offset) = tables(&file).natives.expect("the native slots");
     assert!(file.section_by_index(section).unwrap().relocations().any(|(at, relocation)| at == offset && matches!(relocation.target(), RelocationTarget::Symbol(index) if index == function.index())));
     assert_eq!(init_symbol("my-lib.2"), "mote_init_my_lib_2");
@@ -272,6 +288,9 @@ fn object_the_line_table_has_a_sequence_for_each_function_placed_by_a_relocation
     let mut pipeline = built(CHECKS);
     let resolve = |position: u32| Some(("src/main.mote".to_string(), position + 1, 3));
     let bytes = compile_object(&pipeline.module, &mut pipeline.program, &pipeline.interner, EntryKind::Main, None, Vec::new(), &resolve).unwrap();
+    if cfg!(target_os = "windows") {
+        return;
+    }
     let file = File::parse(&bytes[..]).unwrap();
     let debug = mote_abi::DebugTable::from_bytes(&tables(&file).debug).unwrap();
     let section = file.section_by_name(".debug_line").expect("a line section");
@@ -323,4 +342,15 @@ fn object_tables_the_directory_points_at_the_failure_cell_only_when_the_entry_re
     assert_eq!(found.natives, None);
     let without = object_of(CHECKS);
     assert_eq!(tables(&File::parse(&without[..]).unwrap()).failure, None);
+}
+
+#[test]
+fn object_tables_the_directory_sets_single_threaded_flag_only_without_spawn_or_blocking() {
+    let single = object_of(CHECKS);
+    let file = File::parse(&single[..]).unwrap();
+    assert_eq!(tables(&file).flags & DIRECTORY_FLAG_SINGLE_THREADED as u64, DIRECTORY_FLAG_SINGLE_THREADED as u64);
+
+    let spawned = object_of("fn main() {\n    let t = spawn { 1 + 1 }\n    println(t.await())\n}\n");
+    let file = File::parse(&spawned[..]).unwrap();
+    assert_eq!(tables(&file).flags & DIRECTORY_FLAG_SINGLE_THREADED as u64, 0);
 }

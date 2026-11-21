@@ -60,7 +60,7 @@ pub(crate) fn lower_generators(module: &mut Module, program: &mut Program, inter
 fn split(module: &mut Module, program: &mut Program, interner: &mut Interner, id: FuncId) {
     let body = module.functions[id].clone();
     let element = match program.types.kind(body.ret) {
-        TyKind::Adt { args, .. } => args.first().copied().unwrap_or(TyId::ERROR),
+        TyKind::Builtin { args, .. } => args.first().copied().unwrap_or(TyId::ERROR),
         _ => TyId::ERROR,
     };
     let next = program.types.optional(element);

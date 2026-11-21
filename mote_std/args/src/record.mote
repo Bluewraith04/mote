@@ -1,0 +1,40 @@
+// Records that carry their own flags.
+import args from std.io
+import Flag from .flag
+import { help_requested, parse } from .parse
+import usage from .usage
+
+/// A record that lists `Args` is read by `parse_args`; it writes `fn flags() -> List<Flag>` to add short names, help, defaults and positional fields.
+pub trait Args {
+    fn flags() -> List<Flag> { return [] }
+}
+
+/// A `T` read from the words with the `flags` of its type.
+pub fn parse_args<T: Args>(words: List<String>) -> Result<T, Error> {
+    return parse<T>(words, T.flags())
+}
+
+/// A `T` read from the program's own arguments.
+pub fn from_env<T: Args>() -> Result<T, Error> {
+    return parse<T>(args().to_list(), T.flags())
+}
+
+/// Whether the program's own arguments ask for help (`--help` or `-h` before `--`).
+pub fn help_wanted() -> Bool {
+    return help_requested(args().to_list())
+}
+
+/// Parses the program's arguments into `T`, or prints `usage_text<T>(program)` and returns `Ok(null)` when `--help` or `-h` is present.
+pub fn from_env_or_help<T: Args>(program: String) -> Result<T?, Error> {
+    let words = args().to_list()
+    if help_requested(words) {
+        print(usage<T>(program, T.flags())?)
+        return Ok(null)
+    }
+    return Ok(parse<T>(words, T.flags())?)
+}
+
+/// The usage text of a `T` with the `flags` of its type.
+pub fn usage_text<T: Args>(program: String) -> Result<String, Error> {
+    return usage<T>(program, T.flags())
+}

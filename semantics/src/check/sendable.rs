@@ -3,10 +3,18 @@ use std::collections::HashSet;
 use mote_base::Span;
 
 use crate::cx::Cx;
-use crate::defs::{DefKind, LangItem, Payload};
-use crate::types::{TyId, TyKind};
+use crate::defs::{DefKind, Payload};
+use crate::types::{BuiltinTy, TyId, TyKind};
 
 impl Cx<'_> {
+    pub(crate) fn not_sendable(&mut self, ty: TyId) -> Option<String> {
+        if self.program.types.has_param(ty) || self.is_sendable(ty) {
+            None
+        } else {
+            Some("it is not Sendable".to_string())
+        }
+    }
+
     /// Whether a value of the type may enter another task.
     pub(crate) fn is_sendable(&mut self, ty: TyId) -> bool {
         self.sendable(ty, &mut Vec::new())
@@ -16,16 +24,15 @@ impl Cx<'_> {
         let kind = self.program.types.kind(ty).clone();
         match kind {
             TyKind::Error | TyKind::Infer(_) | TyKind::Unit | TyKind::Bool | TyKind::String | TyKind::Int(_) | TyKind::Float(_) => true,
-            TyKind::Param { .. } => false,
+            TyKind::Param { .. } | TyKind::Any => false,
+            TyKind::Builtin { kind, .. } => kind.is_handle(),
             TyKind::Array(element) | TyKind::FixedArray(element, _) => self.plain_element(element),
             TyKind::Optional(inner) => self.sendable(inner, seen),
             TyKind::Tuple(members) | TyKind::Union(members) => members.iter().all(|&member| self.sendable(member, seen)),
             TyKind::Function(function) => function.send,
             TyKind::Adt { def, args } => {
-                match self.program.defs[def].lang {
-                    Some(lang) if lang.is_handle() => return true,
-                    Some(LangItem::List | LangItem::Map | LangItem::Set | LangItem::Array | LangItem::Stream | LangItem::Pointer) => return false,
-                    _ => {}
+                if self.program.std.map == Some(def) || self.program.std.set == Some(def) {
+                    return false;
                 }
                 if seen.contains(&ty) {
                     return true;
@@ -46,7 +53,7 @@ impl Cx<'_> {
                     _ => return false,
                 };
                 fields.into_iter().all(|field| {
-                    let field = self.program.types.subst(field, &args);
+                    let field = self.program.types.subst_generic(field, &args);
                     self.sendable(field, seen)
                 })
             }
@@ -82,35 +89,32 @@ impl Cx<'_> {
     }
 
     fn holds_function_or_stream(&self, ty: TyId) -> bool {
-        self.program.types.any(ty, &|kind| match kind {
-            TyKind::Function(_) => true,
-            TyKind::Adt { def, .. } => self.program.defs[*def].lang == Some(LangItem::Stream),
-            _ => false,
-        })
+        self.program.types.any(ty, &|kind| matches!(kind, TyKind::Function(_) | TyKind::Builtin { kind: BuiltinTy::Stream, .. }))
     }
 
     /// What is wrong with a channel, `Mutex` or `Once` type that a type mentions.
     fn handle_problem(&mut self, ty: TyId) -> Option<String> {
         let kind = self.program.types.kind(ty).clone();
         match kind {
-            TyKind::Adt { def, args } => {
-                match (self.program.defs[def].lang, args.first().copied()) {
-                    (Some(LangItem::Sender | LangItem::Receiver), Some(element)) if matches!(self.program.types.kind(element), TyKind::Optional(_)) => {
+            TyKind::Builtin { kind, args } => {
+                match (kind, args.first().copied()) {
+                    (BuiltinTy::Sender | BuiltinTy::Receiver, Some(element)) if matches!(self.program.types.kind(element), TyKind::Optional(_)) => {
                         return Some("a channel cannot carry optional messages".to_string());
                     }
-                    (Some(LangItem::Sender | LangItem::Receiver), Some(element)) if !self.program.types.has_param(element) && !self.is_sendable(element) => {
+                    (BuiltinTy::Sender | BuiltinTy::Receiver, Some(element)) if !self.program.types.has_param(element) && !self.is_sendable(element) => {
                         return Some(format!("a channel cannot carry {}", self.show_ty(element)));
                     }
-                    (Some(LangItem::Mutex | LangItem::Once), Some(held)) if self.holds_function_or_stream(held) => {
+                    (BuiltinTy::Mutex | BuiltinTy::Once, Some(held)) if self.holds_function_or_stream(held) => {
                         return Some("a `Mutex` or `Once` cannot hold a function or a Stream".to_string());
                     }
-                    (Some(LangItem::Once), Some(held)) if !self.program.types.has_param(held) && self.program.changes_inside(held) => {
+                    (BuiltinTy::Once, Some(held)) if !self.program.types.has_param(held) && self.program.changes_inside(held) => {
                         return Some(format!("a `Once` cannot hold {}", self.show_ty(held)));
                     }
                     _ => {}
                 }
                 args.into_iter().find_map(|arg| self.handle_problem(arg))
             }
+            TyKind::Adt { args, .. } => args.into_iter().filter_map(|a| a.as_type()).find_map(|arg| self.handle_problem(arg)),
             TyKind::Optional(inner) | TyKind::Array(inner) | TyKind::FixedArray(inner, _) => self.handle_problem(inner),
             TyKind::Tuple(members) | TyKind::Union(members) => members.into_iter().find_map(|member| self.handle_problem(member)),
             TyKind::Function(function) => function.params.iter().find_map(|param| self.handle_problem(param.ty)).or_else(|| self.handle_problem(function.ret)),

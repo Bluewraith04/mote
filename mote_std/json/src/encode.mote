@@ -1,0 +1,135 @@
+// The JSON of a Mote value.
+import { Kind, Shape } from std.reflect
+import Json from .value
+
+fn cannot(ty: String) -> Error {
+    return Error.new(ErrorKind.InvalidData, "${ty} cannot be encoded as JSON")
+}
+
+fn encode_value<T>(value: T, depth: Int) -> Result<Json, Error> {
+    if depth > 256 { return Err(Error.new(ErrorKind.InvalidData, "a value nested too deeply to encode as JSON")) }
+    const info = @type_info(T)
+    comptime if info.kind == Kind.Null {
+        return Ok(Json.Null)
+    } else comptime if info.kind == Kind.Bool {
+        return Ok(Json.Boolean(value))
+    } else comptime if info.kind == Kind.Int {
+        comptime if info.name == "Int" || info.name == "Int64" {
+            return Ok(Json.Integer(value))
+        } else comptime if info.name == "Int8" || info.name == "Int16" || info.name == "Int32" || info.name == "UInt8" || info.name == "UInt16" || info.name == "UInt32" {
+            return Ok(Json.Integer(value as Int))
+        } else {
+            return Err(cannot(info.name))
+        }
+    } else comptime if info.kind == Kind.Float {
+        var number = 0.0
+        comptime if info.name == "Float" {
+            number = value
+        } else comptime if info.name == "Float32" {
+            number = value as Float
+        } else {
+            return Err(cannot(info.name))
+        }
+        if number != number || number - number != 0.0 {
+            return Err(Error.new(ErrorKind.InvalidData, "a Float that is not finite cannot be encoded as JSON"))
+        }
+        return Ok(Json.Real(number))
+    } else comptime if info.kind == Kind.String {
+        return Ok(Json.Text(value))
+    } else comptime if info.kind == Kind.Optional {
+        if value == null { return Ok(Json.Null) }
+        return encode_value(value, depth + 1)
+    } else comptime if info.kind == Kind.Tuple {
+        var out: List<Json> = []
+        comptime for f in @fields(T) {
+            out.push(encode_value(@field(value, f.name), depth + 1)?)
+        }
+        return Ok(Json.Array(out))
+    } else comptime if info.kind == Kind.List || info.kind == Kind.Array || info.kind == Kind.FixedArray {
+        var out: List<Json> = []
+        for item in value {
+            out.push(encode_value(item, depth + 1)?)
+        }
+        return Ok(Json.Array(out))
+    } else comptime if info.kind == Kind.Set {
+        var out: List<Json> = []
+        for item in value.items() {
+            out.push(encode_value(item, depth + 1)?)
+        }
+        return Ok(Json.Array(out))
+    } else comptime if info.kind == Kind.Map {
+        comptime if @type_info(@TypeArg(T, 0)).kind != Kind.String {
+            return Err(cannot(info.name))
+        } else {
+            var members: List<(String, Json)> = []
+            for (k, v) in value.items() {
+                members.push((k, encode_value(v, depth + 1)?))
+            }
+            return Ok(Json.Object(members))
+        }
+    } else comptime if info.kind == Kind.Union {
+        comptime for i in 0..info.variant_count {
+            comptime if @type_info(@TypeArg(T, i)).kind == Kind.Null {
+                if value == null { return Ok(Json.Null) }
+            } else {
+                if value is @TypeArg(T, i) {
+                    return encode_value<@TypeArg(T, i)>(value, depth + 1)
+                }
+            }
+        }
+        return Err(cannot(info.name))
+    } else comptime if info.kind == Kind.Struct || info.kind == Kind.Class {
+        var members: List<(String, Json)> = []
+        comptime for f in @fields(T) {
+            members.push((f.name, encode_value(@field(value, f.name), depth + 1)?))
+        }
+        return Ok(Json.Object(members))
+    } else comptime if info.kind == Kind.Enum {
+        comptime for v in @variants(T) {
+            if @__variant_is(value, v.name) {
+                comptime if v.shape == Shape.Unit {
+                    return Ok(Json.Text(v.name))
+                } else comptime if v.shape == Shape.Named {
+                    var members: List<(String, Json)> = []
+                    comptime for f in @__variant_fields(T, v.name) {
+                        members.push((f.name, encode_value(@__variant_field(value, v.name, f.name), depth + 1)?))
+                    }
+                    return Ok(Json.Object([(v.name, Json.Object(members))]))
+                } else {
+                    comptime if v.field_count == 1 {
+                        comptime for f in @__variant_fields(T, v.name) {
+                            let single = encode_value(@__variant_field(value, v.name, f.name), depth + 1)?
+                            return Ok(Json.Object([(v.name, single)]))
+                        }
+                    } else {
+                        var items: List<Json> = []
+                        comptime for f in @__variant_fields(T, v.name) {
+                            items.push(encode_value(@__variant_field(value, v.name, f.name), depth + 1)?)
+                        }
+                        return Ok(Json.Object([(v.name, Json.Array(items))]))
+                    }
+                }
+            }
+        }
+        return Err(cannot(info.name))
+    } else {
+        return Err(cannot(info.name))
+    }
+}
+
+/// The JSON of a value: a struct or class is an object of its fields, a tuple, list, array or set an array, a map with `String` keys an object, an optional or union its held value or null, a unit variant its name, and any other variant an object with its name as the one key. A map with other keys, function or handle is an `Err`.
+pub fn encode<T>(value: T) -> Result<Json, Error> {
+    return encode_value(value, 0)
+}
+
+/// Encodes `value` directly as a JSON string (`pretty = true` for two-space indented output).
+pub fn to_text<T>(value: T, pretty: Bool = false) -> Result<String, Error> {
+    let json = encode(value)?
+    return Ok(if pretty { json.pretty() } else { json.to_string() })
+}
+
+/// `to_json()` on any type that lists it.
+pub trait ToJson {
+    fn to_json(self) -> Result<Json, Error> { return encode(self) }
+}
+

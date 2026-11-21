@@ -1,7 +1,7 @@
 use mote_base::{Arena, Id, Span, Symbol};
 
 use crate::defs::DefId;
-use crate::types::TyId;
+use crate::types::{ConstArg, GenericArg, TyId};
 
 /// The typed body of one function; every node carries its type.
 #[derive(Clone, Default)]
@@ -105,11 +105,11 @@ pub enum BinaryOp {
     Coalesce,
 }
 
-/// A function with the type arguments it runs at.
+/// A function with the generic arguments it runs at.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct FnRef {
     pub def: DefId,
-    pub args: Vec<TyId>,
+    pub args: Vec<GenericArg>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -117,7 +117,9 @@ pub enum Callee {
     /// A named function, method or constructor; a method's object is its first argument.
     Function(FnRef),
     /// A trait method on a type known only after instantiation: `T: Ord` calling `compare`.
-    TraitMethod { method: DefId, self_ty: TyId, args: Vec<TyId> },
+    TraitMethod { method: DefId, self_ty: TyId, args: Vec<GenericArg> },
+    /// A compiler builtin call `@name(...)` / `@__name(...)`.
+    Builtin { name: Symbol, generic_args: Vec<GenericArg> },
     /// A function value.
     Value(Id<Expr>),
 }
@@ -135,6 +137,8 @@ pub enum Conversion {
     Narrow,
     /// A function, `Stream` or `Task` to a type it fits parameter by parameter or element by element.
     Adapt,
+    /// Zero-copy owner-to-view coercion (`[T]`/`List<T>`/`Buffer<T>`/`Bytes`/`MutSpan<T>` -> `Span<T>`/`MutSpan<T>`, `String` -> `StrView`).
+    ToView,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -192,6 +196,10 @@ pub enum ExprKind {
     Show(Id<Expr>),
     Local(Id<Local>),
     Global(DefId),
+    /// A reference to a module-level `const` item.
+    Const(DefId),
+    /// A reference to a `const` generic parameter or substituted constant value.
+    ConstArg(ConstArg),
     /// A named function used as a value.
     Function(FnRef),
     Tuple(Vec<Id<Expr>>),
@@ -207,6 +215,8 @@ pub enum ExprKind {
     Closure(Box<Closure>),
     Call { callee: Callee, args: Vec<Id<Expr>> },
     Field { object: Id<Expr>, index: u32 },
+    /// Compile-time `@set_field` lowers to this typed direct field mutation.
+    SetField { object: Id<Expr>, index: u32, value: Id<Expr> },
     TupleField { object: Id<Expr>, index: u32 },
     Index { object: Id<Expr>, index: Id<Expr> },
     /// `xs[a..b]`, `xs[a..b..s]`: a copy of a `List` or `String`; a missing bound is the start or end.
@@ -226,6 +236,8 @@ pub enum ExprKind {
     /// A `Task` running `task`; `scoped` when written inside a `scope` of the same function.
     Spawn { task: Box<Closure>, scoped: bool },
     If { condition: Condition, then: Id<Expr>, otherwise: Id<Expr> },
+    Comptime(Block),
+    ComptimeIf { condition: Id<Expr>, then: Id<Expr>, otherwise: Id<Expr> },
     Match(Match),
     Error,
 }
@@ -273,13 +285,17 @@ pub struct ForLoop {
 #[derive(Clone, Debug, PartialEq)]
 pub enum StmtKind {
     Let { pattern: Id<Pattern>, init: Id<Expr> },
+    Const { local: Id<Local>, init: Id<Expr> },
     /// `op` is `None` for plain assignment; the target is evaluated once.
     Assign { target: Id<Expr>, op: Option<BinaryOp>, value: Id<Expr> },
     If(IfStmt),
+    ComptimeIf(IfStmt),
     While { condition: Condition, body: Block },
     For(ForLoop),
+    ComptimeFor { pattern: Id<Pattern>, iterable: Id<Expr>, body: Block },
     Match(Match),
     Scope(Block),
+    ComptimeBlock(Block),
     /// `close` is the resource's `close` method; a generic body has none until instantiation.
     With { local: Id<Local>, init: Id<Expr>, body: Block, close: Option<FnRef> },
     Return(Option<Id<Expr>>),
@@ -368,8 +384,8 @@ mod tests {
     fn function_refs_compare_by_definition_and_arguments() {
         let mut fixture = crate::defs::test_support::Fixture::new();
         let def = fixture.def("f");
-        let a = FnRef { def, args: vec![TyId::INT] };
-        assert_eq!(a, FnRef { def, args: vec![TyId::INT] });
-        assert_ne!(a, FnRef { def, args: vec![TyId::STRING] });
+        let a = FnRef { def, args: vec![GenericArg::Type(TyId::INT)] };
+        assert_eq!(a, FnRef { def, args: vec![GenericArg::Type(TyId::INT)] });
+        assert_ne!(a, FnRef { def, args: vec![GenericArg::Type(TyId::STRING)] });
     }
 }

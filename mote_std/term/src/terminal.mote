@@ -1,0 +1,120 @@
+// The terminal of a process: size, raw mode, output and events.
+import Closeable from std.traits
+import Event from .event
+import { Key, KeyEvent } from .key
+import { term_is_tty, term_size, term_raw, term_restore, term_read, term_write } from ._lib
+import { END_OF_INPUT, SAVED_SIZE, failure } from ._support
+import decode from ._decode
+import { clear_screen, disable_mouse, enable_mouse, enter_alternate_screen, hide_cursor, leave_alternate_screen, move_to, show_cursor } from .screen
+import Span from .style
+
+/// The rows and columns of a terminal.
+pub struct Size {
+    pub rows: Int
+    pub cols: Int
+}
+
+/// A terminal reached by two descriptors: input and output. It is `Closeable`; closing it restores the mode raw mode replaced and leaves the descriptors open.
+pub class Terminal: (Closeable) {
+    input: Int
+    output: Int
+    saved: [UInt8]
+    raw_on: AtomicInt
+    var pending: List<UInt8>
+
+    /// The terminal of the process: standard input and standard output.
+    pub fn stdio() -> Terminal { return Terminal.on(0, 1) }
+
+    /// A terminal read from the first descriptor and written to the second.
+    pub fn on(input: Int, output: Int) -> Terminal {
+        return Terminal { input: input, output: output, saved: [0; SAVED_SIZE], raw_on: AtomicInt(0), pending: [] }
+    }
+
+    /// Whether the input is a terminal.
+    pub fn is_tty(self) -> Bool { return term_is_tty(self.input) == 1 }
+
+    /// The size of the terminal the output is.
+    pub fn size(self) -> Result<Size, Error> {
+        let out: [Int] = [0; 4]
+        let code = term_size(self.output, out)
+        if code < 0 { return Err(failure(code, "terminal size")) }
+        return Ok(Size { rows: out[0], cols: out[1] })
+    }
+
+    /// Turns off echo, line editing and the signals keys raise, so each key arrives at once; `close` turns them back on.
+    pub fn raw(self) -> Result<Null, Error> {
+        if self.raw_on.swap(1) == 1 { return Ok(null) }
+        let code = term_raw(self.input, self.saved)
+        if code < 0 {
+            self.raw_on.store(0)
+            return Err(failure(code, "raw mode"))
+        }
+        return Ok(null)
+    }
+
+    /// Writes text, escape sequences included.
+    pub fn write(self, text: String) -> Result<Null, Error> {
+        let bytes = text.bytes()
+        let code = term_write(self.output, bytes, bytes.len())
+        if code < 0 { return Err(failure(code, "terminal output")) }
+        return Ok(null)
+    }
+
+    /// Writes a styled span, then returns the style to the terminal's own.
+    pub fn print(self, span: Span) -> Result<Null, Error> { return self.write(span.to_string()) }
+
+    /// Clears the screen and puts the cursor at the top left.
+    pub fn clear(self) -> Result<Null, Error> { return self.write(clear_screen()) }
+
+    /// Puts the cursor at a row and a column counted from 0.
+    pub fn goto(self, row: Int, col: Int) -> Result<Null, Error> { return self.write(move_to(row, col)) }
+
+    /// Shows or hides the cursor.
+    pub fn cursor(self, visible: Bool) -> Result<Null, Error> { return self.write(if visible { show_cursor() } else { hide_cursor() }) }
+
+    /// Enters or leaves the alternate screen, which leaves the user's screen as it was.
+    pub fn alternate_screen(self, on: Bool) -> Result<Null, Error> { return self.write(if on { enter_alternate_screen() } else { leave_alternate_screen() }) }
+
+    /// Asks the terminal to report the mouse, or to stop.
+    pub fn mouse(self, on: Bool) -> Result<Null, Error> { return self.write(if on { enable_mouse() } else { disable_mouse() }) }
+
+    /// The next key or mouse event, or null when `timeout_ms` passes first (a negative time waits for ever). An `Err` at the end of the input.
+    pub fn read_event(var self, timeout_ms: Int) -> Result<Event?, Error> {
+        while true {
+            if self.pending.len() > 0 {
+                let step = decode(self.pending.to_array(), 0, false)
+                if step.used > 0 {
+                    self.pending = self.pending.slice(step.used, self.pending.len()).to_list()
+                    if step.event != null { return Ok(step.event) }
+                    continue
+                }
+            }
+            let lone_escape = self.pending.len() == 1 && self.pending.get(0) == 27
+            var wait = timeout_ms
+            if lone_escape && (wait < 0 || wait > 30) { wait = 30 }
+            let buffer: [UInt8] = [0; 256]
+            let got = term_read(self.input, buffer, wait)
+            if got == END_OF_INPUT { return Err(Error.new(ErrorKind.Other, "terminal input: end of input")) }
+            if got < 0 { return Err(failure(got, "terminal input")) }
+            if got == 0 {
+                if lone_escape {
+                    self.pending = []
+                    return Ok(Event.Key(KeyEvent { key: Key.Escape, ctrl: false, alt: false, shift: false }))
+                }
+                return Ok(null)
+            }
+            for at in 0..got {
+                self.pending.push(buffer[at])
+            }
+        }
+        return Ok(null)
+    }
+
+    /// Restores the mode before `raw`; a terminal that was not made raw is left as it is.
+    pub fn close(self) -> Result<Null, Error> {
+        if self.raw_on.swap(0) == 0 { return Ok(null) }
+        let code = term_restore(self.input, self.saved)
+        if code < 0 { return Err(failure(code, "restoring the terminal")) }
+        return Ok(null)
+    }
+}

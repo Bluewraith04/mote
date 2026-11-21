@@ -1,0 +1,19 @@
+// Atomic integers and flags; every operation is sequentially consistent.
+
+extend AtomicInt {
+    pub fn new(value: Int) -> AtomicInt { return @__atomic_int_new(value) }
+    pub fn load(self) -> Int { return @__atomic_int_load(self) }
+    pub fn store(self, value: Int) { @__atomic_int_store(self, value) }
+    pub fn swap(self, value: Int) -> Int { return @__atomic_int_swap(self, value) }
+    pub fn compare_exchange(self, expected: Int, value: Int) -> Bool { return @__atomic_int_compare_exchange(self, expected, value) }
+    pub fn fetch_add(self, by: Int) -> Int { return @__atomic_int_fetch_add(self, by) }
+    pub fn fetch_sub(self, by: Int) -> Int { return @__atomic_int_fetch_sub(self, by) }
+}
+
+extend AtomicBool {
+    pub fn new(value: Bool) -> AtomicBool { return @__atomic_bool_new(value) }
+    pub fn load(self) -> Bool { return @__atomic_bool_load(self) }
+    pub fn store(self, value: Bool) { @__atomic_bool_store(self, value) }
+    pub fn swap(self, value: Bool) -> Bool { return @__atomic_bool_swap(self, value) }
+    pub fn compare_exchange(self, expected: Bool, value: Bool) -> Bool { return @__atomic_bool_compare_exchange(self, expected, value) }
+}

@@ -1,0 +1,51 @@
+// A set of signals being watched.
+import Channel from std.sync
+import Closeable from std.traits
+import Signal from .signal
+import { failure, signal_of } from ._support
+import { signal_open, signal_watch, signal_next, signal_stop, signal_free } from ._lib
+
+/// A set of signals being watched. Each arrives once on `signals` in the order it was caught; a signal that arrives while 64 KiB of them are waiting is lost, and several of one kind may merge. The signals go back to their defaults when no subscription watches them.
+pub class Subscription: (Closeable) {
+    fd: AtomicInt
+    pub signals: Receiver<Signal>
+
+    /// The next signal, waiting for it; null once the subscription is closed and its queue is read.
+    pub fn next(self) -> Signal? { return self.signals.recv() }
+
+    /// Stops watching. The receiver gives the signals already caught, then ends; a second close is an `Err`.
+    pub fn close(self) -> Result<Null, Error> {
+        let fd = self.fd.swap(-1)
+        if fd < 0 { return Err(Error.new(ErrorKind.Other, "signal: already closed")) }
+        signal_stop(fd)
+        return Ok(null)
+    }
+}
+
+/// Starts watching the signals; an `Err` for a list that is empty.
+pub fn subscribe(wanted: List<Signal>) -> Result<Subscription, Error> {
+    if wanted.is_empty() { return Err(Error.new(ErrorKind.InvalidData, "signal: no signals to watch")) }
+    let fd = signal_open()
+    if fd < 0 { return Err(failure(fd, "signal")) }
+    for each in wanted {
+        let code = signal_watch(fd, each.number())
+        if code < 0 {
+            signal_stop(fd)
+            signal_free(fd)
+            return Err(failure(code, "signal"))
+        }
+    }
+    let (tx, rx) = Channel<Signal>(16)
+    spawn {
+        while true {
+            let number = signal_next(fd)
+            if number <= 0 { break }
+            let found = signal_of(number)
+            if found != null { tx.send(found) }
+        }
+        tx.close()
+        signal_free(fd)
+        return 0
+    }
+    return Ok(Subscription { fd: AtomicInt(fd), signals: rx })
+}

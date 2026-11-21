@@ -1,0 +1,14 @@
+// The functions of the external library `signal`.
+
+extern "signal" {
+    pub fn signal_open() -> Int
+    pub fn signal_watch(fd: Int, number: Int) -> Int
+
+    @blocking
+    pub fn signal_next(fd: Int) -> Int
+
+    pub fn signal_stop(fd: Int) -> Int
+    pub fn signal_free(fd: Int) -> Int
+    pub fn signal_send(pid: Int, number: Int) -> Int
+    pub fn signal_pid() -> Int
+}

@@ -1,0 +1,131 @@
+// Display, Eq, Ord and Closeable on the types a program writes, and the assertions.
+import { assert, assert_eq, assert_ne, fail } from std.test
+import { Display, Eq, Ord, Closeable } from std.traits
+import Channel from std.sync
+
+struct Point: (Display, Eq) {
+    x: Int
+    y: Int
+
+    pub fn to_string(self) -> String { return "(${self.x}, ${self.y})" }
+    pub fn eq(self, other: Point) -> Bool { return self.x == other.x && self.y == other.y }
+}
+
+struct Version: (Ord) {
+    major: Int
+
+    pub fn compare(self, other: Version) -> Int { return self.major.compare(other.major) }
+}
+
+enum Light: (Display) {
+    Red
+    Green
+
+    pub fn to_string(self) -> String {
+        return match self {
+            Red => "red"
+            Green => "green"
+        }
+    }
+}
+
+fn show<T: Display>(value: T) -> String {
+    return "<${value}>"
+}
+
+fn same<T: Eq>(a: T, b: T) -> Bool {
+    return a == b
+}
+
+fn largest<T: Ord>(a: T, b: T) -> T {
+    if a.compare(b) >= 0 { return a }
+    return b
+}
+
+struct Closer: (Closeable) {
+    log: Sender<String>
+
+    pub fn close(self) -> Result<Null, Error> {
+        self.log.send("closed")
+        return Ok(null)
+    }
+}
+
+test "a written to_string drives interpolation and bounds" {
+    let p = Point { x: 1, y: 2 }
+    assert_eq("${p}", "(1, 2)")
+    assert_eq(show(p), "<(1, 2)>")
+    assert_eq(show(5), "<5>")
+    assert_eq(show("s"), "<s>")
+    assert_eq(show(Light.Green), "<green>")
+}
+
+test "assert_eq and assert_ne take any Display and Eq type" {
+    assert_eq(Point { x: 1, y: 2 }, Point { x: 1, y: 2 })
+    assert_ne(Point { x: 1, y: 2 }, Point { x: 2, y: 1 })
+    assert_eq("a", "a")
+    assert_ne(1, 2)
+    assert_eq(true, true)
+}
+
+test "a failed assertion is a fault that says why" {
+    let h = spawn {
+        assert_eq(1, 2)
+    }
+    match h.await() {
+        Ok(_) => fail("the assertion did not fail")
+        Err(e) => assert_eq(e.message, "assert_eq failed: 1 != 2")
+    }
+    let g = spawn { assert_ne("a", "a") }
+    match g.await() {
+        Ok(_) => fail("the assertion did not fail")
+        Err(e) => assert_eq(e.message, "assert_ne failed: a == a")
+    }
+    let k = spawn { assert(false, "custom") }
+    match k.await() {
+        Ok(_) => fail("the assertion did not fail")
+        Err(e) => assert_eq(e.message, "custom")
+    }
+    let m = spawn { fail("stop") }
+    match m.await() {
+        Ok(_) => fail("fail did not fail")
+        Err(e) => assert_eq(e.message, "stop")
+    }
+}
+
+test "Eq works through a bound" {
+    assert(same(Point { x: 1, y: 1 }, Point { x: 1, y: 1 }), "same points")
+    assert(!same(Point { x: 1, y: 1 }, Point { x: 1, y: 2 }), "different points")
+    assert(same("a", "a"), "text")
+    assert(same(2.5, 2.5), "floats")
+}
+
+test "Ord works through a bound" {
+    assert_eq(largest(3, 9), 9)
+    assert_eq(largest("b", "a"), "b")
+    assert_eq(largest(Version { major: 2 }, Version { major: 7 }).major, 7)
+}
+
+test "with closes a resource on every way out" {
+    let (log, seen) = Channel<String>(8)
+    let make = || Closer { log: log }
+    with a = make() {
+        assert(seen.try_recv() == null, "nothing closed yet")
+    }
+    assert_eq(seen.try_recv()!, "closed")
+    var round = 0
+    while round < 3 {
+        with b = make() {
+            round += 1
+            if round == 2 { continue }
+        }
+    }
+    var closed = 0
+    while seen.try_recv() != null { closed += 1 }
+    assert_eq(closed, 3)
+}
+
+test "print uses the to_string a type writes" {
+    println(Point { x: 3, y: 4 })
+    println(Light.Red)
+}

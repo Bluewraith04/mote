@@ -1,0 +1,18 @@
+// The functions of the external library `term`.
+
+extern "term" {
+    pub fn term_is_tty(fd: Int) -> Int
+    pub fn term_size(fd: Int, out: [Int]) -> Int
+    pub fn term_set_size(fd: Int, rows: Int, cols: Int) -> Int
+    pub fn term_raw(fd: Int, saved: [UInt8]) -> Int
+    pub fn term_restore(fd: Int, saved: [UInt8]) -> Int
+
+    @blocking
+    pub fn term_read(fd: Int, buffer: [UInt8], timeout_ms: Int) -> Int
+
+    @blocking
+    pub fn term_write(fd: Int, buffer: [UInt8], count: Int) -> Int
+
+    pub fn term_close(fd: Int) -> Int
+    pub fn term_pty(out: [Int]) -> Int
+}

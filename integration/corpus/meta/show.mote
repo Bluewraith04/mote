@@ -1,4 +1,4 @@
-import { show, debug_text, duplicate } from std.meta
+import { show, debug_text, duplicate } from std.reflect
 
 struct Point {
     x: Int

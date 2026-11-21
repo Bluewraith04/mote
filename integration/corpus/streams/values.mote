@@ -1,5 +1,3 @@
-import { Stream } from std.collections
-
 struct Wide {
     a: Int
     b: Int

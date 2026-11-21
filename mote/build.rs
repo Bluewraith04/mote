@@ -1,4 +1,4 @@
-//! Builds `libmote_runtime.a`, the runtime an executable links, and leaves it in `OUT_DIR` for the toolchain to carry.
+//! Builds the static runtime library (`libmote_runtime.a` or `mote_runtime.lib`), and leaves it in `OUT_DIR` for the toolchain to carry.
 
 use std::env;
 use std::path::PathBuf;
@@ -23,5 +23,10 @@ fn main() {
         .status()
         .expect("cargo runs");
     assert!(status.success(), "the runtime library is built");
-    std::fs::copy(target.join("release/libmote_runtime.a"), out.join("libmote_runtime.a")).expect("the runtime library is where cargo puts it");
+    let file = if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") && env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc") {
+        "mote_runtime.lib"
+    } else {
+        "libmote_runtime.a"
+    };
+    std::fs::copy(target.join("release").join(file), out.join(file)).expect("the runtime library is where cargo puts it");
 }

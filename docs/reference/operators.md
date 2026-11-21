@@ -209,7 +209,7 @@ true
 * `==` is built in: an `eq` method, written or listed through `Eq`, never changes it. `T: Eq` allows `==` on `T`. <!-- block -->
 
 ```mote
-import { Eq } from std.traits
+import Eq from std.traits
 
 struct P {
     x: Int
@@ -442,7 +442,7 @@ fn main() {
 * `e?` on an optional or `Result` returns the failure from the function; otherwise it yields the payload. <!-- block -->
 
 ```mote
-import { parse_int } from std.string
+import parse_int from std.string
 
 fn first_length(xs: List<String>) -> Int? {
     let s = xs.first()?
@@ -496,7 +496,7 @@ Err("empty")
 ```
 
 ```mote
-import { parse_int } from std.string
+import parse_int from std.string
 
 fn bad(text: String) -> Result<Int, String> {
     let n = parse_int(text)? // error
@@ -626,7 +626,7 @@ class Node {
 }
 
 let a: Node? = Node { value: 1 }
-let n = a?.value.to_string() // error: Option has no method
+let n = a?.value.to_string() // error: Int? has no method
 ```
 
 ## Indexing
@@ -678,7 +678,7 @@ let c = s[0] // error
 
 ## Slicing
 
-* A range inside `[ ]` makes a slice, a copy, on a `List`, an array and a `String`. The slice of an array `[T]` or `[T; N]` is a `[T]`. <!-- block -->
+* A range inside `[ ]` makes a zero-copy view on a `List` or `[T]` (`Span<T>`), or on a `String` (`StrView`); only `[T; N]` makes a `[T]` copy. <!-- block -->
 
 ```mote
 fn main() {
@@ -691,14 +691,16 @@ fn main() {
     println(typeof(a[0..2]))
     let b: [Int] = [1, 2, 3]
     println(typeof(b[0..2]))
+    println(typeof("hello"[1..3]))
 }
 ```
 
 ```output
-[1, 2]
+[9, 2]
 el
 [Int]
-[Int]
+Span<Int>
+StrView
 ```
 
 <!-- block -->

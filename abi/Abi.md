@@ -69,7 +69,7 @@ A *value* is what a binding, field or register holds. An *object* is a heap allo
 * A `var` that a closure captures lives in a `Box` both sides hold; a closure keeps the reference to the box, and the function that made it reads and writes the value at offset 8. <!-- test: differential_functions_the_compiled_code_shows_the_recorded_results -->
 * A call through a function value loads the code pointer at offset 8 and calls it with the signature of the function type, with a block for the final values of its `var` parameters last. <!-- test: differential_functions_the_compiled_code_shows_the_recorded_results -->
 * Compiled code runs start-up, then one entry: `main` or a `test` block; a `test` block that faults fails alone, and a program with no `main` runs start-up only. <!-- test: differential_functions_a_test_block_compiled_gives_its_verdict_and_output, docs_every_block_is_run_rejected_as_marked_or_listed_as_a_fragment -->
-* An entry that returns a `Result` keeps it in a data object; when the tag is not `Ok`, the run state holds 1 and the text of the error, the `message` of an `Error` or what the compiled `std.meta.debug_text` of the error type gives, which the host reads before it frees the code. <!-- test: jit_an_entry_that_returns_an_err_gives_the_message_of_its_error, jit_an_entry_that_returns_an_ok_has_no_error, differential_gate_a_main_that_returns_an_err_ends_with_the_text_of_the_error, differential_gate_a_main_that_returns_an_ok_returns -->
+* An entry that returns a `Result` keeps it in a data object; when the tag is not `Ok`, the run state holds 1 and the text of the error, the `message` of an `Error` or what the compiled `std.reflect.debug_text` of the error type gives, which the host reads before it frees the code. <!-- test: jit_an_entry_that_returns_an_err_gives_the_message_of_its_error, jit_an_entry_that_returns_an_ok_has_no_error, differential_gate_a_main_that_returns_an_err_ends_with_the_text_of_the_error, differential_gate_a_main_that_returns_an_ok_returns -->
 * A `wrapping_*`, `checked_*`, `saturating_*` or `overflowing_*` operation on an integer of 64 bits uses the overflow flag of the instruction; on a narrower integer it computes the exact value in 64 bits and compares it with the value cut to the width. <!-- test: differential_numeric_the_compiled_code_shows_the_recorded_results -->
 * A `checked_*` result is the optional's tag word, 1 for a value and 0 for none, with the payload beside it; an `overflowing_*` result is the pair of the wrapped value and the overflow flag. <!-- test: differential_numeric_the_compiled_code_shows_the_recorded_results -->
 * `floor`, `ceil` and `sqrt` are instructions; `round` rounds half away from zero, and it and the other `math_*` functions call `mote_math`. <!-- test: differential_numeric_the_compiled_code_shows_the_recorded_results -->
@@ -90,9 +90,7 @@ A *value* is what a binding, field or register holds. An *object* is a heap allo
 * `==` and `contains` compare a `Map` or `Set` by its live entries in any order, with the keys as keys; a key and `hash_of` take it by address; `deep_clone` of a `Map` recomputes the hashes and slots of the copy, since its keys held by address have new addresses. <!-- test: differential_collections_a_map_inside -->
 * `fault` calls `mote_fault_message` with the message and has no fault site; `typeof` is the static string object of the rendered type, and of a union the one of the member whose type number the value holds. <!-- test: differential_collections_the_compiled_code_shows_the_recorded_results, differential_collections_the_compiled_code_shows_the_recorded_results, differential_gate_typeof_a_union_names_the_type_it_holds -->
 * `print` and `Show` of a value that is not a number, `Bool` or string call `mote_value`, which writes it from the type table and the names the code generator keeps in the runtime's data. <!-- test: differential_meta_the_compiled_code_shows_the_recorded_results -->
-* `meta_ints` and `meta_texts` are static arrays made when the program calls them; the texts are static string objects the array refers to. <!-- test: differential_meta_the_compiled_code_shows_the_recorded_results -->
-* A `Dyn` is a class of the type number and a reference to a `Box` of the described type; `dyn_of` makes both, `dyn_type` reads the number and `dyn_to` gives the value or none. <!-- test: differential_meta_the_compiled_code_shows_the_recorded_results -->
-* `dyn_len`, `dyn_tag`, `dyn_get`, `dyn_set`, `dyn_show`, `dyn_build` and `dyn_make` call `mote_dyn`; a position or variant out of range is the `IndexOutOfRange` fault and a full heap is `MemoryLimit`. <!-- test: differential_meta_the_compiled_code_shows_the_recorded_results, differential_meta_the_compiled_code_shows_the_recorded_results -->
+* Static reflection (`std.reflect`) lowers at compile time with no runtime reflection tables or dynamic `Dyn` boxes. <!-- test: differential_meta_the_compiled_code_shows_the_recorded_results -->
 * `require` calls `mote_fault_message` with its message when the condition is false and has no fault site. <!-- test: differential_meta_the_compiled_code_shows_the_recorded_results -->
 * A `Stream` is a closure object of its resume function: the code pointer at 8, then the frame slots in the order of `Function.frame`, slot 0 being the state; `Stream` allocates it with the state zero and the initial values in the slots after, and `FrameLoad` and `FrameStore` read and write a slot of the closure the resume function was called through, a cell slot holding the reference to its `Box`. <!-- test: differential_streams_compiled_generators_yield_in_order_widen_and_catch_a_read_from_inside, differential_streams_the_compiled_code_shows_the_recorded_results -->
 * `stream_next` calls the code pointer of the stream with the stream as the closure, and the result is the next element or `null`; a read of a stream from inside its own body is the fault `a stream was read while it runs`. <!-- test: differential_streams_compiled_generators_yield_in_order_widen_and_catch_a_read_from_inside -->
@@ -627,7 +625,7 @@ Shape (size 24)            I64 I64 I64
 * A scope that has ended is forgotten, so a cancellation after it does not wait for it again; a `with` that has ended is not closed again. <!-- test: differential_cancel_a_cancelled_task_closes_its_resources_innermost_first_and_a_fault_closes_none -->
 * While it undoes its records a task is not cancelled again, so a close function can wait. <!-- test: preempt_a_cleaning_task_is_not_cancelled_again_and_has_its_stack_limit_back, differential_cancel_the_compiled_code_shows_the_recorded_results -->
 * `Defer` takes the box that holds the resource and the address of the close thunk; `Undefer` takes nothing; `ScopeEndError` takes the token and answers a `String` of the fault message, or null when the scope was clean. <!-- test: a_with_is_recorded_with_its_box_and_closer_and_forgotten_at_its_end -->
-* `NativeBlocking` takes the address of the thunk of a `@blocking` native, its argument block and the block's length in words, parks the calling task while a helper thread runs the thunk over a copy of the block, and copies the block back when it returns, so a task waiting in a native holds no worker and does not delay a collection. <!-- test: core_net_the_tests_of_the_library_pass -->
+* `NativeBlocking` takes the address of the thunk of a `@blocking` external function, its argument block and the block's length in words, parks the calling task while a helper thread runs the thunk over a copy of the block, and copies the block back when it returns, so a task waiting in an external library holds no worker and does not delay a collection. <!-- test: core_net_the_tests_of_the_library_pass -->
 
 ### Task gate
 
@@ -709,17 +707,11 @@ Shape (size 24)            I64 I64 I64
 
 ### The type table
 
-* The type table starts with the magic `MOTETYPE` and the version `1` as a `u32`, then the number of types after `NONE`, then each type in id order, then the reflection section. <!-- test: table_bytes_start_with_the_magic_and_the_version -->
+* The type table starts with the magic `MOTETYPE` and the version `1` as a `u32`, then the number of types after `NONE`, then each type in id order. <!-- test: table_bytes_start_with_the_magic_and_the_version -->
 * A type is its name, a kind tag and the types and numbers its kind names; the layout, offsets, slots and passing are computed again when the table is read. <!-- test: table_bytes_one_type_is_its_name_its_kind_tag_and_its_members, table_bytes_the_names_and_the_slots_read_back_for_every_type -->
 * A table with every kind reads back equal, and one table gives one byte string. <!-- test: table_bytes_every_kind_reads_back_to_an_equal_table, table_bytes_one_table_gives_one_byte_string -->
 * A table with a reserved type that is not defined is not written. <!-- test: table_bytes_a_type_that_is_reserved_and_not_defined_is_not_written -->
 * A reader refuses a wrong magic or version, a table cut at any byte, a type that names one that is missing or a value type that names a later one, a handle with the wrong number of payload types, and a type over the size limit. <!-- test: table_bytes_a_wrong_magic_or_version_is_refused, table_bytes_every_cut_of_a_table_is_refused_and_none_panics, table_bytes_a_type_that_names_a_missing_or_later_value_is_refused, table_bytes_a_handle_with_the_wrong_payload_count_and_a_huge_array_are_refused -->
-
-### The reflection section
-
-* The reflection section is the number count, the numbers as 16 bytes each, the text count, then the texts. <!-- test: reflection_is_the_counts_the_numbers_then_the_texts, reflection_nothing_is_two_zero_counts -->
-* It carries the numbers and texts of an `ir::reflect::Table`, which read back equal. <!-- test: reflection_reads_back_equal, reflection_a_real_table_goes_through_the_type_table_bytes_and_comes_back_equal, table_bytes_the_reflection_section_travels_with_the_types -->
-* A section cut at any byte is refused. <!-- test: reflection_a_cut_short_section_is_refused -->
 
 ### The fault table
 
@@ -737,7 +729,7 @@ Shape (size 24)            I64 I64 I64
 
 ### The meta table
 
-* The meta table starts with the magic `MOTEMETA` and the version `1`, then the string type, the `Dyn` type (0 for none), how each type is shown by `print` and each type `std.meta` describes. <!-- test: meta_a_table_is_the_magic_the_version_the_two_types_then_the_ways_to_show_and_the_described -->
+* The meta table starts with the magic `MOTEMETA` and the version `1`, then the string type, the optional boxed type (0 for none), how each type is shown by `print` and each described type record. <!-- test: meta_a_table_is_the_magic_the_version_the_two_types_then_the_ways_to_show_and_the_described -->
 * A table reads back equal and gives one byte string. <!-- test: meta_a_table_reads_back_equal_and_gives_one_byte_string, meta_every_plain_way_to_show_reads_back, meta_every_kind_has_a_tag_that_reads_back -->
 * A reader refuses a wrong magic or version, a cut table, bytes left over, an unknown tag and a described type that names one that is missing. <!-- test: meta_a_bad_table_is_refused -->
 
@@ -752,10 +744,10 @@ Shape (size 24)            I64 I64 I64
 * `compile_object` writes a relocatable x86-64 ELF file of position-independent code. <!-- test: object_is_a_relocatable_x86_64_elf_file_that_defines_the_run_function_and_the_tables, object_the_code_in_the_file_is_position_independent -->
 * The file defines `mote_run`, which runs start-up and then the entry, and `mote_tables`; an entry that returns a `Result` also defines `mote_failure`, the two words of the run state. <!-- test: object_is_a_relocatable_x86_64_elf_file_that_defines_the_run_function_and_the_tables, object_an_entry_that_returns_an_err_defines_the_failure_cell -->
 * The symbols the file leaves undefined are the entries of the runtime and the helpers of compiled code. <!-- test: object_the_symbols_it_does_not_define_are_the_runtime_entries_and_helpers -->
-* `mote_tables` is eighteen words: the address and the byte length of the type table, of the fault table and of the code table, then the address of the code table's array of address words and its number of words, then the address and byte length of the meta table and of the link table, then the address of the failure cell and of the native slots, each 0 when the program has none, then the address of the array of init functions of the libraries linked in and its number of words, then the address and byte length of the debug table; new words go at the end. <!-- test: object_the_directory_leads_to_a_type_table_that_reads_back, object_the_directory_leads_to_a_fault_table_with_a_site_for_each_check, object_the_code_table_places_each_function_by_a_relocation_and_keeps_its_sites_inside_the_function, object_tables_the_directory_points_at_the_failure_cell_only_when_the_entry_returns_a_result -->
-* The meta table of the file reads back equal to the program's: how each type is shown and what `std.meta` describes. <!-- test: object_tables_the_meta_table_reads_back_equal_to_the_programs -->
-* The link table of the file lists the libraries and functions of the program with the file to open for each library, and the native slots are a word for each function. <!-- test: object_tables_the_link_table_carries_the_libraries_functions_and_files -->
-* The type table of the file reads back equal to the program's, with no reflection section, since the static arrays behind `meta_ints` and `meta_texts` are in the file. <!-- test: object_the_directory_leads_to_a_type_table_that_reads_back -->
+* `mote_tables` is nineteen words: the address and the byte length of the type table, of the fault table and of the code table, then the address of the code table's array of address words and its number of words, then the address and byte length of the meta table and of the link table, then the address of the failure cell and of the native slots, each 0 when the program has none, then the address of the array of init functions of the libraries linked in and its number of words, then the address and byte length of the debug table, then a flags word (`1` when single-threaded); new words go at the end. <!-- test: object_the_directory_leads_to_a_type_table_that_reads_back, object_the_directory_leads_to_a_fault_table_with_a_site_for_each_check, object_the_code_table_places_each_function_by_a_relocation_and_keeps_its_sites_inside_the_function, object_tables_the_directory_points_at_the_failure_cell_only_when_the_entry_returns_a_result -->
+* The meta table of the file reads back equal to the program's: how each type is shown and its described entries. <!-- test: object_tables_the_meta_table_reads_back_equal_to_the_programs -->
+* The link table of the file lists the libraries and functions of the program with the file to open for each library, and the function slots are a word for each function. <!-- test: object_tables_the_link_table_carries_the_libraries_functions_and_files -->
+* The type table of the file reads back equal to the program's. <!-- test: object_the_directory_leads_to_a_type_table_that_reads_back -->
 * The fault table has a site for each check. <!-- test: object_the_directory_leads_to_a_fault_table_with_a_site_for_each_check -->
 * The call sites of the file have the frames the JIT gives the same program. <!-- test: object_the_frames_are_the_ones_the_jit_gives -->
 * A global that holds references is a root of the code table, placed by a relocation to its cell. <!-- test: object_a_global_that_holds_a_reference_is_a_root_placed_by_a_relocation -->
@@ -767,12 +759,12 @@ Shape (size 24)            I64 I64 I64
 
 ## Executables
 
-* `libmote_runtime.a` holds the runtime, the helpers of compiled code and the native loader; linked with the object it leaves nothing undefined, and its `main` starts from `mote_tables`. <!-- test: executable_a_program_prints_and_returns_with_code_0 -->
-* The runtime builds its code map from the code table and its address words, opens the libraries of the link table into the native slots, and runs `mote_run`. <!-- test: executable_a_program_prints_and_returns_with_code_0 -->
+* `libmote_runtime.a` holds the runtime, the helpers of compiled code and the library loader; linked with the object it leaves nothing undefined, and its `main` starts from `mote_tables`. <!-- test: executable_a_program_prints_and_returns_with_code_0 -->
+* The runtime builds its code map from the code table and its address words, opens the libraries of the link table into the function slots, and runs `mote_run`. <!-- test: executable_a_program_prints_and_returns_with_code_0 -->
 
-## Native calls
+## External library calls
 
-* A `native fn` is a C-ABI function declared by its Mote signature; `CType` is what a parameter or result may be, and `NativeSig { params, ret, blocking }` is the signature. <!-- test: a_signature_collects_params_blocking_and_result, a_signature_checks_its_directions_and_flattens_arrays -->
+* An `extern` fn is a C-ABI function declared by its Mote signature; `CType` is what a parameter or result may be, and `NativeSig { params, ret, blocking }` is the signature. <!-- test: a_signature_collects_params_blocking_and_result, a_signature_checks_its_directions_and_flattens_arrays -->
 
 <!-- table: abi-ctypes -->
 | `CType` | Machine values | Direction |
@@ -794,30 +786,31 @@ Shape (size 24)            I64 I64 I64
 | `Pointer` | `I64` | both |
 | `NullablePointer` | `I64` | both |
 | `PortEnd` | `I64` | parameter |
+| `FixedArray` | `I64` `I64` | parameter |
 <!-- /table -->
 
 * A signed integer widens by sign and an unsigned one by zero. <!-- test: only_signed_integers_widen_by_sign -->
 * A string goes in as a pointer and comes out as a pointer, an `Array` is a pointer to the elements then the length, and an array is a parameter only. <!-- test: strings_go_in_by_copy_and_come_out_by_copy, arrays_of_scalars_are_parameters_only, each_type_lowers_to_its_machine_values -->
 * A pointer is an `I64`, never a `Ref`, so the collector ignores it. <!-- test: pointers_are_one_word_whether_or_not_they_may_be_null -->
 * `Bool` is `U8`. <!-- test: numbers_bool_and_unit_map_to_their_c_types -->
-* `Pointer<T>` is a `std` struct with one field, `address: UInt64`; `Pointer<T>?` is a `NullablePointer`. <!-- test: abi_pointer_is_a_struct_with_one_uint64_address, a_pointer_is_a_pointer_and_an_optional_pointer_may_be_null -->
+* `Pointer<T>` is a universal builtin with one field, `address: UInt64`; `Pointer<T>?` is a `NullablePointer`. <!-- test: a_pointer_is_a_pointer_and_an_optional_pointer_may_be_null, differential_natives_a_pointer_is_an_address_and_a_nullable_one_may_be_null -->
 * A `PortEnd` crosses as a parameter only. <!-- test: a_port_end_crosses_as_a_parameter_only, a_port_end_is_a_one_word_parameter_only -->
 * A parameter is a `CParam { ty, by_ref }`; a `var` parameter is `by_ref`, one `I64` pointer, and is allowed for numbers, `Bool` and both pointer types only. <!-- test: a_by_reference_parameter_is_one_pointer_and_only_for_plain_values, a_var_parameter_is_passed_by_pointer, a_var_string_or_array_has_no_pointer_form -->
-* `LinkTable` lists each library once and each function as a `LinkedFn { library, symbol, sig, span }`, and only the natives the program calls are in it. <!-- test: a_library_is_listed_once, only_natives_the_program_calls_are_linked -->
+* `LinkTable` lists each library once and each function as a `LinkedFn { library, symbol, sig, span }`, and only the external functions the program calls are in it. <!-- test: a_library_is_listed_once, only_natives_the_program_calls_are_linked -->
 * A narrow integer is passed widened by sign or by zero as its type says; a `Bool` goes in as a `U8` and a `Bool` result is true when it is not 0. <!-- test: differential_natives_numbers_cross_with_their_width_and_sign -->
 * A `String` parameter is a NUL-terminated copy made for the call and freed after it; a `String` result is copied into a new string and the C pointer is not freed, and a NULL one is the empty string. <!-- test: differential_natives_strings_and_arrays_cross_by_copy_and_by_pointer -->
 * An `Array` parameter is the address of the first element, then the length; the heap does not move, so the address holds for the call. <!-- test: differential_natives_strings_and_arrays_cross_by_copy_and_by_pointer -->
 * A `Pointer` result of NULL is the `NullPointer` fault; a `Pointer<T>?` result of NULL is none, and none goes in as NULL. <!-- test: differential_natives_a_null_pointer_result_is_a_fault, differential_natives_a_pointer_is_an_address_and_a_nullable_one_may_be_null -->
 * A `var` parameter is passed as a pointer to a temporary that holds the value, and the value in the temporary is the final value of the variable after the call. <!-- test: differential_natives_a_var_parameter_is_passed_by_pointer_and_copied_back -->
-* A call of a `@blocking` native runs on a helper thread while the caller waits; any other call runs on the calling thread. <!-- test: differential_natives_a_blocking_call_runs_on_another_thread, differential_natives_numbers_cross_the_same_on_a_helper_thread -->
-* A native used as a value is called through the function that wraps it. <!-- test: differential_natives_a_native_is_a_function_value -->
+* A call of a `@blocking` external function runs on a helper thread while the caller waits; any other call runs on the calling thread. <!-- test: differential_natives_a_blocking_call_runs_on_another_thread, differential_natives_numbers_cross_the_same_on_a_helper_thread -->
+* An external function used as a value is called through the function that wraps it. <!-- test: differential_natives_a_native_is_a_function_value -->
 * Before `main` the loader opens each library of the link table, writes the address of each function into a table the code calls through, and calls the optional `void mote_init(const MoteHost *)` of each library once. <!-- test: differential_natives_the_library_is_given_the_host_table_before_main -->
-* In an executable, a library whose archive is linked has its functions in the slots as relocations to its symbols and is not opened; its optional `mote_init_<name>` is a weak symbol in the array the directory leads to, and the runtime calls the ones that resolved before `main`. <!-- test: object_tables_a_library_linked_in_has_its_symbols_in_the_slots_and_a_weak_init, aot_static_a_linked_library_gets_its_init_before_main, aot_static_a_program_whose_natives_ship_an_archive_runs_without_the_shared_library -->
-* A library or symbol that cannot be loaded is an error at its `native fn` and nothing runs; a native the program does not call is not loaded. <!-- test: differential_natives_a_missing_library_is_an_error_at_its_native_fn, differential_natives_a_missing_symbol_is_an_error_at_its_native_fn, differential_natives_a_native_the_program_never_calls_is_not_loaded -->
+* In an executable, a library whose archive is linked has its functions in the slots as relocations to its symbols and is not opened; its optional `mote_init_<name>` is a weak symbol in the array the directory leads to, and the runtime calls the ones that resolved before `main`. <!-- test: object_tables_a_library_linked_in_has_its_symbols_in_the_slots_and_a_weak_init, aot_static_a_linked_library_gets_its_init_before_main, aot_static_a_program_whose_libraries_ship_an_archive_runs_without_the_shared_library -->
+* A library or symbol that cannot be loaded is an error at its `extern` fn and nothing runs; an external function the program does not call is not loaded. <!-- test: differential_natives_a_missing_library_is_an_error_at_its_native_fn, differential_natives_a_missing_symbol_is_an_error_at_its_native_fn, differential_natives_a_native_the_program_never_calls_is_not_loaded -->
 
 ## Ports
 
-* `MoteHost`, `MotePort`, the `PUSH_*` results and the `WAIT_*` values are defined in `mote_abi` (`host.rs`); a Rust native depends on `mote-abi` for them. <!-- test: the_table_is_four_words_with_its_size_first, push_results_are_stable, wait_values_are_stable -->
+* `MoteHost`, `MotePort`, the `PUSH_*` results and the `WAIT_*` values are defined in `mote_abi` (`host.rs`); a Rust external library depends on `mote-abi` for them. <!-- test: the_table_is_four_words_with_its_size_first, push_results_are_stable, wait_values_are_stable -->
 * `abi/mote.h` is the C header of the table, generated by `mote_abi::host_header` from the same list; a test compares the file with the text (`MOTE_BLESS=1` rewrites it) and compiles a C file that asserts the size and offset of each field. <!-- test: host_header_file_is_the_generated_text, host_header_compiles_and_matches_the_layout_of_the_table -->
 
 <!-- test: the_table_is_four_words_with_its_size_first -->
@@ -843,7 +836,7 @@ Shape (size 24)            I64 I64 I64
 | result `1` | the time ran out |
 | result `2` | the descriptor is negative, invalid or in error |
 
-* `fd_wait` polls on the thread that calls it and parks no task; a native that waits calls it from a `@blocking` function. <!-- test: host_fd_wait_times_out_while_empty_and_is_ready_after_a_write, host_fd_wait_a_closed_peer_is_ready_and_a_bad_descriptor_fails -->
+* `fd_wait` polls on the thread that calls it and parks no task; an external library function that waits calls it from a `@blocking` function. <!-- test: host_fd_wait_times_out_while_empty_and_is_ready_after_a_write, host_fd_wait_a_closed_peer_is_ready_and_a_bad_descriptor_fails -->
 * New `MoteHost` fields go at the end. <!-- test: the_table_is_four_words_with_its_size_first -->
 
 ## The `TypeTable` API

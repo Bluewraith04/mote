@@ -49,7 +49,7 @@ impl Fault {
 pub struct Ran {
     pub output: String,
     pub fault: Option<Fault>,
-    /// Why the natives were not loaded, when nothing ran.
+    /// Why the external libraries were not loaded, when nothing ran.
     pub link: Option<LinkError>,
     /// The text of the error, when the entry returned an `Err`.
     pub err: Option<String>,
@@ -91,8 +91,29 @@ struct Link {
     run: extern "C" fn(*mut TaskContext),
     runtime: Arc<Runtime>,
     fault: Option<Fault>,
+    /// The context used by the direct single-threaded fast path.
+    context: *mut TaskContext,
     /// The feeds the host gives, delivered from a task of the scheduler.
     scripted: Vec<Feed>,
+}
+
+/// The program's direct task: runs start-up and `main` on one mapped stack without scheduler workers.
+fn direct_program(address: usize) {
+    // SAFETY: `address` is the link, which the host keeps alive while `run_single` runs.
+    let link = unsafe { &mut *(address as *mut Link) };
+    let runtime = &link.runtime;
+    let mut context = TaskContext {
+        stack_limit: mote_scheduler::direct_stack_limit().unwrap_or(0) as u64,
+        ..TaskContext::default()
+    };
+    link.context = &raw mut context;
+    runtime.attach(&mut context);
+    runtime.join(&mut context);
+    (link.run)(&raw mut context);
+    if let Some(report) = runtime.unawaited_fault() {
+        link.fault = Some(Fault::of(&report, runtime));
+    }
+    runtime.leave(&mut context);
 }
 
 /// The program's task: runs start-up and `main`, and ends the run with a fault when a detached task faulted and nobody awaited it.
@@ -134,6 +155,8 @@ pub struct Image {
     pub args: Vec<String>,
     /// Where the program's output goes as it is printed; none keeps it for `Ran::output`.
     pub sink: Option<Box<dyn Write + Send>>,
+    /// When true and no seeded schedule or feeds exist, execute directly without worker threads.
+    pub single_threaded: bool,
 }
 
 impl Image {
@@ -144,8 +167,9 @@ impl Image {
 
     /// Like `run`, with the runtime handed to `started` before the program's task starts.
     pub fn run_with(self, started: impl FnOnce(&Arc<Runtime>)) -> Ran {
-        let Image { run, types, faults, meta, code, failure, heap, mut scheduler, feeds, args, sink } = self;
-        if !feeds.is_empty() && scheduler.seed.is_none() {
+        let Image { run, types, faults, meta, code, failure, heap, mut scheduler, feeds, args, sink, single_threaded } = self;
+        let seeded = scheduler.seed.is_some();
+        if !feeds.is_empty() && !seeded {
             scheduler = mote_scheduler::Config::seeded(0);
         }
         let runtime = Runtime::new(Arc::new(types), faults, heap);
@@ -157,20 +181,29 @@ impl Image {
         }
         started(&runtime);
         runtime.set_scripted(!feeds.is_empty());
-        let mut link = Box::new(Link { run, runtime: runtime.clone(), fault: None, scripted: feeds });
+        let direct = single_threaded && feeds.is_empty() && !seeded;
+        let mut link = Box::new(Link { run, runtime: runtime.clone(), fault: None, context: std::ptr::null_mut(), scripted: feeds });
         let address = &mut *link as *mut Link as usize;
         runtime.set_fault_hook(Arc::new(move |report| {
             // SAFETY: the link outlives the run, and the hook runs in the program's task while the host waits.
             let link = unsafe { &mut *(address as *mut Link) };
             link.fault = Some(Fault::of(report, &link.runtime));
+            let context = if mote_scheduler::in_a_task() {
+                mote_scheduler::current().context()
+            } else {
+                link.context
+            };
             // SAFETY: the context is this task's own block.
-            link.runtime.leave(unsafe { &mut *mote_scheduler::current().context() });
+            link.runtime.leave(unsafe { &mut *context });
             mote_scheduler::exit()
         }));
-        let outcome = Scheduler::new(scheduler).expect("a scheduler").run_or_exit(move || program(address));
-        runtime.leave_all();
-        if let Err(deadlock) = outcome {
-            link.fault = Some(Fault { kind: FaultKind::Deadlock, message: deadlock.to_string(), span: None, site: None, frames: Vec::new() });
+        if direct {
+            mote_scheduler::run_single(scheduler.main_stack_bytes, || direct_program(address)).expect("a single task");
+        } else {
+            let outcome = Scheduler::new(scheduler).expect("a scheduler").run_or_exit(move || program(address));
+            if let Err(deadlock) = outcome {
+                link.fault = Some(Fault { kind: FaultKind::Deadlock, message: deadlock.to_string(), span: None, site: None, frames: Vec::new() });
+            }
         }
         runtime.flush_sink();
         let stats = runtime.heap().stats();

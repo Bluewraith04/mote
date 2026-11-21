@@ -1,3 +1,0 @@
-// Base64 text of bytes, with the standard alphabet or the URL-safe one.
-pub import { Alphabet } from ._alphabet
-pub import { decode, decode_string, encode, encode_string } from .codec

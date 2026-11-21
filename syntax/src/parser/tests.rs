@@ -352,8 +352,22 @@ fn functions() {
     assert_eq!(tree("fn f<T, U: Show + Eq>(x: T) {}"), "(fn f<T, U: Show + Eq> (x:T) (block))");
     assert_eq!(tree("fn f(...xs: Int) {}"), "(fn f (...xs:Int) (block))");
     assert_eq!(tree("fn from(v: Int) {}"), "(fn from (v:Int) (block))");
-    assert_eq!(tree("native fn clock() -> Int"), "(native clock () -> Int)");
-    assert_eq!(tree("native fn alloc<T, U: Eq>(n: Int) -> [T]"), "(native alloc<T, U: Eq> (n:Int) -> [T])");
+    assert_eq!(tree("extern \"c\" { fn clock() -> Int }"), "(extern \"c\" (fn clock () -> Int))");
+    assert_eq!(
+        tree("pub extern \"sqlite\" { @blocking pub fn open(path: String) -> Int }"),
+        "pub (extern \"sqlite\" @blocking pub (fn open (path:String) -> Int))"
+    );
+    assert_eq!(tree("fn alloc<T, U: Eq, const N: Int>(n: Int) -> [T; N] {}"), "(fn alloc<T, U: Eq, const N: Int> (n:Int) -> [T; N] (block))");
+    assert_eq!(tree("extend Int { fn double(self) -> Int { self * 2 } }"), "(extend Int (fn double (self) -> Int (block (* self 2))))");
+    assert_eq!(tree("extend<T> [T]: (Eq) { fn eq(self, other: [T]) -> Bool { true } }"), "(extend<T> [T]: (Eq) (fn eq (self other:[T]) -> Bool (block true)))");
+    assert_eq!(tree("pub const N: Int = 3"), "pub (const N:Int 3)");
+    assert_eq!(tree("let x: Vec<Int, N + 1> = y"), "(let x:Vec<Int, (+ N 1)> y)");
+    assert_eq!(tree("let x = @size_of(Int)\nlet y = @construct<Pair>(1, 2)"), "(let x (@size_of Int))\n(let y (@construct<Pair> 1 2))");
+    assert_eq!(tree("let x: @typeof(a) = a"), "(let x:(@typeof a) a)");
+    assert_eq!(tree("comptime if flag { let x = 1 } else { let x = 2 }"), "(comptime-if flag (block (let x 1)) (block (let x 2)))");
+    assert_eq!(tree("comptime for f in @fields(T) { }"), "(comptime-for f (@fields T) (block))");
+    assert_eq!(tree("let x = comptime { 1 + 2 }"), "(let x (comptime (block (+ 1 2))))");
+    assert_eq!(tree("import a from std.x\nimport b as c from std.x\nimport * from std.x"), "(import {a} from std.x)\n(import {b as c} from std.x)\n(import {*} from std.x)");
     assert_eq!(tree("fn f() { fn g() {} }"), "(fn f () (block (fn g () (block))))");
     assert_eq!(tree("fn f()\n{\n}"), "(fn f () (block))");
 }
@@ -500,6 +514,7 @@ fn every_comma_list_takes_a_trailing_comma() {
     assert_eq!(tree("let x: Map<A, B,> = y"), "(let x:Map<A, B> y)");
     assert_eq!(tree("let x: Map<A, List<B>,> = y"), "(let x:Map<A, List<B>> y)");
     assert_eq!(tree("import { a, b, } from m"), "(import {a, b} from m)");
+    assert_eq!(tree("import m.{ a, b, }"), "(import {a, b} from m)");
     assert_eq!(tree("enum E { A(Int,) }"), "(enum E A(Int))");
     assert_eq!(tree("|a, b,| a"), "(lambda (a b) a)");
 }

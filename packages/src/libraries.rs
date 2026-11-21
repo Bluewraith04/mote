@@ -1,4 +1,4 @@
-//! The core libraries: the copy embedded at build time, or the packages in a directory; a package imports one by its name with no manifest entry.
+//! The core libraries loaded from `mote_std` (or `--core <dir>`); a package imports one by its name with no manifest entry.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -6,24 +6,11 @@ use std::path::{Path, PathBuf};
 use mote_base::{DiagnosticSink, Interner, SourceMap};
 use mote_syntax::{lex, parse, Import, ItemKind};
 
-use crate::manifest::{Manifest, PackageError};
-use crate::package::{Package, Packages, SourceFile};
-use crate::standard::embedded;
+use crate::manifest::PackageError;
+use crate::package::{Package, Packages};
+use crate::standard::default_mote_std;
 
-/// The core libraries this build carries, with their natives expected in `<home>/core/<name>/native/`.
-pub fn embedded_core(home: Option<&Path>) -> Result<Vec<Package>, PackageError> {
-    let base = home.map_or_else(|| PathBuf::from("core"), |home| home.join("core"));
-    embedded::CORE
-        .iter()
-        .map(|(name, manifest, files)| {
-            let manifest = Manifest::parse(&format!("core/{name}/mote.toml"), manifest)?;
-            let files = files.iter().map(|(rel, text)| SourceFile { rel: rel.to_string(), name: format!("core/{name}/src/{rel}"), text: text.to_string() }).collect();
-            Ok(Package::new(manifest, base.join(name), files))
-        })
-        .collect()
-}
-
-/// Every package in the folders of `dir`; a folder is named as its package.
+/// Every non-`std` package in the folders of `dir`; a folder is named as its package.
 pub fn packages_in(dir: &Path) -> Result<Vec<Package>, PackageError> {
     let entries = std::fs::read_dir(dir).map_err(|error| PackageError { file: crate::package::shown(dir), line: 0, key: String::new(), message: format!("cannot read: {error}") })?;
     let mut folders: Vec<PathBuf> = entries.filter_map(|entry| entry.ok().map(|entry| entry.path())).filter(|path| path.join("mote.toml").is_file()).collect();
@@ -35,22 +22,42 @@ pub fn packages_in(dir: &Path) -> Result<Vec<Package>, PackageError> {
         if package.manifest.name != folder_name {
             return Err(PackageError { file: package.manifest_file, line: package.manifest.name_line, key: "package.name".into(), message: format!("the folder is named `{folder_name}`, not `{}`", package.manifest.name) });
         }
+        if package.manifest.name == "std" {
+            continue;
+        }
         found.push(package);
     }
     Ok(found)
 }
 
-/// The core libraries in `dir`, or the embedded ones when there is no directory.
+/// The core libraries in `dir`, or from `mote_std` when there is no directory.
 pub fn core_packages(dir: Option<&Path>, home: Option<&Path>) -> Result<Vec<Package>, PackageError> {
     match dir {
         Some(dir) => packages_in(dir),
-        None => embedded_core(home),
+        None => match default_mote_std(home) {
+            Some(root) => packages_in(&root),
+            None => Err(PackageError {
+                file: "mote_std".into(),
+                line: 0,
+                key: String::new(),
+                message: "cannot find `mote_std` (run install.sh, set MOTE_STD, or pass --core)".into(),
+            }),
+        },
     }
 }
 
-/// The names of the embedded core libraries.
-pub fn core_names() -> Vec<&'static str> {
-    embedded::CORE.iter().map(|(name, _, _)| *name).collect()
+/// The names of the core libraries found in `mote_std`.
+pub fn core_names() -> Vec<String> {
+    let Some(root) = default_mote_std(None) else { return Vec::new() };
+    let Ok(entries) = std::fs::read_dir(&root) else { return Vec::new() };
+    let mut names: Vec<String> = entries
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .filter(|path| path.join("mote.toml").is_file())
+        .filter_map(|path| path.file_name().and_then(|name| name.to_str()).map(str::to_string))
+        .filter(|name| name != "std")
+        .collect();
+    names.sort();
+    names
 }
 
 /// The first name of each import that is not relative, in the files of `src/` and, when asked, of `tests/`.
@@ -165,6 +172,7 @@ fn place(index: usize, core: &[Package], needs: &HashMap<usize, Vec<usize>>, sta
 mod tests {
     use super::*;
     use crate::graph::build;
+    use crate::package::SourceFile;
     use crate::testing::{pkg, std_package, Scratch};
 
     fn names(packages: &Packages) -> Vec<&str> {
@@ -181,7 +189,7 @@ mod tests {
 
     #[test]
     fn core_embed_an_import_of_a_core_name_adds_the_library_with_no_manifest_entry() {
-        let packages = app("import { f } from path\n").with_core(vec![lib("path", "pub fn f() {}\n"), lib("date", "")], false).unwrap();
+        let packages = app("import f from path\n").with_core(vec![lib("path", "pub fn f() {}\n"), lib("date", "")], false).unwrap();
         assert_eq!(names(&packages), ["std", "path", "app"]);
         assert_eq!(packages.links[2]["path"], 1);
         let graph = build(&packages, false);
@@ -289,30 +297,23 @@ mod tests {
     }
 
     #[test]
-    fn core_embed_carries_every_package_of_the_core_folder() {
-        let folder = Path::new(env!("CARGO_MANIFEST_DIR")).join("../core");
-        let on_disk = core_in_folder(&folder);
-        let embedded = embedded_core(None).unwrap();
-        assert_eq!(embedded.iter().map(|package| package.manifest.name.clone()).collect::<Vec<_>>(), on_disk.iter().map(|package| package.manifest.name.clone()).collect::<Vec<_>>());
-        for (found, wanted) in embedded.iter().zip(&on_disk) {
-            assert_eq!(found.manifest, wanted.manifest);
-            assert_eq!(found.files.iter().map(|file| (&file.rel, &file.text)).collect::<Vec<_>>(), wanted.files.iter().map(|file| (&file.rel, &file.text)).collect::<Vec<_>>());
-        }
-        assert_eq!(core_names(), embedded.iter().map(|package| package.manifest.name.as_str()).collect::<Vec<_>>());
-    }
-
-    fn core_in_folder(folder: &Path) -> Vec<Package> {
-        packages_in(folder).unwrap()
+    fn core_loads_every_non_std_package_of_mote_std() {
+        let folder = Path::new(env!("CARGO_MANIFEST_DIR")).join("../mote_std");
+        let on_disk = packages_in(&folder).unwrap();
+        let loaded = core_packages(None, None).unwrap();
+        assert_eq!(loaded.iter().map(|package| package.manifest.name.clone()).collect::<Vec<_>>(), on_disk.iter().map(|package| package.manifest.name.clone()).collect::<Vec<_>>());
+        assert!(!on_disk.iter().any(|package| package.manifest.name == "std"));
+        assert_eq!(core_names(), loaded.iter().map(|package| package.manifest.name.clone()).collect::<Vec<_>>());
     }
 
     #[test]
-    fn core_embed_the_natives_of_an_embedded_library_are_looked_up_under_the_home() {
-        let home = Path::new("/srv/someone/.mote");
-        for package in embedded_core(Some(home)).unwrap() {
-            assert_eq!(package.dir, home.join("core").join(&package.manifest.name));
-        }
-        for package in embedded_core(None).unwrap() {
-            assert_eq!(package.dir, Path::new("core").join(&package.manifest.name));
-        }
+    fn core_a_custom_home_with_mote_std_provides_its_libraries_from_disk() {
+        let scratch = Scratch::new();
+        let home = scratch.path("home");
+        scratch.package("home/mote_std/std", "std", &[], &[("lib.mote", ""), ("prelude.mote", "")]);
+        scratch.package("home/mote_std/path", "path", &[], &[("lib.mote", "pub fn f() {}\n")]);
+        let found = core_packages(None, Some(&home)).unwrap();
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].dir, home.join("mote_std/path"));
     }
 }

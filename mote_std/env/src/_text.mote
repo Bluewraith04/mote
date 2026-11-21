@@ -1,0 +1,6 @@
+// Text read from an external buffer.
+
+// The text of the bytes in the buffer from `start` to `end`, or null when it is not UTF-8.
+pub fn text_of(buffer: [UInt8], start: Int, end: Int) -> String? {
+    return String.from_bytes(buffer.slice(start, end))
+}

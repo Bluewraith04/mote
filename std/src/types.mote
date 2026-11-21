@@ -1,6 +1,0 @@
-// The foreign pointer.
-
-@lang("pointer")
-pub struct Pointer<T> {
-    pub address: UInt64
-}

@@ -7,7 +7,6 @@ mod constants;
 mod copies;
 mod dead;
 mod inline;
-mod meta;
 mod range;
 mod scalar;
 mod share;
@@ -38,15 +37,14 @@ pub struct Passes {
     pub cells: bool,
     pub dead: bool,
     pub cfg: bool,
-    pub reflect: bool,
     pub unroll: bool,
     pub range: bool,
     pub clones: bool,
 }
 
 impl Passes {
-    pub const ALL: Passes = Passes { inline: true, share: true, propagate: true, fold: true, scalar: true, cells: true, dead: true, cfg: true, reflect: true, unroll: true, range: true, clones: true };
-    pub const NONE: Passes = Passes { inline: false, share: false, propagate: false, fold: false, scalar: false, cells: false, dead: false, cfg: false, reflect: false, unroll: false, range: false, clones: false };
+    pub const ALL: Passes = Passes { inline: true, share: true, propagate: true, fold: true, scalar: true, cells: true, dead: true, cfg: true, unroll: true, range: true, clones: true };
+    pub const NONE: Passes = Passes { inline: false, share: false, propagate: false, fold: false, scalar: false, cells: false, dead: false, cfg: false, unroll: false, range: false, clones: false };
 }
 
 /// The configurations of a differential run: each pass alone, then some together, then all.
@@ -61,12 +59,11 @@ pub fn configurations() -> Vec<(&'static str, Passes)> {
         ("cells", Passes { cells: true, ..none }),
         ("dead", Passes { dead: true, ..none }),
         ("cfg", Passes { cfg: true, ..none }),
-        ("reflect", Passes { reflect: true, ..none }),
         ("unroll", Passes { unroll: true, ..none }),
         ("range", Passes { range: true, ..none }),
         ("clones", Passes { clones: true, ..none }),
         ("range and cleanup", Passes { range: true, propagate: true, fold: true, dead: true, cfg: true, ..none }),
-        ("reflect and unroll", Passes { reflect: true, unroll: true, propagate: true, fold: true, scalar: true, dead: true, cfg: true, ..none }),
+        ("unroll and cleanup", Passes { unroll: true, propagate: true, fold: true, scalar: true, dead: true, cfg: true, ..none }),
         ("propagate and fold", Passes { propagate: true, fold: true, ..none }),
         ("inline and cleanup", Passes { share: false, ..Passes::ALL }),
         ("all", Passes::ALL),
@@ -82,7 +79,7 @@ pub fn optimize(module: &mut Module, program: &mut Program, interner: &mut Inter
 pub fn optimize_with(module: &mut Module, program: &mut Program, interner: &mut Interner, passes: Passes) {
     if passes.inline {
         for _ in 0..INLINE_ROUNDS {
-            let mut changed = inline::run(module, interner);
+            let mut changed = inline::run(module, program, interner);
             changed |= inline::closures(module);
             if !changed {
                 break;
@@ -93,14 +90,12 @@ pub fn optimize_with(module: &mut Module, program: &mut Program, interner: &mut 
         let all = facts::analyze(module, program, interner);
         share::share_detached(module, &all);
     }
-    let table = (passes.reflect && !program.reflected.is_empty()).then(|| crate::reflect::encode(program));
     let ids: Vec<_> = module.functions.iter().map(|(id, _)| id).collect();
     for id in ids {
         let function = &mut module.functions[id];
         for _ in 0..ROUNDS {
             let mut changed = passes.propagate && copies::propagate(function);
             changed |= passes.fold && copies::fold(function, program);
-            changed |= table.as_ref().is_some_and(|table| meta::fold(function, table, interner));
             changed |= passes.clones && clones::elide(function, program, interner);
             changed |= passes.unroll && unroll::run(function);
             changed |= passes.scalar && scalar::split(function, program);

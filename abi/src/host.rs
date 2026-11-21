@@ -63,7 +63,7 @@ const FIELDS: [(&str, &str, &str, &str); 3] = [
 
 /// The text of `mote.h`, made from the table and its constants.
 pub fn header() -> String {
-    let mut text = String::from("/* The host table of a Mote native library. Generated from abi/src/host.rs; do not edit. */\n#ifndef MOTE_H\n#define MOTE_H\n\n#include <stddef.h>\n#include <stdint.h>\n\n");
+    let mut text = String::from("/* The host table of a Mote external library. Generated from abi/src/host.rs; do not edit. */\n#ifndef MOTE_H\n#define MOTE_H\n\n#include <stddef.h>\n#include <stdint.h>\n\n");
     text.push_str("/* The runtime's end of a port. */\ntypedef struct MotePort MotePort;\n\n");
     for (name, value, doc) in CONSTANTS {
         text.push_str(&format!("#define {name} {value} /* {doc} */\n"));

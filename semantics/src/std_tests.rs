@@ -1,6 +1,6 @@
 //! The real `std/` source through resolve, check, instantiate and analyze; each test is one stage's status.
 
-use crate::defs::LangItem;
+use crate::defs::DefId;
 use crate::harness::{compile, std_sources};
 use crate::resolve::resolve;
 use crate::testing::parse_sources;
@@ -10,53 +10,49 @@ fn run(main: &str) -> Vec<String> {
     compile(main).errors
 }
 
-/// The lang items the std source does not declare.
-fn missing_lang_items() -> Vec<&'static str> {
-    let sources = std_sources();
-    let borrowed: Vec<(&str, &str)> = sources.iter().map(|(path, text)| (path.as_str(), text.as_str())).collect();
-    let mut parsed = parse_sources(&borrowed);
-    let program = resolve(parsed.input, &mut parsed.interner, &mut parsed.sink);
-    LangItem::ALL.into_iter().filter(|&item| program.lang_item(item).is_none()).map(LangItem::name).collect()
-}
-
 #[test]
-fn every_lang_item_is_declared() {
-    assert_eq!(missing_lang_items(), Vec::<&str>::new());
-}
-
-/// The names of the fields of the class a lang item is declared as, in order.
-fn field_names(item: LangItem) -> Vec<String> {
+fn every_std_item_is_declared() {
     let sources = std_sources();
     let borrowed: Vec<(&str, &str)> = sources.iter().map(|(path, text)| (path.as_str(), text.as_str())).collect();
     let mut parsed = parse_sources(&borrowed);
     let program = resolve(parsed.input, &mut parsed.interner, &mut parsed.sink);
-    let def = program.lang_item(item).expect("the lang item is declared");
+    assert!(program.std.map.is_some());
+    assert!(program.std.set.is_some());
+    assert!(program.std.result.is_some());
+    assert!(program.std.error.is_some());
+    assert!(program.std.display.is_some());
+    assert!(program.std.eq.is_some());
+    assert!(program.std.ord.is_some());
+    assert!(program.std.clone.is_some());
+    assert!(program.std.closeable.is_some());
+    assert!(program.std.key.is_some());
+    assert!(program.std.span.is_some());
+    assert!(program.std.mut_span.is_some());
+    assert!(program.std.str_view.is_some());
+    assert!(program.std.buffer.is_some());
+    assert!(program.std.bytes.is_some());
+}
+
+/// The names of the fields of a std class declaration, in order.
+fn field_names(pick: fn(&crate::program::StdItems) -> Option<DefId>) -> Vec<String> {
+    let sources = std_sources();
+    let borrowed: Vec<(&str, &str)> = sources.iter().map(|(path, text)| (path.as_str(), text.as_str())).collect();
+    let mut parsed = parse_sources(&borrowed);
+    let program = resolve(parsed.input, &mut parsed.interner, &mut parsed.sink);
+    let def = pick(&program.std).expect("the std item is declared");
     match &program.defs[def].kind {
         crate::defs::DefKind::Record(record) => {
             assert!(record.is_class);
             record.fields.iter().map(|field| parsed.interner.resolve(field.name).to_string()).collect()
         }
-        _ => panic!("the lang item is not a record"),
+        _ => panic!("the std item is not a record"),
     }
 }
 
 #[test]
-fn abi_pointer_is_a_struct_with_one_uint64_address() {
-    let sources = std_sources();
-    let borrowed: Vec<(&str, &str)> = sources.iter().map(|(path, text)| (path.as_str(), text.as_str())).collect();
-    let mut parsed = parse_sources(&borrowed);
-    let program = resolve(parsed.input, &mut parsed.interner, &mut parsed.sink);
-    let def = program.lang_item(LangItem::Pointer).expect("the lang item is declared");
-    let crate::defs::DefKind::Record(record) = &program.defs[def].kind else { panic!("the lang item is not a record") };
-    assert!(!record.is_class);
-    let fields: Vec<(String, crate::types::TyId)> = record.fields.iter().map(|field| (parsed.interner.resolve(field.name).to_string(), field.ty)).collect();
-    assert_eq!(fields, [("address".to_string(), crate::types::TyId::UINT64)]);
-}
-
-#[test]
 fn abi_map_and_set_are_classes_with_the_fields_in_the_order_the_abi_names() {
-    assert_eq!(field_names(LangItem::Map), ["held_keys", "held_values", "hashes", "slots", "count"]);
-    assert_eq!(field_names(LangItem::Set), ["members"]);
+    assert_eq!(field_names(|s| s.map), ["held_keys", "held_values", "hashes", "slots", "count"]);
+    assert_eq!(field_names(|s| s.set), ["members"]);
 }
 
 #[test]
@@ -72,21 +68,21 @@ fn collections_have_their_methods() {
 
 #[test]
 fn a_key_holds_no_float_and_no_collection_that_can_change() {
-    let ok = "import { Set } from std.collections\nimport { Key } from std.traits\nstruct P {\n x: Int\n y: String\n}\nenum E {\n A(Int)\n B(P)\n}\nclass C {\n var f: Float\n}\nfn by<K: Key>(k: K) -> Map<K, Int> { return Map<K, Int>() }\nfn f() {\n let a = Map<(Int, String), Int>()\n let b = Map<P, Int>()\n let c = Map<E, Int>()\n let d = Map<C, Int>()\n let e = Set<Int?>()\n let g = Map<[Int; 3], Int>()\n let h = Map<Int | String, Int>()\n let i = by(P { x: 1, y: \"a\" })\n}";
+    let ok = "import Key from std.traits\nstruct P {\n x: Int\n y: String\n}\nenum E {\n A(Int)\n B(P)\n}\nclass C {\n var f: Float\n}\nfn by<K: Key>(k: K) -> Map<K, Int> { return Map<K, Int>() }\nfn f() {\n let a = Map<(Int, String), Int>()\n let b = Map<P, Int>()\n let c = Map<E, Int>()\n let d = Map<C, Int>()\n let e = Set<Int?>()\n let g = Map<[Int; 3], Int>()\n let h = Map<Int | String, Int>()\n let i = by(P { x: 1, y: \"a\" })\n}";
     assert_eq!(run(ok), Vec::<String>::new());
-    let bad = "import { Set } from std.collections\nstruct Q {\n f: Float\n}\nenum E {\n A(Q)\n}\nfn f<K>(k: K) -> Map<K, Int> { return Map<K, Int>() }\nfn g() {\n let a = Map<Float, Int>()\n let b = Map<Q, Int>()\n let c = Map<List<Int>, Int>()\n let d = Set<[Int]>()\n let e = Map<(Int, Map<Int, Int>), Int>()\n let h = Set<E>()\n}";
+    let bad = "struct Q {\n f: Float\n}\nenum E {\n A(Q)\n}\nfn f<K>(k: K) -> Map<K, Int> { return Map<K, Int>() }\nfn g() {\n let a = Map<Float, Int>()\n let b = Map<Q, Int>()\n let c = Map<List<Int>, Int>()\n let d = Set<[Int]>()\n let e = Map<(Int, Map<Int, Int>), Int>()\n let h = Set<E>()\n}";
     let errors = run(bad);
     assert_eq!(
         errors,
         [
-            "main:8 K does not satisfy `Key`: it has no such bound",
-            "main:8 K does not satisfy `Key`: it has no such bound",
-            "main:10 Float does not satisfy `Key`: it contains Float",
-            "main:11 Q does not satisfy `Key`: it contains Float",
-            "main:12 List<Int> does not satisfy `Key`: it contains List<Int>",
-            "main:13 [Int] does not satisfy `Key`: it contains [Int]",
-            "main:14 (Int, Map<Int, Int>) does not satisfy `Key`: it contains Map<Int, Int>",
-            "main:15 E does not satisfy `Key`: it contains Float",
+            "main:7 K does not satisfy `Key`: it has no such bound",
+            "main:7 K does not satisfy `Key`: it has no such bound",
+            "main:9 Float does not satisfy `Key`: it contains Float",
+            "main:10 Q does not satisfy `Key`: it contains Float",
+            "main:11 List<Int> does not satisfy `Key`: it contains List<Int>",
+            "main:12 [Int] does not satisfy `Key`: it contains [Int]",
+            "main:13 (Int, Map<Int, Int>) does not satisfy `Key`: it contains Map<Int, Int>",
+            "main:14 E does not satisfy `Key`: it contains Float",
         ]
     );
 }
@@ -133,14 +129,14 @@ fn built_methods(main: &str) -> Vec<String> {
 
 #[test]
 fn require_in_a_default_method_builds_it_for_each_type_without_parameters_that_lists_the_trait() {
-    let head = "import { require } from std.meta\ntrait Needs {\n fn probe(self) -> Int {\n  require(true, \"fine\")\n  return 1\n }\n fn plain(self) -> Int { return 2 }\n}\n";
+    let head = "trait Needs {\n fn probe(self) -> Int {\n  @compile_assert(true, \"fine\")\n  return 1\n }\n fn plain(self) -> Int { return 2 }\n}\n";
     assert_eq!(built_methods(&format!("{head}enum E: (Needs) {{\n A\n}}")), ["E.probe"]);
     assert_eq!(built_methods(&format!("{head}enum G<T>: (Needs) {{\n A(T)\n}}")), Vec::<String>::new());
 }
 
 #[test]
 fn a_port_opens_with_an_end_and_a_receiver_of_bytes() {
-    let main = "import { Port, PortMode, PortEnd } from std.port\n@link(\"pane\")\nnative fn start(events: PortEnd)\nfn f() {\n let (end, events) = Port.open(PortMode.Queue(64))\n start(end)\n for event in events { let n = event.len() }\n let (latest, frames) = Port.open(PortMode.Latest)\n}";
+    let main = "import { Port, PortMode } from std.port\nextern \"pane\" {\n fn start(events: PortEnd)\n}\nfn f() {\n let (end, events) = Port.open(PortMode.Queue(64))\n start(end)\n for event in events { let n = event.len() }\n let (latest, frames) = Port.open(PortMode.Latest)\n}";
     assert_eq!(run(main), Vec::<String>::new());
 }
 
@@ -152,32 +148,32 @@ fn tasks_and_sync_have_their_methods() {
 
 #[test]
 fn a_spawn_block_captures_numbers_text_and_handles_and_no_collection_that_can_change() {
-    let head = "import { Set } from std.collections\nimport { Sender, Receiver, Mutex, Once } from std.sync\nimport { Task } from std.task\nimport { PortEnd } from std.port\nimport { Pointer } from std.types\nimport std.atomic as atomic\nclass Frozen { n: Int }\nclass Cell { var n: Int }\nstruct P { x: Int }\nstruct Q { c: Frozen }\nenum Fine {\n A(Int)\n B(String)\n}\nenum Mixed {\n A(Int)\n B(List<Int>)\n}\n";
-    let ok = "fn f(a: Int, b: Float, c: Bool, d: String, e: [Int], g: [String; 2], h: [[Int]], i: Frozen, k: P, l: Q, m: (Int, String), n: Int | String, o: Int?, p: Result<Int, Error>, q: Fine, r: Sender<Int>, s: Receiver<Int>, t: Task<Int>, u: Mutex<List<Int>>, v: Once<Int>, w: atomic.Int64, x: atomic.Bool, y: PortEnd) {\n spawn { let z = (a, b, c, d, e, g, h, i, k, l, m) }\n spawn { let z = (n, o, p, q, r, s, t, u, v, w, x, y) }\n}";
+    let head = "class Frozen { n: Int }\nclass Cell { var n: Int }\nstruct P { x: Int }\nstruct Q { c: Frozen }\nenum Fine {\n A(Int)\n B(String)\n}\nenum Mixed {\n A(Int)\n B(List<Int>)\n}\n";
+    let ok = "fn f(a: Int, b: Float, c: Bool, d: String, e: [Int], g: [String; 2], h: [[Int]], i: Frozen, k: P, l: Q, m: (Int, String), n: Int | String, o: Int?, p: Result<Int, Error>, q: Fine, r: Sender<Int>, s: Receiver<Int>, t: Task<Int>, u: Mutex<List<Int>>, v: Once<Int>, w: AtomicInt, x: AtomicBool, y: PortEnd) {\n spawn { let z = (a, b, c, d, e, g, h, i, k, l, m) }\n spawn { let z = (n, o, p, q, r, s, t, u, v, w, x, y) }\n}";
     assert_eq!(run(&format!("{head}{ok}")), Vec::<String>::new());
     let bad = "fn f<T>(a: Cell, b: [Frozen], c: Mixed, d: List<Int>, e: Map<String, Int>, f: Set<Int>, g: Stream<Int>, h: Pointer<Int>, i: T, j: () -> Int) {\n spawn { let z = a }\n spawn { let z = b }\n spawn { let z = c }\n spawn { let z = d }\n spawn { let z = e }\n spawn { let z = f }\n spawn { let z = g }\n spawn { let z = h }\n spawn { let z = i }\n spawn { let z = j }\n}";
-    let errors = run(&format!("import {{ Stream }} from std.collections\n{head}{bad}"));
+    let errors = run(&format!("{head}{bad}"));
     let names = ["Cell", "[Frozen]", "Mixed", "List<Int>", "Map<String, Int>", "Set<Int>", "Stream<Int>", "Pointer<Int>", "T", "() -> Int"];
     let letters = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"];
-    let expected: Vec<String> = letters.iter().zip(names).enumerate().map(|(index, (letter, name))| format!("main:{} `{letter}` is not Sendable: {name}", 21 + index)).collect();
+    let expected: Vec<String> = letters.iter().zip(names).enumerate().map(|(index, (letter, name))| format!("main:{} `{letter}` is not Sendable: {name}", 14 + index)).collect();
     assert_eq!(errors, expected);
 }
 
 #[test]
 fn a_handle_is_sendable_and_does_not_change_inside_so_a_once_may_hold_one() {
-    let main = "import { Mutex, Once, Sender } from std.sync\nimport std.atomic as atomic\nfn f(a: Once<Mutex<List<Int>>>, b: Once<Sender<Int>>, c: Once<atomic.Int64>) {\n spawn { let x = (a, b, c) }\n}\nfn g(d: Once<List<Int>>) {}";
-    assert_eq!(run(main), ["main:6 a `Once` cannot hold List<Int>"]);
+    let main = "fn f(a: Once<Mutex<List<Int>>>, b: Once<Sender<Int>>, c: Once<AtomicInt>) {\n spawn { let x = (a, b, c) }\n}\nfn g(d: Once<List<Int>>) {}";
+    assert_eq!(run(main), ["main:4 a `Once` cannot hold List<Int>"]);
 }
 
 #[test]
 fn mutex_once_and_atomics_have_their_methods() {
-    let main = "import { Mutex, Once } from std.sync\nimport std.atomic as atomic\nfn f() {\n let m = Mutex(0)\n m.lock(|n| { n += 1 })\n let seen = m.lock(|n| { return n })\n let whole = m.get()\n m.set(whole + 1)\n let o = Once<Int>()\n let v = o.get_or_init(|| 5)\n let a = atomic.Int64(1)\n a.store(a.load() + a.fetch_add(2) + a.swap(0) + a.fetch_sub(1))\n let swapped = a.compare_exchange(0, 1)\n let flag = atomic.Bool(false)\n flag.store(flag.swap(true) || flag.compare_exchange(true, false) || flag.load())\n}";
+    let main = "fn f() {\n let m = Mutex(0)\n m.lock(|n| { n += 1 })\n let seen = m.lock(|n| { return n })\n let whole = m.get()\n m.set(whole + 1)\n let o = Once<Int>()\n let v = o.get_or_init(|| 5)\n let a = AtomicInt(1)\n a.store(a.load() + a.fetch_add(2) + a.swap(0) + a.fetch_sub(1))\n let swapped = a.compare_exchange(0, 1)\n let flag = AtomicBool(false)\n flag.store(flag.swap(true) || flag.compare_exchange(true, false) || flag.load())\n}";
     assert_eq!(run(main), Vec::<String>::new());
 }
 
 #[test]
 fn a_lock_body_that_parks_is_refused() {
-    let main = "import { Channel, Mutex } from std.sync\nfn f() {\n let (tx, rx) = Channel<Int>(1)\n let m = Mutex(0)\n m.lock(|n| { rx.recv() })\n}";
+    let main = "import Channel from std.sync\nfn f() {\n let (tx, rx) = Channel<Int>(1)\n let m = Mutex(0)\n m.lock(|n| { rx.recv() })\n}";
     assert_eq!(run(main), ["main:5 `lock` must not park; its body reaches `Receiver.recv`"]);
 }
 
@@ -207,4 +203,276 @@ fn a_with_in_a_generic_function_reaches_the_close_of_the_resource() {
     assert_eq!(compiled.errors, Vec::<String>::new());
     let names: Vec<&str> = compiled.program.order.iter().map(|instance| compiled.interner.resolve(compiled.program.defs[instance.def].name)).collect();
     assert!(names.contains(&"close"), "{names:?}");
+}
+
+#[test]
+fn std_array_mask_reductions_require_import_and_bool_fixed_array() {
+    assert!(!run("fn f(m: [Bool; 2]) -> Bool {\n return all(m)\n}").is_empty());
+    let ok = "import { all, any } from std.array\nfn f(a: [Int; 3], b: [Int; 3]) -> Bool {\n return all(a == b) && any(a < 2)\n}";
+    assert_eq!(run(ok), Vec::<String>::new());
+    let bad = "import { all, any } from std.array\nfn f(a: [Int; 3], xs: List<Bool>) -> Bool {\n return all(a) && any(xs)\n}";
+    assert_eq!(
+        run(bad),
+        [
+            "main:3 `all` expects a `[Bool]` or `[Bool; N]` mask, found [Int; 3]",
+            "main:3 `any` expects an array `[T]` or `[T; N]`, found List<Bool>",
+        ],
+    );
+}
+
+#[test]
+fn std_array_category_a_and_b_typecheck_both_dyn_and_fixed() {
+    let ok = "import { all, any, none, all_by, any_by, none_by, count, count_by, sum, product, mean, min, max, argmin, argmax, dot, norm_sq, fold, reduce, scan } from std.array
+fn f(dyn_xs: [Int], fixed_xs: [Int; 3], dyn_mask: [Bool], fixed_f: [Float; 3]) {
+    let b1 = all(dyn_mask) && any(dyn_mask) && none(dyn_mask)
+    let b2 = all_by(dyn_xs, |x| x > 0) && any_by(fixed_xs, |x| x == 2) && none_by(dyn_xs, |x| x < 0)
+    let c1 = count(fixed_xs, 2) + count_by(dyn_xs, |x| x > 1)
+    let s1 = sum(dyn_xs) + sum(fixed_xs)
+    let p1 = product(dyn_xs) + product(fixed_xs)
+    let m1 = mean(dyn_xs) + mean(fixed_xs) + mean(fixed_f)
+    let mn = min(dyn_xs) ?? min(fixed_xs) ?? 0
+    let mx = max(dyn_xs) ?? max(fixed_xs) ?? 0
+    let imn = argmin(dyn_xs) ?? argmin(fixed_xs) ?? 0
+    let imx = argmax(dyn_xs) ?? argmax(fixed_xs) ?? 0
+    let d1 = dot(dyn_xs, dyn_xs) + dot(fixed_xs, fixed_xs)
+    let n1 = norm_sq(dyn_xs) + norm_sq(fixed_xs)
+    let fl1 = fold(dyn_xs, 0, |acc, x| acc + x) + fold(fixed_xs, 0, |acc, x| acc + x)
+    let r1 = (reduce(dyn_xs, |a, b| a + b) ?? 0) + (reduce(fixed_xs, |a, b| a + b) ?? 0)
+    let sc_dyn: [Int] = scan(dyn_xs, 0, |acc, x| acc + x)
+    let sc_fix: [Float; 3] = scan(fixed_xs, 0.0, |acc, x| acc + Float.from(x))
+}";
+    assert_eq!(run(ok), Vec::<String>::new());
+
+    let bad = "import { sum, dot } from std.array
+fn f(strs: [String], a: [Int; 2], b: [Int; 3]) {
+    let s = sum(strs)
+    let d = dot(a, b)
+}";
+    assert_eq!(run(bad).len(), 2);
+}
+
+#[test]
+fn std_array_category_c_d_e_typecheck_both_dyn_and_fixed() {
+    let ok = "import { find, find_index, index_of, select, map, zip_with, reverse, clamp, filter, zip, enumerate, concat, take, drop, flatten, sort, sort_by } from std.array
+fn f(dyn_xs: [Int], fixed_xs: [Int; 3], dyn_mask: [Bool], fixed_mask: [Bool; 3], dyn_strs: [String], fixed_strs: [String; 3], nested: [[Int; 2]; 2]) {
+    let f1 = find(dyn_xs, |x| x > 1) ?? find(fixed_xs, |x| x > 1) ?? 0
+    let f2 = find_index(dyn_xs, |x| x == 2) ?? find_index(fixed_xs, |x| x == 2) ?? 0
+    let f3 = index_of(dyn_xs, 2) ?? index_of(fixed_xs, 2) ?? 0
+    let s1: [Int] = select(dyn_mask, dyn_xs, dyn_xs)
+    let s2: [Int; 3] = select(fixed_mask, fixed_xs, fixed_xs)
+    let m1: [Float] = map(dyn_xs, |x| Float.from(x))
+    let m2: [Bool; 3] = map(fixed_xs, |x| x > 0)
+    let z1: [String] = zip_with(dyn_xs, dyn_strs, |n, s| s)
+    let z2: [Int; 3] = zip_with(fixed_xs, fixed_xs, |a, b| a + b)
+    let r1: [Int] = reverse(dyn_xs)
+    let r2: [Int; 3] = reverse(fixed_xs)
+    let c1: [Int] = clamp(dyn_xs, 0, 10)
+    let c2: [Int; 3] = clamp(fixed_xs, 0, 10)
+    let fl1: [Int] = filter(dyn_xs, |x| x > 0)
+    let fl2: [Int] = filter(fixed_xs, |x| x > 0)
+    let zp1: [(Int, String)] = zip(dyn_xs, dyn_strs)
+    let zp2: [(Int, String); 3] = zip(fixed_xs, fixed_strs)
+    let en1: [(Int, Int)] = enumerate(dyn_xs)
+    let en2: [(Int, Int); 3] = enumerate(fixed_xs)
+    let cc1: [Int] = concat(dyn_xs, fixed_xs)
+    let tk1: [Int] = take(fixed_xs, 2)
+    let dr1: [Int] = drop(fixed_xs, 1)
+    let ft1: [Int] = flatten(nested)
+    let so1: [Int] = sort(dyn_xs)
+    let so2: [Int; 3] = sort(fixed_xs)
+    let sb1: [String] = sort_by(dyn_strs, |a, b| a.compare(b))
+    let sb2: [String; 3] = sort_by(fixed_strs, |a, b| b.compare(a))
+}";
+    assert_eq!(run(ok), Vec::<String>::new());
+
+    let bad = "import { select, zip, zip_with, concat, flatten, sort } from std.array
+fn f(m: [Bool; 2], a: [Int; 3], b: [Int], strs: [String; 2], fns: [() -> Int]) {
+    let x = select(m, a, a)
+    let y = zip(a, b)
+    let z = zip_with(a, b, |p, q| p)
+    let c = concat(a, strs)
+    let fl = flatten(a)
+    let so = sort(fns)
+}";
+    assert_eq!(run(bad).len(), 6);
+}
+
+#[test]
+fn ord_synthesizes_comparison_operators() {
+    let ok = "import { Ord } from std.traits
+struct Span: (Ord) {
+    ns: Int
+    pub fn compare(self, other: Span) -> Int { return self.ns - other.ns }
+}
+struct Custom: (Ord) {
+    ns: Int
+    pub fn compare(self, other: Custom) -> Int { return self.ns - other.ns }
+    pub fn __lt__(self, other: Custom) -> Bool { return self.ns > other.ns }
+}
+fn ok(a: Span, b: Span, c: Custom, d: Custom) -> Bool {
+    return a < b && a <= b && a > b && a >= b && c < d && c <= d
+}
+fn generic<T: Ord>(x: T, y: T) -> Bool {
+    return x < y && x <= y && x > y && x >= y
+}";
+    assert_eq!(run(ok), Vec::<String>::new());
+}
+
+#[test]
+fn array_methods_and_mut_span_enforce_domain_and_mutability() {
+    let bad = "fn main() {\n let xs: [String] = [\"a\", \"b\"]\n let s = xs.sum()\n let fx: [String; 2] = [\"a\", \"b\"]\n let m = fx.mean()\n let ints: [Int] = [1, 2]\n let b = ints.all()\n let mv = ints.mut_span()\n}";
+    let errs = run(bad);
+    assert!(errs.iter().any(|e| e.contains("numeric array elements")), "{errs:?}");
+    assert!(errs.iter().any(|e| e.contains("no method `all`")), "{errs:?}");
+    assert!(errs.iter().any(|e| e.contains("no `var` path")), "{errs:?}");
+}
+
+#[test]
+fn is_flat_and_off_heap_types_reject_gc_references() {
+    let ok = "import std.mem.{Buffer}
+struct FlatVec {
+    x: Float
+    y: Float
+}
+fn main() {
+    @compile_assert(@is_flat(Int), \"Int\")
+    @compile_assert(@is_flat(FlatVec), \"FlatVec\")
+    @compile_assert(@is_flat(Pointer<Int>), \"Pointer<Int>\")
+    @compile_assert(!@is_flat(String), \"String\")
+    @compile_assert(!@is_flat([Int]), \"array\")
+    let p = Pointer<FlatVec>.alloc(2)
+    p.free()
+    var b = Buffer<Int>.alloc(2)
+    let _ = b.close()
+}";
+    assert_eq!(run(ok), Vec::<String>::new());
+
+    for snippet in [
+        "fn main() { let p = Pointer<String>.alloc(4) }",
+        "import std.mem.{Buffer}\nfn main() { let b = Buffer<String>.alloc(4) }",
+        "import std.mem.{Buffer}\nfn main() { let b = Buffer<List<Int>>.alloc(4) }",
+        "import std.mem.{Buffer}\nclass Boxed { var n: Int }\nfn main() { let b = Buffer<Boxed>.alloc(4) }",
+        "import std.mem.{Buffer}\nenum Tree { Leaf, Node(Tree, Tree) }\nfn main() { let b = Buffer<Tree>.alloc(4) }",
+    ] {
+        let errs = run(snippet);
+        assert!(errs.iter().any(|e| e.contains("flat")), "expected flat error for {snippet:?}, got {errs:?}");
+    }
+}
+
+#[test]
+fn slice_view_types_and_owner_to_view_coercion_errors() {
+    let ok = "import { MutSpan, Span } from std.collections
+import StrView from std.string
+fn f(s: String, a: [Int], xs: List<Int>, fx: [Int; 3]) -> (StrView, Span<Int>, Span<Int>, [Int]) {
+    let v: StrView = s[1..3]
+    let sa: Span<Int> = a[1..3]
+    let sl: Span<Int> = xs[1..3]
+    let sf: [Int] = fx[1..3]
+    return (v, sa, sl, sf)
+}";
+    assert_eq!(run(ok), Vec::<String>::new());
+
+    let no_var = "class Hold { var m: MutSpan<Int> }
+fn f_var(var m: MutSpan<Int>) {}
+fn f_val(m: MutSpan<Int>) {}
+fn bad() {
+    let a: [Int] = [1, 2]
+    f_var(a)
+    f_val(a)
+    let m: MutSpan<Int> = a
+    let h = Hold { m: a }
+}";
+    assert_eq!(
+        run(no_var),
+        [
+            "main:6 this place has no `var` path to write through",
+            "main:7 this place has no `var` path to write through",
+            "main:8 this place has no `var` path to write through",
+            "main:9 this place has no `var` path to write through",
+        ]
+    );
+
+    let bad_fn_adapt = "fn takes_var(var m: MutSpan<Int>) {}
+fn takes_val(m: MutSpan<Int>) {}
+fn bad() {
+    let f1: ([Int]) -> Null = takes_var
+    let f2: ([Int]) -> Null = takes_val
+}";
+    assert_eq!(run(bad_fn_adapt).len(), 2);
+
+    let no_view_to_array = "fn need_arr(xs: [Int]) {}
+fn bad(s: Span<Int>) {
+    need_arr(s)
+}";
+    assert_eq!(run(no_view_to_array), ["main:3 expected [Int], found Span<Int>"]);
+}
+
+#[test]
+fn generic_eq_bound_dispatches_dunders_post_monomorphization_only() {
+    use crate::tree::{BinaryOp, Callee, ExprKind, UnaryOp};
+
+    let src = "import Eq from std.traits
+struct OnlyEq: (Eq) {
+    x: Int
+    pub fn eq(self, other: OnlyEq) -> Bool { return true }
+}
+struct WithDunder: (Eq) {
+    x: Int
+    pub fn eq(self, other: WithDunder) -> Bool { return false }
+    pub fn __eq__(self, other: WithDunder) -> Bool { return true }
+}
+struct WithNe: (Eq) {
+    x: Int
+    pub fn eq(self, other: WithNe) -> Bool { return true }
+    pub fn __ne__(self, other: WithNe) -> Bool { return false }
+}
+fn same<T: Eq>(a: T, b: T) -> Bool { return a == b }
+fn diff<T: Eq>(a: T, b: T) -> Bool { return a != b }
+fn main() {
+    let a = same(OnlyEq { x: 1 }, OnlyEq { x: 2 })
+    let b = diff(OnlyEq { x: 1 }, OnlyEq { x: 2 })
+    let c = same(WithDunder { x: 1 }, WithDunder { x: 2 })
+    let d = diff(WithDunder { x: 1 }, WithDunder { x: 2 })
+    let e = diff(WithNe { x: 1 }, WithNe { x: 2 })
+}";
+    let compiled = compile(src);
+    assert_eq!(compiled.errors, Vec::<String>::new());
+
+    let find_body = |fn_name: &str, ty_name: &str| {
+        compiled
+            .program
+            .bodies
+            .iter()
+            .find(|(inst, _)| {
+                compiled.interner.resolve(compiled.program.defs[inst.def].name) == fn_name
+                    && inst
+                        .args
+                        .iter()
+                        .any(|arg| matches!(arg, crate::types::GenericArg::Type(ty) if compiled.program.render(*ty, &compiled.interner) == ty_name))
+            })
+            .expect("monomorphized instance")
+            .1
+    };
+
+    let only_eq_same = find_body("same", "OnlyEq");
+    assert!(only_eq_same.exprs.iter().any(|(_, e)| matches!(e.kind, ExprKind::Binary { op: BinaryOp::Eq, .. })));
+    assert!(!only_eq_same.exprs.iter().any(|(_, e)| matches!(e.kind, ExprKind::Call { .. })));
+
+    let only_eq_diff = find_body("diff", "OnlyEq");
+    assert!(only_eq_diff.exprs.iter().any(|(_, e)| matches!(e.kind, ExprKind::Binary { op: BinaryOp::NotEq, .. })));
+    assert!(!only_eq_diff.exprs.iter().any(|(_, e)| matches!(e.kind, ExprKind::Call { .. })));
+
+    let dunder_same = find_body("same", "WithDunder");
+    assert!(!dunder_same.exprs.iter().any(|(_, e)| matches!(e.kind, ExprKind::Binary { .. })));
+    assert!(dunder_same.exprs.iter().any(|(_, e)| matches!(&e.kind, ExprKind::Call { callee: Callee::Function(f), .. } if compiled.interner.resolve(compiled.program.defs[f.def].name) == "__eq__")));
+
+    let dunder_diff = find_body("diff", "WithDunder");
+    assert!(!dunder_diff.exprs.iter().any(|(_, e)| matches!(e.kind, ExprKind::Binary { .. })));
+    assert!(dunder_diff.exprs.iter().any(|(_, e)| matches!(e.kind, ExprKind::Unary { op: UnaryOp::Not, .. })));
+    assert!(dunder_diff.exprs.iter().any(|(_, e)| matches!(&e.kind, ExprKind::Call { callee: Callee::Function(f), .. } if compiled.interner.resolve(compiled.program.defs[f.def].name) == "__eq__")));
+
+    let ne_diff = find_body("diff", "WithNe");
+    assert!(!ne_diff.exprs.iter().any(|(_, e)| matches!(e.kind, ExprKind::Binary { .. })));
+    assert!(!ne_diff.exprs.iter().any(|(_, e)| matches!(e.kind, ExprKind::Unary { op: UnaryOp::Not, .. })));
+    assert!(ne_diff.exprs.iter().any(|(_, e)| matches!(&e.kind, ExprKind::Call { callee: Callee::Function(f), .. } if compiled.interner.resolve(compiled.program.defs[f.def].name) == "__ne__")));
 }

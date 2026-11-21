@@ -1,0 +1,25 @@
+// Task and the functions that wait on tasks.
+
+pub fn sleep(ms: Int) {
+    @__sleep(ms)
+}
+
+extend<T> Task<T> {
+    pub fn await(self) -> Result<T, Error> { return @__task_await(self) }
+    pub fn await_timeout(self, ms: Int) -> Result<T, Error>? { return @__task_await_timeout(self, ms) }
+    pub fn cancel(self) { @__task_cancel(self) }
+    pub fn is_ready(self) -> Bool { return @__task_is_ready(self) }
+}
+
+pub fn await_all<T>(tasks: List<Task<T>>) -> List<Result<T, Error>> {
+    var results: List<Result<T, Error>> = []
+    for task in tasks { results.push(task.await()) }
+    return results
+}
+
+pub fn with_timeout<T>(ms: Int, work: Send () -> T) -> Result<T, Error>? {
+    let task = @__spawn_call(work)
+    let done = task.await_timeout(ms)
+    if done == null { task.cancel() }
+    return done
+}

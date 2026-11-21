@@ -1,0 +1,84 @@
+// Optional `Doc` container wrapper kept for backwards and byte-form compatibility.
+import Closeable from std.traits
+import NodeKind from .kind
+import Node from .tree
+
+/// An optional `Document` wrapper around a root `Node`, kept for byte-form compatibility; composing nodes directly with `doc.el(...)` needs no `Doc`.
+pub class Doc: (Closeable) {
+    root_node: Node
+    closed: AtomicBool
+
+    pub fn new() -> Doc {
+        return Doc { root_node: Node.document(), closed: AtomicBool(false) }
+    }
+
+    pub fn from_node(node: Node) -> Doc {
+        if node.kind() == NodeKind.Document {
+            return Doc { root_node: node, closed: AtomicBool(false) }
+        }
+        var root = Node.document()
+        var _ = root.append(node.copy())
+        return Doc { root_node: root, closed: AtomicBool(false) }
+    }
+
+    pub fn from_bytes(bytes: [UInt8]) -> Result<Doc, Error> {
+        let root = Node.from_bytes(bytes)?
+        return Ok(Doc { root_node: root, closed: AtomicBool(false) })
+    }
+
+    fn ensure_open(self) {
+        if self.closed.load() { @fault("the document is closed") }
+    }
+
+    pub fn root(self) -> Node {
+        self.ensure_open()
+        return self.root_node
+    }
+
+    pub fn element(self, name: String) -> Node {
+        self.ensure_open()
+        return Node.element(name)
+    }
+
+    pub fn text(self, text: String) -> Node {
+        self.ensure_open()
+        return Node.text_node(text)
+    }
+
+    pub fn comment(self, text: String) -> Node {
+        self.ensure_open()
+        return Node.comment_node(text)
+    }
+
+    pub fn raw(self, html: String) -> Node {
+        self.ensure_open()
+        return Node.raw_node(html)
+    }
+
+    pub fn adopt(self, node: Node) -> Node {
+        self.ensure_open()
+        return node.copy()
+    }
+
+    pub fn len(self) -> Int {
+        self.ensure_open()
+        return 1 + self.root_node.descendants().len()
+    }
+
+    pub fn bytes(self) -> [UInt8] {
+        self.ensure_open()
+        return self.root_node.bytes()
+    }
+
+    pub fn to_html(self) -> String {
+        self.ensure_open()
+        return self.root_node.to_html()
+    }
+
+    pub fn close(self) -> Result<Null, Error> {
+        if self.closed.swap(true) {
+            return Err(Error.new(ErrorKind.Other, "already closed"))
+        }
+        return Ok(null)
+    }
+}

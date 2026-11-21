@@ -1,0 +1,11 @@
+start
+test "Any reflection and scalar boxing and unboxing"
+passed
+test "Any holds structs classes enums optionals and widened unions"
+passed
+test "Any works in Map registry and for dynamic function dispatch"
+passed
+test "Any preserves heap references under allocation pressure"
+passed
+test "typeof names the type an Any holds"
+passed

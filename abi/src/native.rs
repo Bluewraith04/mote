@@ -30,10 +30,12 @@ pub enum CType {
     NullablePointer,
     /// A `PortEnd`, an opaque `MotePort *` the callee owns one reference to; a parameter only.
     PortEnd,
+    /// A pointer to inline elements of a `[T; N]`, then the length as `int64_t`; a parameter only (`var` copies back).
+    FixedArray,
 }
 
 impl CType {
-    pub const ALL: [CType; 17] = [
+    pub const ALL: [CType; 18] = [
         CType::Void,
         CType::I8,
         CType::I16,
@@ -51,6 +53,7 @@ impl CType {
         CType::Pointer,
         CType::NullablePointer,
         CType::PortEnd,
+        CType::FixedArray,
     ];
 
     /// The machine values it travels as.
@@ -63,7 +66,7 @@ impl CType {
             CType::I64 | CType::U64 | CType::StringIn | CType::StringOut | CType::Pointer | CType::NullablePointer | CType::PortEnd => &[Scalar::I64],
             CType::F32 => &[Scalar::F32],
             CType::F64 => &[Scalar::F64],
-            CType::Array => &[Scalar::I64, Scalar::I64],
+            CType::Array | CType::FixedArray => &[Scalar::I64, Scalar::I64],
         }
     }
 
@@ -77,20 +80,20 @@ impl CType {
     }
 
     pub fn is_result(self) -> bool {
-        !matches!(self, CType::StringIn | CType::Array | CType::PortEnd)
+        !matches!(self, CType::StringIn | CType::Array | CType::FixedArray | CType::PortEnd)
     }
 
-    /// Whether a `var` parameter of this type may be passed as a pointer to it.
+    /// Whether a `var` parameter of this type may be passed by reference (or mutable buffer for `FixedArray`).
     pub fn can_be_by_ref(self) -> bool {
         !matches!(self, CType::Void | CType::StringIn | CType::StringOut | CType::Array | CType::PortEnd)
     }
 }
 
-/// A parameter of a native function.
+/// A parameter of an extern function.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct CParam {
     pub ty: CType,
-    /// A `var` parameter: a pointer to a temporary, copied back after the call.
+    /// A `var` parameter: a pointer to a temporary (or mutable `(ptr, len)` buffer for `FixedArray`), copied back after the call.
     pub by_ref: bool,
 }
 
@@ -104,11 +107,11 @@ impl CParam {
     }
 
     pub fn scalars(self) -> &'static [Scalar] {
-        if self.by_ref { &[Scalar::I64] } else { self.ty.scalars() }
+        if self.by_ref && self.ty != CType::FixedArray { &[Scalar::I64] } else { self.ty.scalars() }
     }
 }
 
-/// The C signature of a native function.
+/// The C signature of an extern function.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct NativeSig {
     pub params: Vec<CParam>,
@@ -133,7 +136,7 @@ impl NativeSig {
     }
 }
 
-/// A native function the program loads before `main`.
+/// An extern function the program loads before `main`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LinkedFn {
     /// An index into the table's libraries.
@@ -336,6 +339,7 @@ mod tests {
                 CType::Pointer => 14,
                 CType::NullablePointer => 15,
                 CType::PortEnd => 16,
+                CType::FixedArray => 17,
             }
         }
         for (index, ty) in CType::ALL.iter().enumerate() {

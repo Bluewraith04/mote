@@ -302,7 +302,7 @@ mod tests {
 
     #[test]
     fn manifest_reads_the_std_manifest() {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../std/mote.toml");
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../mote_std/std/mote.toml");
         let manifest = Manifest::read(&path).unwrap();
         assert_eq!((manifest.name.as_str(), manifest.entry.as_str()), ("std", "src/lib.mote"));
     }

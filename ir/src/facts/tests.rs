@@ -206,11 +206,11 @@ fn a_spawned_task_takes_what_it_captures_out_of_the_function() {
 
 #[test]
 fn a_type_without_mutable_parts_is_immutable_and_a_list_is_not() {
-    let (compiled, lowered, facts) = analyzed("struct P {\n x: Int\n s: String\n}\nclass C {\n var n: Int\n}\nfn f(a: Int, b: String, c: (Int, String), d: P, e: List<Int>, g: C, h: [Int]) {}");
+    let (compiled, lowered, facts) = analyzed("struct P {\n x: Int\n s: String\n}\nclass C {\n var n: Int\n}\nfn f(a: Int, b: String, c: (Int, String), d: P, e: List<Int>, g: C, h: [Int], i: [Float; 3], j: [C; 2]) {}");
     let id = find(&compiled, &lowered, "f");
     let function = &lowered.module.functions[id];
     let got: Vec<bool> = function.params.iter().map(|&reg| facts.function(id).immutable(reg)).collect();
-    assert_eq!(got, [true, true, true, true, false, false, false]);
+    assert_eq!(got, [true, true, true, true, false, false, false, true, false]);
 }
 
 #[test]
@@ -231,7 +231,7 @@ fn a_recursive_function_settles() {
 
 /// Every `.mote` file of `std/tests` as (file name, text), in name order.
 fn std_files() -> Vec<(String, String)> {
-    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../std/tests");
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../mote_std/std/tests");
     let mut paths: Vec<_> = std::fs::read_dir(&dir).expect("the std/tests directory").map(|entry| entry.expect("a directory entry").path()).collect();
     paths.sort();
     paths

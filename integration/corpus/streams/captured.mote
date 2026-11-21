@@ -1,5 +1,3 @@
-import { Stream } from std.collections
-
 fn stepping(start: Int, step: Int) -> Stream<Int> {
     var at = start
     let bump = || at += step

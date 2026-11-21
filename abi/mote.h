@@ -1,4 +1,4 @@
-/* The host table of a Mote native library. Generated from abi/src/host.rs; do not edit. */
+/* The host table of a Mote external library. Generated from abi/src/host.rs; do not edit. */
 #ifndef MOTE_H
 #define MOTE_H
 

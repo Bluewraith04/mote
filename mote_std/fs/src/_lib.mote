@@ -1,0 +1,42 @@
+// The functions of the external library `fs`.
+
+extern "fs" {
+    @blocking
+    pub fn fs_open(path: String, flags: Int, mode: Int) -> Int
+
+    @blocking
+    pub fn fs_close(fd: Int) -> Int
+
+    @blocking
+    pub fn fs_read(fd: Int, buffer: [UInt8], count: Int) -> Int
+
+    @blocking
+    pub fn fs_write(fd: Int, buffer: [UInt8], count: Int) -> Int
+
+    @blocking
+    pub fn fs_seek(fd: Int, offset: Int, whence: Int) -> Int
+
+    @blocking
+    pub fn fs_truncate(fd: Int, size: Int) -> Int
+
+    @blocking
+    pub fn fs_mkdir(path: String, mode: Int) -> Int
+
+    @blocking
+    pub fn fs_rmdir(path: String) -> Int
+
+    @blocking
+    pub fn fs_unlink(path: String) -> Int
+
+    @blocking
+    pub fn fs_rename(source: String, target: String) -> Int
+
+    @blocking
+    pub fn fs_stat(path: String, out: [Int], follow: Int) -> Int
+
+    @blocking
+    pub fn fs_fstat(fd: Int, out: [Int]) -> Int
+
+    @blocking
+    pub fn fs_list(path: String, buffer: [UInt8]) -> Int
+}

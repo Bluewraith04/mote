@@ -1,0 +1,38 @@
+// Joining, splitting and cleaning paths.
+import { assemble, cancel, names, root_of } from ._names
+
+pub fn is_absolute(path: String) -> Bool { return root_of(path) != "" }
+
+/// The path `b` below `a`, or `b` itself when it is absolute.
+pub fn join(a: String, b: String) -> String {
+    if is_absolute(b) || a == "" {
+        return b
+    }
+    if b == "" {
+        return a
+    }
+    if a.ends_with("/") || a.ends_with("\\") {
+        return a + b
+    }
+    return a + "/" + b
+}
+
+/// The parts of a path; an absolute path starts with its root (`/`, `C:/`, ...).
+pub fn split(path: String) -> List<String> {
+    var out: List<String> = []
+    let root = root_of(path)
+    if root != "" {
+        out.push(root)
+    }
+    for item in names(path) {
+        out.push(item)
+    }
+    return out
+}
+
+/// The path with no empty parts, no `.`, and each `..` cancelled where it can be; an empty result is `.`.
+pub fn normalize(path: String) -> String {
+    let root = root_of(path)
+    return assemble(cancel(names(path), root != ""), root)
+}
+

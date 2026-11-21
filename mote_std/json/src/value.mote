@@ -1,0 +1,434 @@
+// The JSON value and the text it is written as.
+import { Kind, Shape } from std.reflect
+import { join, parse_float, parse_int } from std.string
+
+pub enum Json {
+    Null
+    Boolean(Bool)
+    Integer(Int)
+    Real(Float)
+    Text(String)
+    Array(List<Json>)
+    Object(List<(String, Json)>)
+
+    pub fn is_null(self) -> Bool {
+        return match self {
+            Null => true
+            _ => false
+        }
+    }
+
+    pub fn as_bool(self) -> Bool? {
+        return match self {
+            Boolean(value) => value
+            _ => null
+        }
+    }
+
+    pub fn as_int(self) -> Int? {
+        return match self {
+            Integer(value) => value
+            _ => null
+        }
+    }
+
+    /// The number as a `Float`, from either kind of number.
+    pub fn as_float(self) -> Float? {
+        return match self {
+            Integer(value) => value as Float
+            Real(value) => value
+            _ => null
+        }
+    }
+
+    pub fn as_text(self) -> String? {
+        return match self {
+            Text(value) => value
+            _ => null
+        }
+    }
+
+    /// Element `index` of an array.
+    pub fn at(self, index: Int) -> Json? {
+        return match self {
+            Array(items) => if index >= 0 && index < items.len() { items.get(index) } else { null }
+            _ => null
+        }
+    }
+
+    /// The value of the first member named `key` of an object.
+    pub fn get(self, key: String) -> Json? {
+        return match self {
+            Object(members) => member(members, key)
+            _ => null
+        }
+    }
+
+    /// Element `index` of an array or first member named `key` of an object.
+    pub fn __getitem__(self, key: String | Int) -> Json? {
+        if key is String { return self.get(key) }
+        return self.at(key)
+    }
+
+    /// Decodes this JSON value into a `T`: a record takes its fields from the members of an object by name, and an optional field may be left out. An `Err` names the place of the first mismatch; a field with a default is not taken from it, and a map with other than `String` keys, a function or handle is an `Err`.
+    pub fn decode<T>(self) -> Result<T, Error> {
+        return decode_value<T>(self, "$", 0)
+    }
+
+    /// The compact text.
+    pub fn to_string(self) -> String { return render(self, 0, 0) }
+
+    /// The text with one member or element to a line, indented by two spaces.
+    pub fn pretty(self) -> String { return render(self, 2, 0) }
+}
+
+fn member(members: List<(String, Json)>, key: String) -> Json? {
+    for (name, value) in members {
+        if name == key { return value }
+    }
+    return null
+}
+
+fn hex(n: Int) -> UInt8 {
+    if n < 10 { return (48 + n) as UInt8 }
+    return (87 + n) as UInt8
+}
+
+fn quote(text: String) -> String {
+    var out: List<UInt8> = [34]
+    for b in text.bytes() {
+        if b == 34 {
+            out.push(92)
+            out.push(34)
+        } else if b == 92 {
+            out.push(92)
+            out.push(92)
+        } else if b == 10 {
+            out.push(92)
+            out.push(110)
+        } else if b == 13 {
+            out.push(92)
+            out.push(114)
+        } else if b == 9 {
+            out.push(92)
+            out.push(116)
+        } else if b == 8 {
+            out.push(92)
+            out.push(98)
+        } else if b == 12 {
+            out.push(92)
+            out.push(102)
+        } else if b < 32 {
+            out.push(92)
+            out.push(117)
+            out.push(48)
+            out.push(48)
+            out.push(hex((b as Int) / 16))
+            out.push(hex((b as Int) % 16))
+        } else {
+            out.push(b)
+        }
+    }
+    out.push(34)
+    return String.from_bytes(out.to_array())!
+}
+
+fn layout(open: String, close: String, parts: List<String>, step: Int, depth: Int) -> String {
+    if parts.len() == 0 { return open + close }
+    if step == 0 { return open + join(parts, ",") + close }
+    let inner = " ".repeat(step * (depth + 1))
+    let outer = " ".repeat(step * depth)
+    return open + "\n" + inner + join(parts, ",\n" + inner) + "\n" + outer + close
+}
+
+fn render_array(items: List<Json>, step: Int, depth: Int) -> String {
+    var parts: List<String> = []
+    for item in items {
+        parts.push(render(item, step, depth + 1))
+    }
+    return layout("[", "]", parts, step, depth)
+}
+
+fn render_object(members: List<(String, Json)>, step: Int, depth: Int) -> String {
+    var parts: List<String> = []
+    var colon = ":"
+    if step > 0 { colon = ": " }
+    for (name, value) in members {
+        parts.push(quote(name) + colon + render(value, step, depth + 1))
+    }
+    return layout("{", "}", parts, step, depth)
+}
+
+fn render(json: Json, step: Int, depth: Int) -> String {
+    return match json {
+        Null => "null"
+        Boolean(value) => value.to_string()
+        Integer(value) => value.to_string()
+        Real(value) => value.to_string()
+        Text(value) => quote(value)
+        Array(items) => render_array(items, step, depth)
+        Object(members) => render_object(members, step, depth)
+    }
+}
+
+fn expected(what: String, path: String) -> Error {
+    return Error.new(ErrorKind.InvalidData, "expected ${what} at ${path}")
+}
+
+fn int_cast<T>(n: Int, path: String) -> Result<T, Error> {
+    const info = @type_info(T)
+    comptime if info.name == "Int" || info.name == "Int64" { return Ok(n) }
+    comptime if info.name == "Int8" {
+        if n >= -128 && n <= 127 { return Ok(n as Int8) }
+    } else comptime if info.name == "Int16" {
+        if n >= -32768 && n <= 32767 { return Ok(n as Int16) }
+    } else comptime if info.name == "Int32" {
+        if n >= -2147483648 && n <= 2147483647 { return Ok(n as Int32) }
+    } else comptime if info.name == "UInt8" {
+        if n >= 0 && n <= 255 { return Ok(n as UInt8) }
+    } else comptime if info.name == "UInt16" {
+        if n >= 0 && n <= 65535 { return Ok(n as UInt16) }
+    } else comptime if info.name == "UInt32" {
+        if n >= 0 && n <= 4294967295 { return Ok(n as UInt32) }
+    } else comptime if info.name == "UInt64" {
+        if n >= 0 { return Ok(n as UInt64) }
+    }
+    return Err(expected("${info.name}", path))
+}
+
+fn decode_variant<T>(json: Json, path: String, depth: Int) -> Result<T, Error> {
+    var name = json.as_text()
+    var inner = Json.Null
+    if name == null {
+        let members = match json {
+            Object(list) => list
+            _ => []
+        }
+        if members.len() != 1 { return Err(expected("a variant name or an object with one", path)) }
+        name = members[0].0
+        inner = members[0].1
+    }
+    comptime for v in @variants(T) {
+        if v.name == name! {
+            let at = path + "." + v.name
+            comptime if v.shape == Shape.Unit {
+                if json.as_text() == null && !inner.is_null() { return Err(expected("no payload", at)) }
+                return Ok(@__construct_variant<T>(v.name))
+            } else comptime if v.shape == Shape.Named {
+                var out: T = @__construct_variant<T>(v.name)
+                comptime for f in @__variant_fields(T, v.name) {
+                    let fat = at + "." + f.name
+                    let found = inner.get(f.name)
+                    comptime if @type_info(@VariantFieldType(T, v.name, f.name)).kind == Kind.Optional {
+                        if found == null {
+                            let empty: @VariantFieldType(T, v.name, f.name) = null
+                            out = @__with_variant_field(out, v.name, f.name, empty)
+                        } else {
+                            let fv = decode_value<@VariantFieldType(T, v.name, f.name)>(found, fat, depth + 1)?
+                            out = @__with_variant_field(out, v.name, f.name, fv)
+                        }
+                    } else {
+                        if found == null { return Err(Error.new(ErrorKind.InvalidData, "missing ${f.name} at ${at}")) }
+                        let fv = decode_value<@VariantFieldType(T, v.name, f.name)>(found, fat, depth + 1)?
+                        out = @__with_variant_field(out, v.name, f.name, fv)
+                    }
+                }
+                return Ok(out)
+            } else {
+                var out: T = @__construct_variant<T>(v.name)
+                comptime if v.field_count == 1 {
+                    comptime for f in @__variant_fields(T, v.name) {
+                        let fv = decode_value<@VariantFieldType(T, v.name, f.name)>(inner, at, depth + 1)?
+                        out = @__with_variant_field(out, v.name, f.name, fv)
+                    }
+                } else {
+                    let items = match inner {
+                        Array(list) => list
+                        _ => []
+                    }
+                    if items.len() != v.field_count { return Err(expected("${v.field_count} elements", at)) }
+                    comptime for f in @__variant_fields(T, v.name) {
+                        let fv = decode_value<@VariantFieldType(T, v.name, f.name)>(items[f.index], "${at}[${f.index}]", depth + 1)?
+                        out = @__with_variant_field(out, v.name, f.name, fv)
+                    }
+                }
+                return Ok(out)
+            }
+        }
+    }
+    return Err(Error.new(ErrorKind.InvalidData, "no variant ${name!} at ${path}"))
+}
+
+fn array_items(json: Json, path: String) -> Result<List<Json>, Error> {
+    let found: List<Json>? = match json {
+        Array(list) => Some(list)
+        _ => None
+    }
+    if found == null { return Err(expected("an array", path)) }
+    return Ok(found)
+}
+
+fn decode_value<T>(json: Json, path: String, depth: Int) -> Result<T, Error> {
+    if depth > 256 { return Err(Error.new(ErrorKind.InvalidData, "a value nested too deeply to decode from JSON")) }
+    const info = @type_info(T)
+    comptime if info.kind == Kind.Bool {
+        let value = json.as_bool()
+        if value == null { return Err(expected("a boolean", path)) }
+        return Ok(value)
+    } else comptime if info.kind == Kind.Int {
+        let value = json.as_int()
+        if value == null { return Err(expected("an integer", path)) }
+        return int_cast<T>(value, path)
+    } else comptime if info.kind == Kind.Float {
+        let value = json.as_float()
+        if value == null { return Err(expected("a number", path)) }
+        comptime if info.name == "Float32" { return Ok(value as Float32) }
+        return Ok(value)
+    } else comptime if info.kind == Kind.String {
+        let value = json.as_text()
+        if value == null { return Err(expected("a string", path)) }
+        return Ok(value)
+    } else comptime if info.kind == Kind.Optional {
+        if json.is_null() {
+            let empty: T = null
+            return Ok(empty)
+        }
+        let inner = decode_value<@TypeArg(T, 0)>(json, path, depth + 1)?
+        let wrapped: T = inner
+        return Ok(wrapped)
+    } else comptime if info.kind == Kind.List {
+        let items = array_items(json, path)?
+        var out: T = []
+        for at in 0..items.len() {
+            out.push(decode_value<@TypeArg(T, 0)>(items[at], "${path}[${at}]", depth + 1)?)
+        }
+        return Ok(out)
+    } else comptime if info.kind == Kind.Array {
+        let items = array_items(json, path)?
+        var out: List<@TypeArg(T, 0)> = []
+        for at in 0..items.len() {
+            out.push(decode_value<@TypeArg(T, 0)>(items[at], "${path}[${at}]", depth + 1)?)
+        }
+        return Ok(out.to_array())
+    } else comptime if info.kind == Kind.Set {
+        let items = array_items(json, path)?
+        var out: Set<@TypeArg(T, 0)> = Set()
+        for at in 0..items.len() {
+            out.add(decode_value<@TypeArg(T, 0)>(items[at], "${path}[${at}]", depth + 1)?)
+        }
+        return Ok(out)
+    } else comptime if info.kind == Kind.FixedArray {
+        let items = array_items(json, path)?
+        let wanted = @array_len(T)
+        if items.len() != wanted { return Err(expected("${wanted} elements", path)) }
+        var out: T = @__default<T>()
+        for at in 0..wanted {
+            out[at] = decode_value<@TypeArg(T, 0)>(items[at], "${path}[${at}]", depth + 1)?
+        }
+        return Ok(out)
+    } else comptime if info.kind == Kind.Map && @type_info(@TypeArg(T, 0)).kind == Kind.String {
+        if !is_object(json) { return Err(expected("an object", path)) }
+        let members = match json {
+            Object(list) => list
+            _ => []
+        }
+        var out: Map<String, @TypeArg(T, 1)> = Map()
+        for member in members {
+            out.set(member.0, decode_value<@TypeArg(T, 1)>(member.1, path + "." + member.0, depth + 1)?)
+        }
+        return Ok(out)
+    } else comptime if info.kind == Kind.Tuple {
+        let items = match json {
+            Array(list) => list
+            _ => []
+        }
+        if items.len() != info.field_count { return Err(expected("${info.field_count} elements", path)) }
+        var out: T = @__default<T>()
+        comptime for f in @fields(T) {
+            let part = decode_value<@TypeArg(T, f.index)>(items[f.index], "${path}[${f.index}]", depth + 1)?
+            out = @__with_field(out, f.index, part)
+        }
+        return Ok(out)
+    } else comptime if info.kind == Kind.Struct || info.kind == Kind.Class {
+        if !is_object(json) { return Err(expected("an object", path)) }
+        var out: T = @__default<T>()
+        comptime for f in @fields(T) {
+            let found = json.get(f.name)
+            let at = path + "." + f.name
+            comptime if @type_info(@FieldType(T, f.name)).kind == Kind.Optional {
+                if found == null {
+                    let empty: @FieldType(T, f.name) = null
+                    @set_field(out, f.name, empty)
+                } else {
+                    @set_field(out, f.name, decode_value<@FieldType(T, f.name)>(found, at, depth + 1)?)
+                }
+            } else {
+                if found == null { return Err(Error.new(ErrorKind.InvalidData, "missing ${f.name} at ${path}")) }
+                @set_field(out, f.name, decode_value<@FieldType(T, f.name)>(found, at, depth + 1)?)
+            }
+        }
+        return Ok(out)
+    } else comptime if info.kind == Kind.Enum {
+        return decode_variant<T>(json, path, depth)
+    } else comptime if info.kind == Kind.Union {
+        return decode_union<T>(json, path, depth)
+    } else {
+        return Err(Error.new(ErrorKind.InvalidData, "${info.name} cannot be decoded from JSON"))
+    }
+}
+
+fn json_matches_kind(json: Json, kind: Kind) -> Bool {
+    return match json {
+        Boolean(_) => kind == Kind.Bool
+        Integer(_) => kind == Kind.Int
+        Real(_) => kind == Kind.Float
+        Text(_) => kind == Kind.String || kind == Kind.Enum
+        Array(_) => kind == Kind.List || kind == Kind.Array || kind == Kind.FixedArray || kind == Kind.Set || kind == Kind.Tuple
+        Object(_) => kind == Kind.Map || kind == Kind.Struct || kind == Kind.Class || kind == Kind.Enum
+        Null => kind == Kind.Null
+    }
+}
+
+fn decode_union<T>(json: Json, path: String, depth: Int) -> Result<T, Error> {
+    const info = @type_info(T)
+    if json.is_null() {
+        comptime for i in 0..info.variant_count {
+            comptime if @type_info(@TypeArg(T, i)).kind == Kind.Null {
+                let empty: T = null
+                return Ok(empty)
+            }
+        }
+        comptime for i in 0..info.variant_count {
+            comptime if @type_info(@TypeArg(T, i)).kind == Kind.Optional {
+                let empty_opt: @TypeArg(T, i) = null
+                let wrapped: T = empty_opt
+                return Ok(wrapped)
+            }
+        }
+        return Err(expected(info.name, path))
+    }
+    for exact_only in [true, false] {
+        comptime for i in 0..info.variant_count {
+            comptime if @type_info(@TypeArg(T, i)).kind != Kind.Null {
+                if !exact_only || json_matches_kind(json, @type_info(@TypeArg(T, i)).kind) {
+                    match decode_value<@TypeArg(T, i)>(json, path, depth + 1) {
+                        Ok(part) => {
+                            let wrapped: T = part
+                            return Ok(wrapped)
+                        }
+                        Err(_) => {}
+                    }
+                }
+            }
+        }
+    }
+    return Err(expected(info.name, path))
+}
+
+fn is_object(json: Json) -> Bool {
+    return match json {
+        Object(_) => true
+        _ => false
+    }
+}
+

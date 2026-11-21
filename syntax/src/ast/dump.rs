@@ -51,13 +51,25 @@ impl Dump<'_> {
         }
         out += &match &item.kind {
             ItemKind::Function(f) => self.function(f),
-            ItemKind::NativeFunction(f) => format!(
-                "(native {}{} {}{})",
-                self.name(f.name.name),
-                self.generics(&f.generics),
-                self.params(&f.params),
-                self.ret(f.ret)
-            ),
+            ItemKind::ExternBlock(eb) => {
+                let decls = eb.decls.iter().map(|d| {
+                    let mut s = String::new();
+                    for attr in &d.attrs {
+                        s += &format!("{} ", self.attribute(attr));
+                    }
+                    if d.is_pub {
+                        s += "pub ";
+                    }
+                    s + &format!("(fn {} {}{})", self.name(d.name.name), self.params(&d.params), self.ret(d.ret))
+                });
+                format!("(extern {:?} {})", self.name(eb.library), join(decls)).replace(" )", ")")
+            }
+            ItemKind::Extend(ex) => {
+                let methods = ex.methods.iter().map(|m| self.method(m));
+                format!("(extend{} {}{} {})", self.generics(&ex.generics), self.ty(ex.target), self.traits(&ex.traits), join(methods))
+                    .replace(" )", ")")
+            }
+            ItemKind::Const(c) => format!("(const {}{} {})", self.name(c.name.name), self.annotation(c.ty), self.expr(c.value)),
             ItemKind::Test(t) => format!("(test {:?} {})", self.name(t.title), self.block(&t.body)),
             ItemKind::Record(r) => self.record(r),
             ItemKind::Enum(e) => self.enum_decl(e),
@@ -99,16 +111,34 @@ impl Dump<'_> {
         }
         let params: Vec<String> = generics
             .iter()
-            .map(|g| {
-                let name = self.name(g.name.name);
-                if g.bounds.is_empty() {
-                    name.to_string()
-                } else {
-                    format!("{name}: {}", g.bounds.iter().map(|&b| self.ty(b)).collect::<Vec<_>>().join(" + "))
+            .map(|g| match g {
+                GenericParam::Type { name, bounds } => {
+                    let name = self.name(name.name);
+                    if bounds.is_empty() {
+                        name.to_string()
+                    } else {
+                        format!("{name}: {}", bounds.iter().map(|&b| self.ty(b)).collect::<Vec<_>>().join(" + "))
+                    }
                 }
+                GenericParam::Const { name, ty } => format!("const {}: {}", self.name(name.name), self.ty(*ty)),
             })
             .collect();
         format!("<{}>", params.join(", "))
+    }
+
+    fn generic_arg(&self, arg: &GenericArg) -> String {
+        match arg {
+            GenericArg::Type(t) => self.ty(*t),
+            GenericArg::Expr(e) => self.expr(*e),
+        }
+    }
+
+    fn type_args(&self, args: &[GenericArg]) -> String {
+        if args.is_empty() {
+            return String::new();
+        }
+        let list = args.iter().map(|a| self.generic_arg(a)).collect::<Vec<_>>().join(", ");
+        format!("<{list}>")
     }
 
     fn params(&self, params: &[Param]) -> String {
@@ -247,11 +277,16 @@ impl Dump<'_> {
                 self.annotation(b.ty),
                 self.expr(b.init)
             ),
+            StmtKind::Const(c) => format!("(const {}{} {})", self.name(c.name.name), self.annotation(c.ty), self.expr(c.value)),
             StmtKind::Assign { target, op, value } => format!("({} {} {})", assign_op(*op), self.expr(*target), self.expr(*value)),
-            StmtKind::If(i) => self.if_stmt(i),
+            StmtKind::If(i) => self.if_stmt("if", i),
+            StmtKind::ComptimeIf(i) => self.if_stmt("comptime-if", i),
             StmtKind::While { condition, body } => format!("(while {} {})", self.condition(condition), self.block(body)),
             StmtKind::For { pattern, iterable, body } => {
                 format!("(for {} {} {})", self.pattern(*pattern), self.expr(*iterable), self.block(body))
+            }
+            StmtKind::ComptimeFor { pattern, iterable, body } => {
+                format!("(comptime-for {} {} {})", self.pattern(*pattern), self.expr(*iterable), self.block(body))
             }
             StmtKind::Match(m) => {
                 let arms = m.arms.iter().map(|arm| {
@@ -265,6 +300,7 @@ impl Dump<'_> {
                 format!("(match {} {})", self.expr(m.subject), join(arms)).replace(" )", ")")
             }
             StmtKind::Scope(b) => format!("(scope {})", self.block(b)),
+            StmtKind::ComptimeBlock(b) => format!("(comptime {})", self.block(b)),
             StmtKind::With { name, init, body } => format!("(with {} {} {})", self.name(name.name), self.expr(*init), self.block(body)),
             StmtKind::Spawn(body) => self.spawn(body),
             StmtKind::Return(e) => self.keyword_stmt("return", *e),
@@ -284,13 +320,13 @@ impl Dump<'_> {
         }
     }
 
-    fn if_stmt(&self, i: &If) -> String {
+    fn if_stmt(&self, tag: &str, i: &If) -> String {
         let otherwise = match &i.otherwise {
             None => String::new(),
             Some(Else::If(s)) => format!(" {}", self.stmt(*s)),
             Some(Else::Block(b)) => format!(" {}", self.block(b)),
         };
-        format!("(if {} {}{otherwise})", self.condition(&i.condition), self.block(&i.then))
+        format!("({tag} {} {}{otherwise})", self.condition(&i.condition), self.block(&i.then))
     }
 
     fn spawn(&self, body: &SpawnBody) -> String {
@@ -343,7 +379,14 @@ impl Dump<'_> {
         let list = |ids: &[Id<Type>]| ids.iter().map(|&t| self.ty(t)).collect::<Vec<_>>().join(", ");
         match &self.ast[id].kind {
             TypeKind::Named(path) => self.path(path),
-            TypeKind::Generic { path, args } => format!("{}<{}>", self.path(path), list(args)),
+            TypeKind::Generic { path, args } => format!("{}{}", self.path(path), self.type_args(args)),
+            TypeKind::Builtin { name, generic_args, args } => {
+                let args = args.iter().map(|a| match a.name {
+                    Some(name) => format!("{}={}", self.name(name.name), self.expr(a.value)),
+                    None => self.expr(a.value),
+                });
+                format!("(@{}{} {})", self.name(name.name), self.type_args(generic_args), join(args)).replace(" )", ")")
+            }
             TypeKind::Nullable(inner) => format!("{}?", self.ty(*inner)),
             TypeKind::Tuple(elements) if elements.len() == 1 => format!("({},)", list(elements)),
             TypeKind::Tuple(elements) => format!("({})", list(elements)),
@@ -426,7 +469,7 @@ impl Dump<'_> {
                 let target = if args.is_empty() {
                     self.path(path)
                 } else {
-                    format!("(apply {} {})", self.path(path), args.iter().map(|&t| self.ty(t)).collect::<Vec<_>>().join(" "))
+                    format!("(apply {} {})", self.path(path), args.iter().map(|a| self.generic_arg(a)).collect::<Vec<_>>().join(" "))
                 };
                 format!("(init {target} {})", join(fields)).replace(" )", ")")
             }
@@ -447,9 +490,16 @@ impl Dump<'_> {
                 });
                 format!("(call {} {})", self.expr(*callee), join(args)).replace(" )", ")")
             }
-            E::Member { object, name } => format!("(. {} {})", self.expr(*object), self.name(name.name)),
+            E::Builtin { name, generic_args, args } => {
+                let args = args.iter().map(|a| match a.name {
+                    Some(name) => format!("{}={}", self.name(name.name), self.expr(a.value)),
+                    None => self.expr(a.value),
+                });
+                format!("(@{}{} {})", self.name(name.name), self.type_args(generic_args), join(args)).replace(" )", ")")
+            }
+            E::Member { object, name, args } => format!("(. {} {}{})", self.expr(*object), self.name(name.name), self.type_args(args)),
             E::TupleIndex { object, index } => format!("(. {} {})", self.expr(*object), self.int(index)),
-            E::OptionalMember { object, name } => format!("(?. {} {})", self.expr(*object), self.name(name.name)),
+            E::OptionalMember { object, name, args } => format!("(?. {} {}{})", self.expr(*object), self.name(name.name), self.type_args(args)),
             E::Index { object, index } => format!("(index {} {})", self.expr(*object), self.expr(*index)),
             E::Slice { object, start, end, inclusive, step } => format!(
                 "({} {} {} {} {})",
@@ -460,7 +510,7 @@ impl Dump<'_> {
                 self.opt(*step)
             ),
             E::TypeApply { path, args } => {
-                format!("(apply {} {})", self.path(path), args.iter().map(|&t| self.ty(t)).collect::<Vec<_>>().join(" "))
+                format!("(apply {} {})", self.path(path), args.iter().map(|a| self.generic_arg(a)).collect::<Vec<_>>().join(" "))
             }
             E::Unwrap(e) => format!("(unwrap {})", self.expr(*e)),
             E::Propagate(e) => format!("(propagate {})", self.expr(*e)),
@@ -484,6 +534,13 @@ impl Dump<'_> {
                     ElseExpr::If(e) | ElseExpr::Value(e) => self.expr(*e),
                 };
                 format!("(if {} {} {otherwise})", self.condition(condition), self.expr(*then))
+            }
+            E::Comptime(block) => format!("(comptime {})", self.block(block)),
+            E::ComptimeIf { condition, then, otherwise } => {
+                let otherwise = match otherwise {
+                    ElseExpr::If(e) | ElseExpr::Value(e) => self.expr(*e),
+                };
+                format!("(comptime-if {} {} {otherwise})", self.condition(condition), self.expr(*then))
             }
             E::Match { subject, arms } => {
                 let arms = arms.iter().map(|arm| {

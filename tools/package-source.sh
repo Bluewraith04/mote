@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds mote-source-VERSION.tar.gz (std/, core/ and the natives of each triple) and its .sha256; the same tree and natives give the same bytes.
+# Builds mote-source-VERSION.tar.gz (mote_std/ and the compiled libraries of each triple) and its .sha256; the same tree and libraries give the same bytes.
 # Usage: package-source.sh VERSION [--out DIR] | package-source.sh --check [--twice]
 # --check builds into a scratch folder and tests the archive; --twice builds it a second time and compares the two.
 set -eu
@@ -40,25 +40,25 @@ mkdir -p "$out"
 
 name="mote-source-$version"
 
-declares_native() { grep -rqs --include='*.mote' '@link(' "$1/src"; }
+declares_extern() { grep -rqEs --include='*.mote' '^[[:space:]]*(pub[[:space:]]+)?extern[[:space:]]+"' "$1/src"; }
 
-# Builds the natives in place (a fresh build is a no-op for cargo) so `native/$triple` of each library is current.
-"$root/tools/build-core-natives.sh" >&2
+# Builds the external libraries in place (a fresh build is a no-op for cargo) so `lib/$triple` of each library is current.
+"$root/tools/build-std-libs.sh" >&2
 
 # Writes $1/$name.tar.gz and $1/$name.tar.gz.sha256 from the tree.
 package() {
   local dest=$1 stage="$work/stage"
   rm -rf "$stage"
   mkdir -p "$stage/$name"
-  # Sources only: no Rust `target` folders and no built natives from the tree; the natives come back below.
-  tar -C "$root" --exclude=rust/target --exclude="native/$triple" -cf - std core | tar -C "$stage/$name" -xf -
+  # Sources only: no Rust `target` folders and no built libraries from the tree; they are copied back below.
+  tar -C "$root" --exclude=rust/target --exclude="lib/$triple" -cf - mote_std | tar -C "$stage/$name" -xf -
   local dir lib
-  for dir in "$root"/core/*/; do
+  for dir in "$root"/mote_std/*/; do
     dir=${dir%/}
-    [ -d "$dir/native/$triple" ] || continue
-    mkdir -p "$stage/$name/core/$(basename "$dir")/native/$triple"
-    for lib in "$dir/native/$triple"/*; do
-      [ -f "$lib" ] && cp "$lib" "$stage/$name/core/$(basename "$dir")/native/$triple/"
+    [ -d "$dir/lib/$triple" ] || continue
+    mkdir -p "$stage/$name/mote_std/$(basename "$dir")/lib/$triple"
+    for lib in "$dir/lib/$triple"/*; do
+      [ -f "$lib" ] && cp "$lib" "$stage/$name/mote_std/$(basename "$dir")/lib/$triple/"
     done
   done
   # Fixed order, owner, times and modes; `gzip -n` leaves out the name and time.
@@ -84,18 +84,19 @@ fail() {
 tar -tzf "$out/$name.tar.gz" > "$work/list"
 has() { grep -qxF "$name/$1" "$work/list"; }
 
-has std/mote.toml || fail "no std/mote.toml"
+has mote_std/std/mote.toml || fail "no mote_std/std/mote.toml"
 libraries=0
-natives=0
-for dir in "$root"/core/*/; do
+built_libs=0
+for dir in "$root"/mote_std/*/; do
   dir=${dir%/}
   [ -f "$dir/mote.toml" ] || continue
   lib=$(basename "$dir")
+  [ "$lib" = "std" ] && continue
   libraries=$((libraries + 1))
-  has "core/$lib/mote.toml" || fail "no core/$lib/mote.toml"
-  if declares_native "$dir"; then
-    natives=$((natives + 1))
-    has "core/$lib/native/$triple/lib$lib.so" || fail "no native core/$lib/native/$triple/lib$lib.so"
+  has "mote_std/$lib/mote.toml" || fail "no mote_std/$lib/mote.toml"
+  if declares_extern "$dir"; then
+    built_libs=$((built_libs + 1))
+    has "mote_std/$lib/lib/$triple/lib$lib.so" || fail "no library mote_std/$lib/lib/$triple/lib$lib.so"
   fi
 done
 if grep -q '/target/' "$work/list"; then
@@ -116,6 +117,6 @@ if [ $twice = yes ]; then
 fi
 
 if [ $failed -eq 0 ]; then
-  echo "ok: $libraries libraries, $natives with a native, $(wc -l < "$work/list") entries"
+  echo "ok: $libraries libraries, $built_libs with a shared library, $(wc -l < "$work/list") entries"
 fi
 [ $failed -eq 0 ]

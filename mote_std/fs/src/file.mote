@@ -1,0 +1,167 @@
+// Open files, and whole files read and written at once.
+import Closeable from std.traits
+import { Metadata, metadata_of } from ._support
+import failure from ._support
+import { fs_open, fs_close, fs_read, fs_write, fs_seek, fs_truncate, fs_fstat } from ._lib
+
+let READ_ONLY = 0
+let WRITE_ONLY = 1
+let CREATE = 64
+let EXCLUSIVE = 128
+let TRUNCATE = 512
+let APPEND = 1024
+
+/// Where `seek` counts from.
+pub enum Origin {
+    Start
+    Current
+    End
+}
+
+/// An open file; closing it twice is an error, and a file left open stays open until the program ends.
+pub class File: (Closeable) {
+    fd: AtomicInt
+    path: String
+
+    fn at(path: String, flags: Int, mode: Int) -> Result<File, Error> {
+        let fd = fs_open(path, flags, mode)
+        if fd < 0 { return Err(failure(fd, path)) }
+        return Ok(File { fd: AtomicInt(fd), path: path })
+    }
+
+    /// Opens an existing file for reading.
+    pub fn open(path: String) -> Result<File, Error> { return File.at(path, READ_ONLY, 0) }
+
+    /// Creates the file or empties it, for writing.
+    pub fn create(path: String) -> Result<File, Error> { return File.at(path, WRITE_ONLY + CREATE + TRUNCATE, 420) }
+
+    /// Creates the file, which must not exist, for writing.
+    pub fn create_new(path: String) -> Result<File, Error> { return File.at(path, WRITE_ONLY + CREATE + EXCLUSIVE, 420) }
+
+    /// Opens the file for writing at its end, creating it when it is missing.
+    pub fn append(path: String) -> Result<File, Error> { return File.at(path, WRITE_ONLY + CREATE + APPEND, 420) }
+
+    /// Reads up to `buffer.len()` bytes into the start of `buffer`; gives the count, 0 at the end of the file.
+    pub fn read_into(self, buffer: [UInt8]) -> Result<Int, Error> {
+        let count = fs_read(self.fd.load(), buffer, buffer.len())
+        if count < 0 { return Err(failure(count, self.path)) }
+        return Ok(count)
+    }
+
+    /// Up to `count` bytes; fewer at the end of the file and none after it.
+    pub fn read(self, count: Int) -> Result<[UInt8], Error> {
+        let buffer: [UInt8] = [0; count]
+        let got = self.read_into(buffer)?
+        return Ok(buffer.slice(0, got).to_array())
+    }
+
+    /// Every byte from the position to the end.
+    pub fn read_all(self) -> Result<[UInt8], Error> {
+        var all: List<UInt8> = []
+        let buffer: [UInt8] = [0; 65536]
+        while true {
+            let got = self.read_into(buffer)?
+            if got == 0 { break }
+            for at in 0..got {
+                all.push(buffer[at])
+            }
+        }
+        return Ok(all.to_array())
+    }
+
+    /// Every byte from the position to the end as text; an error when it is not UTF-8.
+    pub fn read_string(self) -> Result<String, Error> {
+        let text = String.from_bytes(self.read_all()?)
+        if text == null { return Err(Error.new(ErrorKind.InvalidData, "${self.path}: not valid UTF-8")) }
+        return Ok(text)
+    }
+
+    /// Writes all of `bytes`.
+    pub fn write(self, bytes: [UInt8]) -> Result<Null, Error> {
+        let code = fs_write(self.fd.load(), bytes, bytes.len())
+        if code < 0 { return Err(failure(code, self.path)) }
+        return Ok(null)
+    }
+
+    /// Writes the text.
+    pub fn write_string(self, text: String) -> Result<Null, Error> { return self.write(text.bytes()) }
+
+    /// Moves the position and gives the new one, counted from the start.
+    pub fn seek(self, offset: Int, origin: Origin) -> Result<Int, Error> {
+        let whence = match origin {
+            Start => 0
+            Current => 1
+            End => 2
+        }
+        let at = fs_seek(self.fd.load(), offset, whence)
+        if at < 0 { return Err(failure(at, self.path)) }
+        return Ok(at)
+    }
+
+    /// Cuts or extends the file to `size` bytes.
+    pub fn truncate(self, size: Int) -> Result<Null, Error> {
+        let code = fs_truncate(self.fd.load(), size)
+        if code < 0 { return Err(failure(code, self.path)) }
+        return Ok(null)
+    }
+
+    /// The size, kind and times of the open file.
+    pub fn metadata(self) -> Result<Metadata, Error> {
+        let fields: [Int] = [0; 4]
+        let code = fs_fstat(self.fd.load(), fields)
+        if code < 0 { return Err(failure(code, self.path)) }
+        return Ok(metadata_of(fields))
+    }
+
+    /// Closes the file; the descriptor is taken first, so a second close is an error and never closes another file.
+    pub fn close(self) -> Result<Null, Error> {
+        let fd = self.fd.swap(-1)
+        if fd < 0 { return Err(Error.new(ErrorKind.Other, "${self.path}: already closed")) }
+        let code = fs_close(fd)
+        if code < 0 { return Err(failure(code, self.path)) }
+        return Ok(null)
+    }
+}
+
+/// Every byte of a file.
+pub fn read_bytes(path: String) -> Result<[UInt8], Error> {
+    let file = File.open(path)?
+    let bytes = file.read_all()
+    file.close()?
+    return bytes
+}
+
+/// A file as text; an error when it is not UTF-8.
+pub fn read_string(path: String) -> Result<String, Error> {
+    let file = File.open(path)?
+    let text = file.read_string()
+    file.close()?
+    return text
+}
+
+/// Replaces the contents of a file, creating it when it is missing.
+pub fn write_bytes(path: String, bytes: [UInt8]) -> Result<Null, Error> {
+    let file = File.create(path)?
+    let written = file.write(bytes)
+    file.close()?
+    return written
+}
+
+/// Replaces the contents of a file with the text.
+pub fn write_string(path: String, text: String) -> Result<Null, Error> {
+    return write_bytes(path, text.bytes())
+}
+
+/// Adds bytes to the end of a file, creating it when it is missing.
+pub fn append_bytes(path: String, bytes: [UInt8]) -> Result<Null, Error> {
+    let file = File.append(path)?
+    let written = file.write(bytes)
+    file.close()?
+    return written
+}
+
+/// Adds the text to the end of a file.
+pub fn append_string(path: String, text: String) -> Result<Null, Error> {
+    return append_bytes(path, text.bytes())
+}
+

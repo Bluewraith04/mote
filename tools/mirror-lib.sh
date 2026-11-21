@@ -5,7 +5,7 @@ mirror_copy() {
     local root=$1 dest=$2
     (
         cd "$root"
-        git ls-files -z -- . ':!:.cargo/config.toml' | tar --null -T - -cf - | tar -xf - -C "$dest"
+        git ls-files -z -- . ':!:.cargo/config.toml' ':!:GEMINI.md' ':!:CLAUDE.md' ':!:tasks.md' | tar --null -T - -cf - | tar -xf - -C "$dest"
     )
     # `tools/check.sh` asks for that setting, which the mirror does not have.
     sed -i "/offline = true/d" "$dest/tools/check.sh"
@@ -18,7 +18,7 @@ mirror_copy() {
 # Fails when a file of $1 names a private path or note.
 mirror_check_leaks() {
     local leaks
-    leaks=$(grep -rIn -E 'ADR[ -]?[0-9]{4}|docs/adr|/home/|Checkpoint\.md' "$1" --exclude-dir=.git --exclude-dir=target || true)
+    leaks=$(grep -rIn -E 'ADR[ -]?[0-9]{4}|docs/adr|/home/|Checkpoint\.md' "$1" --exclude-dir=.git --exclude-dir=target --exclude=mirror-lib.sh || true)
     if [ -n "$leaks" ]; then
         echo "error: private references in the mirror:" >&2
         echo "$leaks" >&2

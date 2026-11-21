@@ -1,0 +1,375 @@
+// Zero-copy views: Span<T>, MutSpan<T>, StrView, zero-copy slicing, and owner-to-view coercions.
+import { assert, assert_eq } from std.test
+import Bytes from std.bytes
+import Buffer from std.mem
+import { MutSpan, Span } from std.collections
+import { StrView, is_blank, join, lines, pad_start, parse_float, parse_int } from std.string
+
+test "Span over array and List reflects backing changes without copying" {
+    var arr: [Int] = [10, 20, 30, 40, 50, 60]
+    let s = arr.span()
+    assert_eq(s.len(), 6)
+    assert(!s.is_empty(), "non-empty span")
+    assert_eq(s.stride(), 1)
+    assert_eq(s[0], 10)
+    assert_eq(s.first()!, 10)
+    assert_eq(s.last()!, 60)
+    assert_eq(s.get_or(9, -1), -1)
+
+    // Mutate backing array -> visible through Span
+    arr[2] = 300
+    assert_eq(s[2], 300)
+    assert_eq(s.sum(), 480)
+    assert_eq(s.min()!, 10)
+    assert_eq(s.max()!, 300)
+    assert_eq(s.mean(), 80.0)
+    assert(s.contains(300), "contains mutated value")
+    assert_eq(s.index_of(300)!, 2)
+    assert_eq(s.count(10), 1)
+    assert_eq(s.fold(0, |acc, x| acc + x), 480)
+    assert_eq(s.reduce(|a, b| a + b)!, 480)
+
+    // Sub-views, slicing syntax, striding, and reversal
+    let sub = s[1..5]
+    assert_eq(sub.len(), 4)
+    assert(sub.to_array() == [20, 300, 40, 50], "slice sub-view")
+    assert(s[1..=3].to_array() == [20, 300, 40], "inclusive slice")
+    assert(s[0..6..2].to_array() == [10, 300, 50], "stepped slice")
+
+    let evens = s.step(2)
+    assert(evens.to_array() == [10, 300, 50], "step(2)")
+    assert(evens.reversed().to_array() == [50, 300, 10], "reversed")
+    assert(s.step(-2).to_array() == [60, 40, 20], "negative step")
+
+    let (left, right) = s.split_at(2)
+    assert(left.to_array() == [10, 20], "split left")
+    assert(right.len() == 4 && right[0] == 300, "split right")
+    assert(s.take(2) == left, "take == split left")
+    assert(s.take(2).eq(left), "Span.eq")
+    assert_eq(s.take(2), left)
+    assert(s.drop(2) == right, "drop == split right")
+    assert(s.subspan(1, 2).to_list() == [20, 300], "subspan to_list")
+
+    var loop_sum = 0
+    for x in s[0..3] { loop_sum += x }
+    assert_eq(loop_sum, 330)
+
+    // Backing List growth/reallocation safety
+    var lst: List<Int> = [1, 2, 3]
+    let ls = lst.span()
+    var i = 4
+    while i <= 40 {
+        lst.push(i)
+        i += 1
+    }
+    assert_eq(ls.len(), 3)
+    assert(ls.to_array() == [1, 2, 3], "List span survives reallocation")
+
+    let emp = Span<Int>.empty()
+    assert(emp.is_empty(), "empty span")
+    assert_eq(emp.mean(), 0.0)
+    assert(emp.first() == null, "empty span first")
+}
+
+test "MutSpan mutates backing storage in place through views and subviews" {
+    var arr: [Int] = [1, 2, 3, 4, 5, 6]
+    var m = arr.mut_span()
+    m[0] = 10
+    m.set(5, 60)
+    assert(arr == [10, 2, 3, 4, 5, 60], "array updated")
+
+    m[1..4].fill(0)
+    assert(arr == [10, 0, 0, 0, 5, 60], "subview fill")
+
+    m.swap(0, 5)
+    assert_eq(arr[0], 60)
+    assert_eq(arr[5], 10)
+
+    var sslice = m.step(2)
+    sslice.fill(99)
+    assert_eq(arr[0], 99)
+    assert_eq(arr[2], 99)
+    assert_eq(arr[4], 99)
+
+    var sub = m[1..4]
+    sub[0] = 7
+    sub[1] = 8
+    sub[2] = 9
+    sub.reverse_in_place()
+    assert_eq(arr[1], 9)
+    assert_eq(arr[2], 8)
+    assert_eq(arr[3], 7)
+
+    let src: [Int] = [11, 22, 33]
+    sub.copy_from(src.span())
+    assert_eq(arr[1], 11)
+    assert_eq(arr[2], 22)
+    assert_eq(arr[3], 33)
+
+    let ro = m.as_span()
+    assert_eq(ro.len(), 6)
+    assert_eq(ro[1], 11)
+
+    var total = 0
+    for x in m { total += x }
+    assert_eq(total, 99 + 11 + 22 + 33 + 99 + 10)
+
+    var b = Bytes.from_string("abcd")
+    var bm = b.mut_span()
+    bm[1] = 66
+    assert_eq(b.to_string()!, "aBcd")
+    assert_eq(b.span().len(), 4)
+    var byte_sum = 0
+    for byte in b.stream() { byte_sum += byte as Int }
+    assert_eq(byte_sum, 97 + 66 + 99 + 100)
+
+    assert_eq(m.len(), 6)
+    assert(!m.is_empty(), "MutSpan non-empty")
+    assert_eq(m.stride(), 1)
+    assert_eq(m.first()!, 99)
+    assert_eq(m.last()!, 10)
+    assert_eq(m.get_or(99, -1), -1)
+    assert_eq(m[1], 11)
+    assert(m == arr.mut_span(), "MutSpan __eq__")
+    assert(m.eq(arr.mut_span()), "MutSpan.eq")
+    assert_eq(m.take(2).to_string(), "[99, 11]")
+    assert(m.contains(22), "MutSpan contains")
+    assert_eq(m.index_of(33)!, 3)
+    assert_eq(m.count(99), 2)
+    assert_eq(m.fold(0, |acc, x| acc + x), 274)
+    assert_eq(m.reduce(|a, b| a + b)!, 274)
+    assert_eq(m.sum(), 274)
+    assert_eq(m.min()!, 10)
+    assert_eq(m.max()!, 99)
+    assert(m.mean() > 45.6 && m.mean() < 45.7, "MutSpan mean")
+    assert(m.subspan(1, 3).to_array() == [11, 22, 33], "MutSpan subspan")
+    assert(m.take(2).to_list() == [99, 11], "MutSpan take & to_list")
+    assert(m.drop(4).to_array() == [99, 10], "MutSpan drop")
+    let (ml, mr) = m.split_at(3)
+    assert_eq(ml.len(), 3)
+    assert_eq(mr.len(), 3)
+    assert(m.drop(4).reversed().to_array() == [10, 99], "MutSpan reversed")
+}
+
+test "StrView provides zero-alloc UTF-8 slices, search, split, lines, and Bytes bridge" {
+    let text = "  héllo,🌍,world  "
+    let v = text.view()
+    assert_eq(v.len(), text.len())
+    assert(!v.is_empty(), "non-empty view")
+
+    let trimmed = v.trim()
+    assert_eq(trimmed.to_string(), "héllo,🌍,world")
+    assert_eq("${trimmed}", "héllo,🌍,world")
+    assert(trimmed.eq_str("héllo,🌍,world"), "eq_str")
+
+    let other_source = ("xx" + "héllo" + "yy").view().slice(2, 8)
+    assert(trimmed[0..6] == other_source, "value equality across backing strings")
+    assert_eq(trimmed[0..6].to_string(), "héllo")
+    assert_eq(trimmed.find(",")!, 6)
+    assert_eq(trimmed.rfind(",")!, 11)
+    assert(trimmed.contains("🌍"), "contains emoji")
+    assert(trimmed.starts_with("hé"), "starts_with")
+    assert(trimmed.ends_with("ld"), "ends_with")
+    assert_eq(trimmed.strip_prefix("héllo,")!.to_string(), "🌍,world")
+    assert_eq(trimmed.strip_suffix(",world")!.to_string(), "héllo,🌍")
+    assert(trimmed.strip_prefix("nope") == null, "missing prefix")
+
+    var parts: List<String> = []
+    for p in trimmed.split(",") { parts.push(p.to_string()) }
+    assert(parts == ["héllo", "🌍", "world"], "split")
+
+    var chars: List<String> = []
+    for ch in trimmed[0..6].split("") { chars.push(ch.to_string()) }
+    assert(chars == ["h", "é", "l", "l", "o"], "split empty sep on UTF-8")
+
+    let doc = "alpha\r\nbeta\ngamma"
+    var lines: List<String> = []
+    for line in doc.view().lines() { lines.push(line.to_string()) }
+    assert(lines == ["alpha", "beta", "gamma"], "lines")
+
+    let bspan = "abc".byte_span()
+    assert_eq(bspan.len(), 3)
+    assert_eq(bspan[0] as Int, 97)
+    assert_eq("abc".byte_at(2) as Int, 99)
+    let expected_u8: [UInt8] = [97, 98, 99]
+    assert(bspan.to_array() == expected_u8, "byte_span to_array")
+
+    let sv_bytes = "hé".view().as_bytes()
+    assert_eq(sv_bytes.len(), 3)
+    assert_eq(sv_bytes[1] as Int, 195)
+    assert("a".view().compare("b".view()) < 0, "compare")
+
+    let sliced = StrView.slice_of("xxhélloyy", 2, 8)
+    assert_eq(sliced.byte_at(0) as Int, 104)
+    let cloned = sliced.clone()
+    assert_eq(cloned.debug(), "héllo")
+}
+
+test "view bounds and UTF-8 boundary violations fault cleanly" {
+    let f_idx = spawn {
+        let s = [1, 2, 3].span()
+        return s[5]
+    }
+    assert(f_idx.await().is_err(), "span index out of bounds")
+
+    let f_step = spawn {
+        let s = [1, 2, 3].span()
+        return s.step(0).len()
+    }
+    assert(f_step.await().is_err(), "span step 0 faults")
+
+    let f_shrunk = spawn {
+        var lst: List<Int> = [1, 2, 3]
+        let s = lst.span()
+        lst.pop()
+        return s[2]
+    }
+    assert(f_shrunk.await().is_err(), "shrunk list span faults")
+
+    let f_utf8 = spawn {
+        let s = "hé"
+        return s.view().slice(1, 2).len()
+    }
+    assert(f_utf8.await().is_err(), "mid-UTF8 StrView faults")
+
+    let f_str_step = spawn {
+        let s = "abcd"
+        return s.view()[0..4..2].len()
+    }
+    assert(f_str_step.await().is_err(), "stepped StrView slice faults")
+}
+
+fn sum_span(xs: Span<Int>) -> Int {
+    return xs.sum()
+}
+
+fn generic_first<T>(xs: Span<T>) -> T? {
+    return xs.first()
+}
+
+fn opt_span_len(xs: Span<Int>?) -> Int {
+    return match xs {
+        Some(v) => v.len()
+        None => -1
+    }
+}
+
+fn zero_in_place(var xs: MutSpan<Int>) {
+    xs.fill(0)
+}
+
+fn count_str_len(s: StrView) -> Int {
+    return s.trim().len()
+}
+
+fn opt_view_len(s: StrView?) -> Int {
+    return match s {
+        Some(v) => v.len()
+        None => -1
+    }
+}
+
+fn apply_arr_view(xs: [Int], f: ([Int]) -> Int) -> Int {
+    return f(xs)
+}
+
+class Holder {
+    read: Span<Int>
+    var write: MutSpan<Int>
+    label: StrView
+}
+
+test "slicing String, array, List, and Buffer returns zero-copy views" {
+    let text = "héllo,world"
+    let sv: StrView = text[0..6]
+    let sv2: StrView = text.slice(7, 12)
+    assert_eq(typeof(text[0..6]), "StrView")
+    assert_eq(typeof(text.slice(0, 6)), "StrView")
+    assert_eq(sv.to_string(), "héllo")
+    assert_eq(sv2.to_string(), "world")
+    assert_eq("hello"[1..3], "el")
+    assert("el" == "hello"[1..3], "reverse String == StrView equality")
+
+    var arr: [Int] = [10, 20, 30, 40]
+    let arr_slice: Span<Int> = arr[1..3]
+    let arr_method: Span<Int> = arr.slice(0, 2)
+    assert_eq(typeof(arr[1..3]), "Span<Int>")
+    assert_eq(arr_slice.to_string(), "[20, 30]")
+    arr[1] = 200
+    assert_eq(arr_slice[0], 200)
+    let copied = arr_slice.to_array()
+    arr[1] = 20
+    assert_eq(copied[0], 200)
+    assert_eq(arr_method.to_list()[1], 20)
+
+    var lst: List<Int> = [1, 2, 3, 4]
+    let lst_slice: Span<Int> = lst[1..4]
+    assert_eq(typeof(lst[1..4]), "Span<Int>")
+    assert_eq(lst.slice(0, 2).to_array().len(), 2)
+    lst[2] = 33
+    assert_eq(lst_slice[1], 33)
+
+    let buf = Buffer<Int>.from_array([5, 6, 7, 8])
+    with b = buf {
+        assert_eq(b[1..3].to_string(), "[6, 7]")
+        assert_eq(b.slice(0, 2).sum(), 11)
+    }
+}
+
+test "owner values implicitly coerce zero-copy to Span, MutSpan, and StrView" {
+    var arr: [Int] = [1, 2, 3, 4]
+    var lst: List<Int> = [10, 20, 30]
+    var b = Bytes.from_string("hi")
+    var buf = Buffer<Int>.from_array([7, 8, 9])
+
+    assert_eq(sum_span(arr), 10)
+    assert_eq(sum_span(lst), 60)
+    assert_eq(sum_span(buf), 24)
+    assert_eq(generic_first(arr)!, 1)
+    assert_eq(generic_first(lst)!, 10)
+    assert_eq(generic_first(b)!, 104 as UInt8)
+    assert_eq(opt_span_len(arr), 4)
+    assert_eq(opt_span_len(null), -1)
+    assert_eq(apply_arr_view(arr, sum_span), 10)
+
+    let mv_read: MutSpan<Int> = arr.mut_span()
+    assert_eq(sum_span(mv_read), 10)
+
+    var sub_target: [Int] = [5, 6, 7]
+    var h = Holder { read: lst, write: sub_target, label: "  ok  " }
+    assert_eq(h.read.sum(), 60)
+    assert_eq(h.label.trim().to_string(), "ok")
+    h.write[1] = 66
+    assert_eq(sub_target[1], 66)
+
+    zero_in_place(arr)
+    assert(arr == [0, 0, 0, 0], "array mutated in place via MutSpan")
+    zero_in_place(lst)
+    assert(lst == [0, 0, 0], "list mutated in place via MutSpan")
+    var mv_b: MutSpan<UInt8> = b
+    mv_b[0] = 72
+    assert_eq(b.to_string()!, "Hi")
+    zero_in_place(buf)
+    assert(buf.to_array() == [0, 0, 0], "buffer mutated in place via MutSpan")
+    let _ = buf.close()
+
+    assert_eq(count_str_len("  abc "), 3)
+    assert_eq(count_str_len("  abc ".slice(1, 5)), 3)
+    assert_eq(opt_view_len("xyz"), 3)
+    assert_eq(opt_view_len(null), -1)
+
+    let words = ["a", "b", "c"]
+    assert_eq(join(words, "-"), "a-b-c")
+    assert_eq(parse_int("  42  ".trim())!, 42)
+    assert_eq(parse_float("1.5".slice(0, 3))!, 1.5)
+    assert(is_blank("   ".slice(0, 2)), "is_blank on StrView")
+    assert_eq(pad_start("7".slice(0, 1), 3, "0".slice(0, 1)), "007")
+    assert(lines("x\ny".view()) == ["x", "y"], "lines on StrView")
+
+    assert_eq(String.from_bytes([65, 66])!, "AB")
+    assert_eq(String.from_bytes(b)!, "Hi")
+    let buf_u8 = Buffer<UInt8>.from_array([67, 68])
+    with bu = buf_u8 {
+        assert_eq(String.from_bytes(bu)!, "CD")
+    }
+}

@@ -225,7 +225,7 @@ fn gc_optimized_every_block_of_std_tests_ends_as_it_does_when_every_allocation_i
 
 /// Every `test` block of `std/tests`, with the optimizer on or off.
 fn std_tests_gate(optimize: bool) {
-    let dir = common::root().join("std/tests");
+    let dir = common::root().join("mote_std/std/tests");
     let mut files: Vec<_> = std::fs::read_dir(&dir).expect("the std/tests directory").map(|entry| entry.expect("a directory entry").path()).filter(|path| path.extension().is_some_and(|ext| ext == "mote")).collect();
     files.sort();
     let found = common::blocks::in_parallel(&files, |_, path| {

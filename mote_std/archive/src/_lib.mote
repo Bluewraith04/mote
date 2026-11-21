@@ -1,0 +1,14 @@
+// The functions of the external library `archive`.
+
+extern "archive" {
+    pub fn archive_read(format: Int, data: [UInt8], limit: Int, error: [UInt8]) -> Int
+    pub fn archive_count(handle: Int) -> Int
+    pub fn archive_info(handle: Int, index: Int, out: [Int]) -> Int
+    pub fn archive_field(handle: Int, index: Int, what: Int, out: [UInt8]) -> Int
+    pub fn archive_free(handle: Int) -> Int
+    pub fn archive_writer_new(format: Int) -> Int
+    pub fn archive_writer_add(handle: Int, kind: Int, mode: Int, mtime: Int, path: [UInt8], target: [UInt8], data: [UInt8], error: [UInt8]) -> Int
+    pub fn archive_writer_finish(handle: Int, error: [UInt8]) -> Int
+    pub fn archive_writer_take(handle: Int, out: [UInt8]) -> Int
+    pub fn archive_writer_free(handle: Int) -> Int
+}

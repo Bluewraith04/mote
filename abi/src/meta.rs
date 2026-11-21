@@ -1,7 +1,7 @@
 use crate::bytes::{BytesError, Reader, Writer};
 use crate::kind::TypeId;
 
-/// What a type is to `std.meta`, in the order `std.meta.Kind` declares.
+/// What a type kind is in the ABI type descriptor table (ordered to match `std.reflect.Kind`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Reflected {
     Null,
@@ -21,11 +21,12 @@ pub enum Reflected {
     Enum,
     Function,
     Handle,
+    FixedArray,
 }
 
 impl Reflected {
     /// The position of a kind is its number in a byte form; new kinds go at the end.
-    pub const ALL: [Reflected; 17] = [
+    pub const ALL: [Reflected; 18] = [
         Reflected::Null,
         Reflected::Bool,
         Reflected::Int,
@@ -43,6 +44,7 @@ impl Reflected {
         Reflected::Enum,
         Reflected::Function,
         Reflected::Handle,
+        Reflected::FixedArray,
     ];
 
     pub fn tag(self) -> u8 {
@@ -123,12 +125,12 @@ const SHOWN_PLAIN: [Shown; 19] = [
 const SHOWN_RECORD: u8 = 19;
 const SHOWN_ENUM: u8 = 20;
 
-/// A type `std.meta` describes, with the numbers of the types it is made of.
+/// A type described in the meta table, with the numbers of the types it is made of.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Described {
     pub kind: Reflected,
     pub ty: TypeId,
-    /// The `Box` a `Dyn` holds a value of the type in.
+    /// The `Box` holding a value of this type when boxed.
     pub boxed: TypeId,
     /// The element type of a list, array or optional, or the members of a tuple.
     pub args: Vec<u32>,
@@ -145,7 +147,7 @@ pub struct Meta {
     pub dyn_type: Option<TypeId>,
     /// Indexed by the raw `TypeId`.
     pub shown: Vec<Shown>,
-    /// Indexed by the number `std.meta` knows a type by.
+    /// Indexed by the type number in the meta table.
     pub described: Vec<Described>,
 }
 
@@ -174,7 +176,7 @@ fn read_texts(reader: &mut Reader) -> Result<Vec<String>, BytesError> {
 }
 
 impl Meta {
-    /// The magic, the version, the string type and the `Dyn` type (0 for none), then how each type is shown and each type `std.meta` describes.
+    /// The magic, the version, the string type and the boxed type (0 for none), then how each type is shown and described.
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut writer = Writer::new();
         writer.raw(MAGIC);
@@ -321,7 +323,7 @@ mod tests {
             assert_eq!(usize::from(kind.tag()), at);
             assert_eq!(Reflected::from_tag(kind.tag()), Some(*kind));
         }
-        assert_eq!(Reflected::from_tag(17), None);
+        assert_eq!(Reflected::from_tag(18), None);
     }
 
     #[test]

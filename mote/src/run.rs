@@ -127,10 +127,10 @@ pub(crate) fn library_files(pipeline: &Pipeline) -> Vec<String> {
         Location::File(path) => path.display().to_string(),
         Location::System => library_file(&library.name),
     };
-    pipeline.natives.libraries.iter().map(name).collect()
+    pipeline.libraries.libraries.iter().map(name).collect()
 }
 
-/// The error for a library or symbol that could not be loaded, at its `native fn`.
+/// The error for a library or symbol that could not be loaded, at its `extern` fn.
 fn link_failure(pipeline: &Pipeline, error: &LinkError) -> Failure {
     Failure { messages: vec![render(&pipeline.map, &Diagnostic::error(error.message.clone(), error.span))] }
 }
@@ -419,7 +419,7 @@ mod tests {
         assert_eq!(run.output, "");
     }
 
-    const SUITE: &str = "import { assert } from std.test\n\ntest \"adds\" {\n    println(\"quiet\")\n    assert(1 + 1 == 2)\n}\n\ntest \"breaks\" {\n    println(\"loud\")\n    assert(1 + 1 == 3)\n}\n\n@ignore\ntest \"later\" {\n    assert(false)\n}\n";
+    const SUITE: &str = "import assert from std.test\n\ntest \"adds\" {\n    println(\"quiet\")\n    assert(1 + 1 == 2)\n}\n\ntest \"breaks\" {\n    println(\"loud\")\n    assert(1 + 1 == 3)\n}\n\n@ignore\ntest \"later\" {\n    assert(false)\n}\n";
 
     #[test]
     fn run_tests_lists_one_line_per_block_with_ignored_ones_skipped_and_a_count() {
@@ -441,7 +441,7 @@ mod tests {
 
     #[test]
     fn run_tests_a_run_where_every_block_passes_has_code_0() {
-        let source = "import { assert } from std.test\n\ntest \"one\" {\n    assert(true)\n}\n";
+        let source = "import assert from std.test\n\ntest \"one\" {\n    assert(true)\n}\n";
         let run = run_tests(&mut build(source, Target::Test)).unwrap();
         assert_eq!(run.code(), 0);
         assert_eq!(run.report(), "test one (src/main.mote:3) ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 skipped\n");

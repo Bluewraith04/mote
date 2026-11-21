@@ -31,7 +31,7 @@ fn observe(source: &str, passes: Option<Passes>) -> Result<Seen, String> {
         Ok(pipeline)
     };
     let mut pipeline = ready(target_of(source))?;
-    let prefix = format!("{}/", pipeline.packages.root().dir.display());
+    let prefix = mote_packages::shown(&pipeline.packages.root().dir.join(""));
     let mut main = run_main(&mut pipeline).map_err(|failure| failure.to_string())?;
     if let Ended::Fault { text, .. } = &mut main.ended {
         let kept: Vec<&str> = text.lines().filter(|line| !line.starts_with("  in ")).collect();
@@ -148,6 +148,7 @@ fn docs_every_block_is_run_rejected_as_marked_or_listed_as_a_fragment() {
         let Some(first) = found.into_iter().next() else { continue };
         let block = &all[*index];
         match deferred(&first) {
+            Some(what) if cfg!(target_os = "windows") && what.starts_with("library ") && what.contains("sqlite3") && what.ends_with(" not found") => None,
             Some(what) => refused.insert(block.key(), (block.name.clone(), what)),
             None => broken.insert(block.key(), (block.name.clone(), first)),
         };

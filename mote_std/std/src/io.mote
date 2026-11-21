@@ -1,0 +1,33 @@
+// Printing, standard input, the program's arguments and its end.
+
+pub fn print<T>(value: T) {
+    @print(value)
+}
+
+pub fn println<T>(value: T) {
+    @println(value)
+}
+
+pub fn eprint<T>(value: T) {
+    @eprint(value)
+}
+
+pub fn eprintln<T>(value: T) {
+    @eprintln(value)
+}
+
+pub fn typeof<T>(value: T) -> String {
+    return @__type_tag(value)
+}
+
+pub fn read_line() -> String? {
+    return @__sys_read_line()
+}
+
+pub fn args() -> [String] {
+    return @__sys_args().to_array()
+}
+
+pub fn exit(code: Int) {
+    @__sys_exit(code)
+}

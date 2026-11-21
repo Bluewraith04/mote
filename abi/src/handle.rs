@@ -18,7 +18,7 @@ pub enum HandleKind {
     Once,
     AtomicInt,
     AtomicBool,
-    /// The native side of a port.
+    /// The external library side of a port.
     Port,
 }
 

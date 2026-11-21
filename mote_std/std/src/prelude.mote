@@ -1,0 +1,6 @@
+// What every module sees without an import.
+pub import Result from std.option
+pub import { Error, ErrorKind } from std.error
+pub import { Map, MutSpan, Range, Set, Span } from std.collections
+pub import StrView from std.string
+pub import { eprint, eprintln, print, println, typeof } from std.io

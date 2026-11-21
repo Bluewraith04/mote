@@ -1,4 +1,4 @@
-//! The operations the runtime provides, one row per `@intrinsic` name in `std/src`.
+//! Compiler intrinsic operations backing `@name(...)` builtins.
 
 /// What a call can do besides compute its result; the flags combine with `|`.
 pub mod effect {
@@ -64,8 +64,9 @@ pub static TABLE: &[Intrinsic] = &[
     row("sys_args", 0, READS),
     row("sys_exit", 1, IO),
     row("sys_now", 0, IO),
-    row("typeof", 1, PURE),
+    row("type_tag", 1, PURE),
     row("fault", 1, FAULTS),
+    row("index_out_of_range", 0, FAULTS),
     row("port_open", 1, WRITES),
     // numbers
     row("float_is_nan", 1, PURE),
@@ -115,6 +116,8 @@ pub static TABLE: &[Intrinsic] = &[
     row("string_concat", 2, PURE),
     row("string_replace", 3, PURE),
     row("string_slice", 3, FAULTS),
+    row("string_byte_at", 2, FAULTS),
+    row("string_is_boundary", 2, PURE),
     row("string_to_upper", 1, PURE),
     row("string_to_lower", 1, PURE),
     row("string_trim", 1, PURE),
@@ -147,6 +150,43 @@ pub static TABLE: &[Intrinsic] = &[
     row("array_contains", 2, READS),
     row("array_slice", 3, READS | FAULTS),
     row("array_clone", 1, READS),
+    row("mask_all", 1, PURE),
+    row("mask_any", 1, PURE),
+    row("mask_none", 1, PURE),
+    row("array_all_by", 2, READS),
+    row("array_any_by", 2, READS),
+    row("array_none_by", 2, READS),
+    row("array_count", 2, READS),
+    row("array_count_by", 2, READS),
+    row("array_sum", 1, PURE),
+    row("array_product", 1, PURE),
+    row("array_mean", 1, PURE),
+    row("array_min", 1, READS),
+    row("array_max", 1, READS),
+    row("array_argmin", 1, READS),
+    row("array_argmax", 1, READS),
+    row("array_dot", 2, READS | FAULTS),
+    row("array_norm_sq", 1, PURE),
+    row("array_fold", 3, READS),
+    row("array_reduce", 2, READS),
+    row("array_scan", 3, READS),
+    row("array_find", 2, READS),
+    row("array_find_index", 2, READS),
+    row("array_index_of", 2, READS),
+    row("array_select", 3, READS | FAULTS),
+    row("array_map", 2, READS),
+    row("array_zip_with", 3, READS),
+    row("array_reverse", 1, READS),
+    row("array_clamp", 3, READS),
+    row("array_filter", 2, READS),
+    row("array_zip", 2, READS),
+    row("array_enumerate", 1, READS),
+    row("array_concat", 2, READS),
+    row("array_take", 2, READS),
+    row("array_drop", 2, READS),
+    row("array_flatten", 1, READS),
+    row("array_sort", 1, READS),
+    row("array_sort_by", 2, READS),
     // streams and tasks
     row("stream_next", 1, WRITES | PARKS),
     row("task_await", 1, PARKS),
@@ -189,74 +229,43 @@ pub static TABLE: &[Intrinsic] = &[
     row("atomic_bool_store", 2, WRITES),
     row("atomic_bool_swap", 2, WRITES),
     row("atomic_bool_compare_exchange", 3, WRITES),
-    // reflection
-    row("type_id", 0, PURE),
-    row("meta_ints", 0, PURE),
-    row("meta_texts", 0, PURE),
-    row("dyn_of", 2, PURE),
-    row("dyn_type", 1, READS),
-    row("dyn_to", 2, READS),
-    row("dyn_len", 1, READS),
-    row("dyn_tag", 1, READS),
-    row("dyn_get", 2, READS | FAULTS),
-    row("dyn_set", 3, WRITES | FAULTS),
-    row("dyn_show", 2, READS),
-    row("require", 2, FAULTS),
-    row("dyn_build", 3, READS | FAULTS),
-    row("dyn_make", 3, READS | FAULTS),
+    // pointers / off-heap memory
+    row("ptr_null", 0, PURE),
+    row("ptr_from_addr", 1, PURE),
+    row("ptr_alloc", 1, WRITES | FAULTS),
+    row("ptr_realloc", 2, WRITES | FAULTS),
+    row("ptr_free", 1, WRITES),
+    row("ptr_offset", 2, FAULTS),
+    row("ptr_load", 2, READS | FAULTS),
+    row("ptr_store", 3, WRITES | FAULTS),
+    row("ptr_copy", 3, WRITES | FAULTS),
+    row("ptr_zero", 2, WRITES | FAULTS),
+    row("ptr_cast", 1, PURE),
 ];
 
 #[cfg(test)]
 mod tests {
-    use std::collections::{BTreeMap, HashSet};
-
-    use mote_semantics::compile;
+    use std::collections::HashSet;
 
     use super::*;
-
-    /// Each intrinsic name in `std/src` with its parameter counts and whether a declaration has a `var` parameter.
-    fn declared() -> BTreeMap<String, (HashSet<usize>, bool)> {
-        let compiled = compile("");
-        assert_eq!(compiled.errors, Vec::<String>::new());
-        let mut found: BTreeMap<String, (HashSet<usize>, bool)> = BTreeMap::new();
-        for (_, def) in compiled.program.defs.iter() {
-            let Some(function) = def.function() else { continue };
-            let Some(name) = function.intrinsic else { continue };
-            let entry = found.entry(compiled.interner.resolve(name).to_string()).or_default();
-            entry.0.insert(function.params.len());
-            entry.1 |= function.params.iter().any(|param| param.is_var);
-        }
-        found
-    }
 
     #[test]
     fn the_rows_that_park_are_the_ones_semantics_lists() {
         let mut parks: Vec<&str> = TABLE.iter().filter(|row| row.parks()).map(|row| row.name).collect();
-        let mut listed = mote_semantics::PARKING_INTRINSICS.to_vec();
+        let mut listed: Vec<&str> = mote_semantics::PARKING_BUILTINS.iter().map(|s| s.strip_prefix("__").unwrap_or(s)).collect();
         parks.sort_unstable();
         listed.sort_unstable();
         assert_eq!(parks, listed);
     }
 
     #[test]
-    fn every_intrinsic_in_std_is_in_the_table_and_every_row_is_used() {
-        let declared = declared();
-        let names: Vec<&str> = declared.keys().map(String::as_str).collect();
+    fn every_runtime_builtin_in_semantics_is_in_the_table_and_every_row_is_used() {
         let rows: Vec<&str> = TABLE.iter().map(|row| row.name).collect();
         let mut sorted = rows.clone();
         sorted.sort_unstable();
-        let mut expected = names.clone();
+        let mut expected = mote_semantics::builtins::RUNTIME_INTRINSIC_NAMES.to_vec();
         expected.sort_unstable();
         assert_eq!(sorted, expected);
-    }
-
-    #[test]
-    fn a_row_names_its_parameter_count_and_a_var_parameter_writes() {
-        for (name, (counts, has_var)) in declared() {
-            let row = lookup(&name).unwrap_or_else(|| panic!("no row for {name}"));
-            assert_eq!(counts, HashSet::from([row.params]), "{name}");
-            assert!(!has_var || row.writes(), "{name} has a var parameter and does not write");
-        }
     }
 
     #[test]

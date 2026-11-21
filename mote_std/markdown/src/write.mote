@@ -1,0 +1,352 @@
+// Writing a tree as Markdown text.
+import { Node, NodeKind } from doc
+import { join, parse_int } from std.string
+
+fn is_digit(c: Int) -> Bool { return c >= 48 && c <= 57 }
+
+fn is_alnum(c: Int) -> Bool { return is_digit(c) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) }
+
+// Whether the `&` at `at` starts something a reader takes for a character reference.
+fn reference_at(bytes: [UInt8], at: Int) -> Bool {
+    var end = at + 1
+    while end < bytes.len() && (is_alnum(bytes[end] as Int) || bytes[end] as Int == 35) {
+        end = end + 1
+    }
+    return end > at + 1 && end < bytes.len() && bytes[end] as Int == 59
+}
+
+// Text with the characters that would read as syntax escaped; `start` is whether the text begins a line.
+fn escape_text(text: String, start: Bool, cell: Bool) -> String {
+    let bytes = text.bytes()
+    var parts: List<String> = []
+    var mark = 0
+    var at_start = start
+    var at = 0
+    while at < bytes.len() {
+        let c = bytes[at] as Int
+        // A backslash goes in before `cut`, or the bytes from `cut` up to `to` become `put`.
+        var cut = -1
+        var to = -1
+        var put = "\\"
+        if c == 10 && at + 1 < bytes.len() && bytes[at + 1] as Int == 10 {
+            cut = at
+            to = at + 1
+            put = "&#10;"
+        } else if at_start && (c == 9 || c == 32) {
+            cut = at
+            to = at + 1
+            put = if c == 9 { "&#9;" } else { "&#32;" }
+        } else if at_start && c == 194 && at + 1 < bytes.len() && bytes[at + 1] as Int == 160 {
+            cut = at
+            to = at + 2
+            put = "&#160;"
+        } else if c == 92 || c == 96 || c == 42 || c == 95 || c == 91 || c == 93 || c == 60 || c == 62 || c == 126 {
+            cut = at
+            to = at
+        } else if c == 124 && cell {
+            cut = at
+            to = at
+        } else if at_start && (c == 35 || c == 43 || c == 45 || c == 61) {
+            cut = at
+            to = at
+        } else if c == 38 && reference_at(bytes, at) {
+            cut = at
+            to = at
+        } else if at_start && is_digit(c) {
+            var end = at
+            while end < bytes.len() && is_digit(bytes[end] as Int) {
+                end = end + 1
+            }
+            if end < bytes.len() && (bytes[end] as Int == 46 || bytes[end] as Int == 41) {
+                cut = end
+                to = end
+            }
+        }
+        if cut >= 0 {
+            parts.push(text.slice(mark, cut).to_string())
+            parts.push(put)
+            if to > cut {
+                mark = to
+                at = to - 1
+            } else {
+                mark = cut
+                at = cut
+            }
+            at_start = false
+        } else {
+            at_start = c == 10 || (at_start && c == 32)
+        }
+        at = at + 1
+    }
+    parts.push(text.slice(mark, bytes.len()).to_string())
+    return join(parts, "")
+}
+
+// The longest run of one byte in the text.
+fn longest_run(text: String, byte: Int) -> Int {
+    var best = 0
+    var run = 0
+    for c in text.bytes() {
+        if c as Int == byte {
+            run = run + 1
+            if run > best { best = run }
+        } else {
+            run = 0
+        }
+    }
+    return best
+}
+
+fn code_span(text: String) -> String {
+    let fence = "`".repeat(longest_run(text, 96) + 1)
+    let pad = text.starts_with("`") || text.ends_with("`") || (text.starts_with(" ") && text.ends_with(" ") && !text.trim().is_empty())
+    return if pad { fence + " " + text + " " + fence } else { fence + text + fence }
+}
+
+fn destination(url: String) -> String {
+    if url.is_empty() || url.contains(" ") || url.contains("(") || url.contains(")") || url.contains("<") || url.contains(">") {
+        return "<" + url.replace("<", "%3C").replace(">", "%3E") + ">"
+    }
+    return url
+}
+
+fn title_part(title: String?) -> String {
+    if title == null || title.is_empty() { return "" }
+    return " \"" + title.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
+}
+
+fn is_emphasis(node: Node) -> Bool {
+    return node.kind() == NodeKind.Element && (node.name() == "em" || node.name() == "strong")
+}
+
+// Whether emphasis is at an edge of the nodes, where its marks would run into the marks around it.
+fn edge_marked(nodes: List<Node>) -> Bool {
+    if nodes.is_empty() { return false }
+    return is_emphasis(nodes.get(0)) || is_emphasis(nodes.get(nodes.len() - 1))
+}
+
+fn inline_node(node: Node, start: Bool, cell: Bool) -> String {
+    let kind = node.kind()
+    if kind == NodeKind.Text { return escape_text(node.text(), start, cell) }
+    if kind == NodeKind.Comment { return "<!--" + node.text() + "-->" }
+    if kind == NodeKind.Raw { return node.text() }
+    if kind != NodeKind.Element { return inline_run(node.children(), cell) }
+    let name = node.name()
+    if name == "em" || name == "strong" {
+        if edge_marked(node.children()) { return "<" + name + ">" + inline_run(node.children(), cell) + "</" + name + ">" }
+        let mark = if name == "em" { "*" } else { "**" }
+        return mark + inline_run(node.children(), cell) + mark
+    }
+    if name == "del" { return "~~" + inline_run(node.children(), cell) + "~~" }
+    if name == "code" { return code_span(node.text_content()) }
+    if name == "br" { return if cell { "<br />" } else { "\\\n" } }
+    if name == "a" {
+        let href = node.attr("href")
+        if href == null { return node.to_html() }
+        return "[" + inline_run(node.children(), cell) + "](" + destination(href) + title_part(node.attr("title")) + ")"
+    }
+    if name == "img" {
+        let src = node.attr("src")
+        if src == null { return node.to_html() }
+        let alt = node.attr("alt")
+        return "![" + escape_text(if alt == null { "" } else { alt }, false, cell) + "](" + destination(src) + title_part(node.attr("title")) + ")"
+    }
+    if name == "input" && node.attr("type") == "checkbox" {
+        return if node.attr("checked") == null { "[ ] " } else { "[x] " }
+    }
+    return node.to_html()
+}
+
+fn inline_run(nodes: List<Node>, cell: Bool) -> String {
+    var parts: List<String> = []
+    var start = true
+    var index = 0
+    for node in nodes {
+        index = index + 1
+        var piece = inline_node(node, start, cell)
+        if node.kind() == NodeKind.Text && piece.ends_with("!") && index < nodes.len() {
+            let after = nodes.get(index)
+            if after.kind() == NodeKind.Element && after.name() == "a" { piece = piece.slice(0, piece.len() - 1).to_string() + "\\!" }
+        }
+        parts.push(piece)
+        if !piece.is_empty() { start = piece.ends_with("\n") }
+    }
+    let text = join(parts, "")
+    return if cell { text.replace("\n", " ") } else { text }
+}
+
+fn strip_newlines(text: String) -> String {
+    var end = text.len()
+    while end > 0 && text.slice(end - 1, end) == "\n" {
+        end = end - 1
+    }
+    return text.slice(0, end).to_string()
+}
+
+fn is_block(node: Node) -> Bool {
+    let kind = node.kind()
+    if kind == NodeKind.Raw { return node.text().ends_with("\n") }
+    if kind != NodeKind.Element { return false }
+    let name = node.name()
+    return name == "p" || name == "blockquote" || name == "pre" || name == "ul" || name == "ol" || name == "hr" || name == "table" || (name.len() == 2 && name.starts_with("h") && is_digit(name.bytes()[1] as Int))
+}
+
+fn prefixed(text: String, first: String, rest: String) -> String {
+    var lines: List<String> = []
+    var index = 0
+    for line in text.split("\n") {
+        let lead = if index == 0 { first } else { rest }
+        lines.push(if line.is_empty() { lead.trim() } else { lead + line })
+        index = index + 1
+    }
+    return join(lines, "\n")
+}
+
+fn blocks(nodes: List<Node>, loose: Bool) -> String {
+    var parts: List<String> = []
+    var run: List<Node> = []
+    var last = ""
+    for node in nodes {
+        if is_block(node) {
+            let text = inline_run(run, false).trim()
+            if !text.is_empty() { parts.push(text) }
+            run = []
+            let name = if node.kind() == NodeKind.Element { node.name() } else { "" }
+            parts.push(block_text(node, name == last && (name == "ul" || name == "ol")))
+            last = name
+        } else {
+            run.push(node)
+        }
+    }
+    let text = inline_run(run, false).trim()
+    if !text.is_empty() { parts.push(text) }
+    return join(parts, if loose { "\n\n" } else { "\n" })
+}
+
+fn code_block(node: Node) -> String {
+    let code = node.find("code")
+    if code == null { return node.to_html() }
+    var info = ""
+    let classes = code.attr("class")
+    if classes != null && classes.starts_with("language-") { info = classes.slice(9, classes.len()).to_string() }
+    let text = code.text_content()
+    let fence = "`".repeat(max_int(3, longest_run(text, 96) + 1))
+    var body = text
+    if !body.is_empty() && !body.ends_with("\n") { body = body + "\n" }
+    return fence + info + "\n" + body + fence
+}
+
+fn max_int(a: Int, b: Int) -> Int { return if a > b { a } else { b } }
+
+fn list_text(node: Node, other: Bool) -> String {
+    let ordered = node.name() == "ol"
+    var items: List<Node> = []
+    var loose = false
+    for child in node.children() {
+        if child.kind() == NodeKind.Element && child.name() == "li" {
+            items.push(child)
+            for inner in child.children() {
+                if inner.kind() == NodeKind.Element && inner.name() == "p" { loose = true }
+            }
+        }
+    }
+    var number = 1
+    let start = node.attr("start")
+    if start != null {
+        let parsed = parse_int(start)
+        if parsed.is_ok() { number = parsed! }
+    }
+    var texts: List<String> = []
+    for item in items {
+        var marker = if other { "* " } else { "- " }
+        if ordered { marker = number.to_string() + (if other { ") " } else { ". " }) }
+        number = number + 1
+        let body = blocks(item.children(), loose)
+        texts.push(prefixed(body, marker, " ".repeat(marker.len())))
+    }
+    return join(texts, if loose { "\n\n" } else { "\n" })
+}
+
+fn cells(row: Node) -> List<Node> {
+    var out: List<Node> = []
+    for child in row.children() {
+        if child.kind() == NodeKind.Element && (child.name() == "th" || child.name() == "td") { out.push(child) }
+    }
+    return out
+}
+
+fn rows(section: Node) -> List<Node> {
+    var out: List<Node> = []
+    for child in section.children() {
+        if child.kind() == NodeKind.Element && child.name() == "tr" { out.push(child) }
+    }
+    return out
+}
+
+fn row_text(row: Node) -> String {
+    var texts: List<String> = []
+    for cell in cells(row) {
+        texts.push(inline_run(cell.children(), true).trim())
+    }
+    return "| " + join(texts, " | ") + " |"
+}
+
+fn table_text(node: Node) -> String {
+    let head = node.find("thead")
+    if head == null { return node.to_html() }
+    let head_rows = rows(head)
+    if head_rows.is_empty() { return node.to_html() }
+    var lines: List<String> = [row_text(head_rows.get(0))]
+    var marks: List<String> = []
+    for cell in cells(head_rows.get(0)) {
+        let style = cell.attr("style")
+        var mark = "---"
+        if style == "text-align: left" { mark = ":---" }
+        if style == "text-align: center" { mark = ":---:" }
+        if style == "text-align: right" { mark = "---:" }
+        marks.push(mark)
+    }
+    lines.push("| " + join(marks, " | ") + " |")
+    let body = node.find("tbody")
+    if body != null {
+        for row in rows(body) {
+            lines.push(row_text(row))
+        }
+    }
+    return join(lines, "\n")
+}
+
+fn block_text(node: Node, other: Bool) -> String {
+    if node.kind() == NodeKind.Raw { return strip_newlines(node.text()) }
+    let name = node.name()
+    if name == "p" { return inline_run(node.children(), false).trim() }
+    if name == "hr" { return "***" }
+    if name == "blockquote" { return prefixed(blocks(node.children(), true), "> ", "> ") }
+    if name == "pre" { return code_block(node) }
+    if name == "ul" || name == "ol" { return list_text(node, other) }
+    if name == "table" { return table_text(node) }
+    return heading_text(node, parse_int(name.slice(1, 2))!)
+}
+
+// An ATX heading, or a setext one when its text has more than one line.
+fn heading_text(node: Node, level: Int) -> String {
+    let content = inline_run(node.children(), false).trim()
+    if content.contains("\n") {
+        if level == 1 { return content + "\n===" }
+        if level == 2 { return content + "\n---" }
+        return node.to_html()
+    }
+    var text = content
+    if text.ends_with("#") && !text.ends_with("\\#") { text = text.slice(0, text.len() - 1).to_string() + "\\#" }
+    return "#".repeat(level) + " " + text
+}
+
+/// The Markdown text of a node, which is the document node or an element, ending in a newline. An element without a Markdown form is written as HTML.
+pub fn to_markdown(node: Node) -> String {
+    if node.kind() == NodeKind.Document {
+        let body = blocks(node.children(), true)
+        return if body.is_empty() { "" } else { body + "\n" }
+    }
+    if is_block(node) { return block_text(node, false) + "\n" }
+    return inline_node(node, true, false) + "\n"
+}

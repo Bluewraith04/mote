@@ -6,7 +6,7 @@ use super::FnCx;
 use crate::cx::Cx;
 use crate::defs::{DefId, Field, Payload, Resolved};
 use crate::tree::{FieldPattern, Literal, Local, LocalKind, Pattern, PatternKind as Tree};
-use crate::types::{TyId, TyKind};
+use crate::types::{GenericArg, TyId, TyKind};
 
 /// What a pattern binds: how its locals are made and which names the alternatives of an or-pattern share.
 pub(crate) struct PatternCx {
@@ -235,13 +235,14 @@ impl Cx<'_> {
         }
         match self.program.types.kind(subject) {
             TyKind::Union(members) => members.contains(&member),
+            TyKind::Any => true,
             TyKind::Optional(inner) => member == TyId::UNIT || self.holds_member(*inner, member),
             _ => false,
         }
     }
 
     /// The variant a pattern path names in the subject's enum.
-    fn pattern_variant(&mut self, f: &FnCx, path: &ast::Path, ty: TyId) -> Option<(DefId, Vec<TyId>, usize)> {
+    fn pattern_variant(&mut self, f: &FnCx, path: &ast::Path, ty: TyId) -> Option<(DefId, Vec<GenericArg>, usize)> {
         let (def, args) = match self.program.types.kind(ty).clone() {
             TyKind::Error => return None,
             TyKind::Adt { def, args } if self.program.defs[def].enum_def().is_some() => (def, args),
@@ -308,7 +309,7 @@ impl Cx<'_> {
             .zip(types)
             .enumerate()
             .map(|(position, (&element, declared))| {
-                let field_ty = self.program.types.subst(declared, &args);
+                let field_ty = self.program.types.subst_generic(declared, &args);
                 FieldPattern { index: position as u32, pattern: self.pattern(f, pcx, element, field_ty) }
             })
             .collect();
@@ -348,7 +349,7 @@ impl Cx<'_> {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn field_patterns(&mut self, f: &mut FnCx, pcx: &mut PatternCx, fields: &[Field], args: &[TyId], written: &[ast::FieldPattern], rest: bool, outside: bool, span: mote_base::Span) -> Vec<FieldPattern> {
+    fn field_patterns(&mut self, f: &mut FnCx, pcx: &mut PatternCx, fields: &[Field], args: &[GenericArg], written: &[ast::FieldPattern], rest: bool, outside: bool, span: mote_base::Span) -> Vec<FieldPattern> {
         let mut seen = vec![false; fields.len()];
         let mut out = Vec::new();
         for entry in written {
@@ -366,7 +367,7 @@ impl Cx<'_> {
                 self.error(entry.name.span, format!("`{text}` is private"));
                 continue;
             }
-            let field_ty = self.program.types.subst(fields[index].ty, args);
+            let field_ty = self.program.types.subst_generic(fields[index].ty, args);
             let pattern = match entry.pattern {
                 Some(inner) => self.pattern(f, pcx, inner, field_ty),
                 None => {

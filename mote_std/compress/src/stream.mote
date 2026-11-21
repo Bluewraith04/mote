@@ -1,0 +1,105 @@
+// The formats, and the encoder and decoder that take data in pieces.
+import Closeable from std.traits
+import { compress_decoder_new, compress_encoder_new, compress_finish, compress_free, compress_pending, compress_push, compress_take } from ._lib
+
+/// The container around the deflate data.
+pub enum Format {
+    Gzip
+    Zlib
+    Deflate
+
+    fn code(self) -> Int {
+        return match self {
+            Format.Gzip => 0
+            Format.Zlib => 1
+            Format.Deflate => 2
+        }
+    }
+}
+
+fn failed(code: Int, error: [UInt8]) -> Error {
+    let size = if -code - 1 < error.len() { -code - 1 } else { error.len() }
+    let message = String.from_bytes(error.slice(0, size))
+    return Error.new(ErrorKind.InvalidData, "compress: " + (if message == null { "bad data" } else { message }))
+}
+
+// The output waiting in a coder, taken.
+fn drain(handle: Int) -> [UInt8] {
+    var out: [UInt8] = [0; compress_pending(handle)]
+    compress_take(handle, out)
+    return out
+}
+
+fn feed(handle: Int, data: [UInt8]) -> Result<[UInt8], Error> {
+    var error: [UInt8] = [0; 256]
+    let code = compress_push(handle, data, error)
+    if code < 0 { return Err(failed(code, error)) }
+    return Ok(drain(handle))
+}
+
+fn end(handle: Int) -> Result<[UInt8], Error> {
+    var error: [UInt8] = [0; 256]
+    let code = compress_finish(handle, error)
+    if code < 0 { return Err(failed(code, error)) }
+    return Ok(drain(handle))
+}
+
+/// A compressor: `push` pieces, then `finish`; each call returns the output ready so far. Closing it frees it.
+pub class Encoder: (Closeable) {
+    handle: AtomicInt
+
+    /// A compressor of a format at level 0 (stored) to 9 (smallest); an `Err` for another level.
+    pub fn new(format: Format, level: Int = 6) -> Result<Encoder, Error> {
+        let handle = compress_encoder_new(format.code(), level)
+        if handle == 0 { return Err(Error.new(ErrorKind.InvalidData, "compress: level ${level} is not 0 to 9")) }
+        return Ok(Encoder { handle: AtomicInt(handle) })
+    }
+
+    fn live(self) -> Int {
+        let handle = self.handle.load()
+        if handle == 0 { @fault("the encoder is closed") }
+        return handle
+    }
+
+    /// Compresses bytes; returns the output that is ready, which may be empty.
+    pub fn push(self, data: [UInt8]) -> Result<[UInt8], Error> { return feed(self.live(), data) }
+
+    /// Ends the stream and returns the rest of the output.
+    pub fn finish(self) -> Result<[UInt8], Error> { return end(self.live()) }
+
+    pub fn close(self) -> Result<Null, Error> {
+        let handle = self.handle.swap(0)
+        if handle == 0 { return Err(Error.new(ErrorKind.Other, "compress: already closed")) }
+        compress_free(handle)
+        return Ok(null)
+    }
+}
+
+/// A decompressor: `push` pieces, then `finish`; each call returns the output ready so far. Closing it frees it.
+pub class Decoder: (Closeable) {
+    handle: AtomicInt
+
+    /// A decompressor of a format whose output may not pass `limit` bytes (-1 for no limit).
+    pub fn new(format: Format, limit: Int = -1) -> Decoder {
+        return Decoder { handle: AtomicInt(compress_decoder_new(format.code(), limit)) }
+    }
+
+    fn live(self) -> Int {
+        let handle = self.handle.load()
+        if handle == 0 { @fault("the decoder is closed") }
+        return handle
+    }
+
+    /// Decompresses bytes; an `Err` for corrupt data, data after the end, or output over the limit.
+    pub fn push(self, data: [UInt8]) -> Result<[UInt8], Error> { return feed(self.live(), data) }
+
+    /// Ends the input; an `Err` when the stream was not whole.
+    pub fn finish(self) -> Result<[UInt8], Error> { return end(self.live()) }
+
+    pub fn close(self) -> Result<Null, Error> {
+        let handle = self.handle.swap(0)
+        if handle == 0 { return Err(Error.new(ErrorKind.Other, "compress: already closed")) }
+        compress_free(handle)
+        return Ok(null)
+    }
+}

@@ -5,7 +5,6 @@ pub mod executable;
 mod deps;
 mod init;
 mod pipeline;
-mod requirements;
 mod run;
 
 pub use cli::{execute, execute_at, execute_live, Outcome};

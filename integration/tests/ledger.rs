@@ -282,8 +282,8 @@ fn documents() -> Vec<PathBuf> {
         .into_iter()
         .filter(|path| {
             let label = relative(path);
-            let hand_reference = label.starts_with("core/") && label.ends_with("/reference.md");
-            let about_the_project = label == "README.md" || label == "CHANGELOG.md";
+            let hand_reference = label.starts_with("mote_std/") && label.ends_with("/reference.md");
+            let about_the_project = label == "README.md" || label == "CHANGELOG.md" || label == "GEMINI.md";
             label != "tasks.md" && !about_the_project && !label.starts_with("demo/") && !label.starts_with("tools/fixtures/") && !label.starts_with("docs/unproven/") && !label.starts_with("editors/") && !hand_reference
         })
         .collect()
@@ -301,7 +301,7 @@ fn the_ledger_matches_the_lists() {
     for path in documents() {
         let label = relative(&path);
         let text = std::fs::read_to_string(&path).expect("a readable document");
-        let judged = judge(&text, label == "core/CORE.md", &known);
+        let judged = judge(&text, label == "mote_std/CORE.md", &known);
         problems.extend(judged.broken.iter().map(|problem| format!("{label}: {problem}")));
         expected.insert(list_path(&label));
         let listed = std::fs::read_to_string(list_path(&label)).unwrap_or_default();
@@ -416,14 +416,14 @@ fn the_list_must_match_the_unproven_statements() {
 #[test]
 fn the_documents_are_found_without_the_plan_and_the_fixtures() {
     let labels: Vec<String> = documents().iter().map(|path| relative(path)).collect();
-    assert!(labels.iter().any(|label| label == "core/CORE.md"));
+    assert!(labels.iter().any(|label| label == "mote_std/CORE.md"));
     assert!(labels.iter().all(|label| label != "tasks.md" && !label.starts_with("tools/fixtures/")));
 }
 
 /// A document has no unproven statement and no list.
 fn assert_strict(label: &str) {
     let text = std::fs::read_to_string(root().join(label)).expect("a readable document");
-    let judged = judge(&text, label == "core/CORE.md", &known());
+    let judged = judge(&text, label == "mote_std/CORE.md", &known());
     let mut problems: Vec<String> = judged.broken.iter().map(|problem| format!("{label}: {problem}")).collect();
     problems.extend(judged.unproven.iter().map(|statement| format!("{label}:{}: no proof form: {}", statement.line, entry(statement).1)));
     if list_path(label).exists() {

@@ -1,0 +1,23 @@
+import assert from std.test
+import join from std.string
+import render from markdown
+import examples from .spec_examples
+
+// Newlines between tags and at the ends do not count.
+fn normalize(html: String) -> String {
+    return html.replace(">\n", ">").replace("\n<", "<").trim()
+}
+
+test "every example of the CommonMark specification reads to its HTML" {
+    var failures: List<String> = []
+    var number = 0
+    for example in examples() {
+        number = number + 1
+        let html = render(example.0)!
+        if normalize(html) != normalize(example.1) {
+            failures.push("example ${number}\n${example.0}\nwanted ${example.1}\ngot ${html}")
+        }
+    }
+    let shown = if failures.len() < 3 { failures.len() } else { 3 }
+    assert(failures.is_empty(), "${failures.len()} examples differ:\n" + join(failures.slice(0, shown), "\n---\n"))
+}

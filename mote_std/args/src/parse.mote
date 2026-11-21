@@ -1,0 +1,182 @@
+// Reading the words into a record.
+import Kind from std.reflect
+import { join, parse_float, parse_int } from std.string
+import Flag from .flag
+import { Slot, Spec, by_long, by_short, is_number, kebab, label, specs_of } from ._spec
+
+// Records a value for a flag; returns the position of the next word.
+fn take(spec: Spec, given: String?, words: List<String>, at: Int, slots: List<Slot>, shown: String) -> Result<Int, Error> {
+    var slot = slots[spec.index]
+    if slot.values.len() > 0 && !spec.is_list && !spec.is_switch {
+        return Err(Error.new(ErrorKind.InvalidData, "${shown} is given twice"))
+    }
+    if spec.is_switch {
+        slot.add(if given == null { "true" } else { given })
+        return Ok(at)
+    }
+    if given != null {
+        slot.add(given)
+        return Ok(at)
+    }
+    if at >= words.len() { return Err(Error.new(ErrorKind.InvalidData, "${shown} needs a value")) }
+    slot.add(words[at])
+    return Ok(at + 1)
+}
+
+fn bad(shown: String, wanted: String, text: String) -> Error {
+    return Error.new(ErrorKind.InvalidData, "${shown}: expected ${wanted}, not ${text}")
+}
+
+fn int_cast<S>(n: Int, shown: String) -> Result<S, Error> {
+    const info = @type_info(S)
+    comptime if info.name == "Int" || info.name == "Int64" { return Ok(n) }
+    comptime if info.name == "Int8" {
+        if n >= -128 && n <= 127 { return Ok(n as Int8) }
+    } else comptime if info.name == "Int16" {
+        if n >= -32768 && n <= 32767 { return Ok(n as Int16) }
+    } else comptime if info.name == "Int32" {
+        if n >= -2147483648 && n <= 2147483647 { return Ok(n as Int32) }
+    } else comptime if info.name == "UInt8" {
+        if n >= 0 && n <= 255 { return Ok(n as UInt8) }
+    } else comptime if info.name == "UInt16" {
+        if n >= 0 && n <= 65535 { return Ok(n as UInt16) }
+    } else comptime if info.name == "UInt32" {
+        if n >= 0 && n <= 4294967295 { return Ok(n as UInt32) }
+    } else comptime if info.name == "UInt64" {
+        if n >= 0 { return Ok(n as UInt64) }
+    }
+    return Err(Error.new(ErrorKind.InvalidData, "${shown}: ${n} does not fit ${info.name}"))
+}
+
+// One value of a scalar type from its text.
+fn scalar<S>(text: String, shown: String) -> Result<S, Error> {
+    const info = @type_info(S)
+    comptime if info.kind == Kind.Bool {
+        if text == "true" { return Ok(true) }
+        if text == "false" { return Ok(false) }
+        return Err(bad(shown, "true or false", text))
+    } else comptime if info.kind == Kind.Int {
+        let n = parse_int(text)
+        if n.is_err() { return Err(bad(shown, "an integer", text)) }
+        return int_cast<S>(n.unwrap(), shown)
+    } else comptime if info.kind == Kind.Float {
+        let x = parse_float(text)
+        if x.is_err() { return Err(bad(shown, "a number", text)) }
+        comptime if info.name == "Float32" { return Ok(x.unwrap() as Float32) }
+        return Ok(x.unwrap())
+    } else comptime if info.kind == Kind.String {
+        return Ok(text)
+    } else comptime if info.kind == Kind.Enum {
+        var names: List<String> = []
+        comptime for v in @variants(S) {
+            let name = kebab(v.name)
+            if name == kebab(text) { return Ok(@__construct_variant<S>(v.name)) }
+            names.push(name)
+        }
+        return Err(bad(shown, join(names, " or "), text))
+    } else {
+        return Err(bad(shown, info.name, text))
+    }
+}
+
+fn value_of<F>(spec: Spec, values: List<String>) -> Result<F, Error> {
+    const info = @type_info(F)
+    let shown = label(spec)
+    comptime if info.kind == Kind.Optional {
+        let text = if values.len() > 0 { values[values.len() - 1] } else { spec.default_text }
+        if text == null {
+            let empty: F = null
+            return Ok(empty)
+        }
+        let inner: @TypeArg(F, 0) = scalar<@TypeArg(F, 0)>(text, shown)?
+        let wrapped: F = inner
+        return Ok(wrapped)
+    } else comptime if info.kind == Kind.List {
+        var texts = values
+        if texts.len() == 0 && spec.default_text != null { texts = [spec.default_text!] }
+        var parts: F = []
+        for text in texts { parts.push(scalar<@TypeArg(F, 0)>(text, shown)?) }
+        return Ok(parts)
+    } else {
+        if values.len() > 0 { return scalar<F>(values[values.len() - 1], shown) }
+        comptime if info.kind == Kind.Bool { return Ok(spec.default_text == "true") }
+        if spec.default_text != null { return scalar<F>(spec.default_text!, shown) }
+        return Err(Error.new(ErrorKind.InvalidData, "missing ${shown}"))
+    }
+}
+
+/// Whether the words ask for help: `--help` or `-h` before a `--`.
+pub fn help_requested(words: List<String>) -> Bool {
+    for word in words {
+        if word == "--" { return false }
+        if word == "--help" || word == "-h" { return true }
+    }
+    return false
+}
+
+/// A `T` read from the words, which `std.io.args()` gives. Each field is a flag named after it (`max_depth` is `--max-depth`): a `Bool` is a switch, an optional may be left out, a list repeats, an `Int`, `Float`, `String` or an enum of unit variants takes a value as `--port 80` or `--port=80`. `flags` adds short names, help, defaults and positional fields. A missing value, an unknown flag and a value of the wrong kind are an `Err`.
+pub fn parse<T>(words: List<String>, flags: List<Flag> = []) -> Result<T, Error> {
+    const info = @type_info(T)
+    comptime if info.kind != Kind.Struct && info.kind != Kind.Class {
+        return Err(Error.new(ErrorKind.InvalidData, "args: ${info.name} is not a struct or class"))
+    } else {
+        let specs = specs_of<T>(flags)?
+        var slots: List<Slot> = []
+        for _ in specs { slots.push(Slot { values: [] }) }
+        var positionals: List<String> = []
+        var at = 0
+        var only_words = false
+        while at < words.len() {
+            let word = words[at]
+            at = at + 1
+            if only_words || !word.starts_with("-") || word == "-" || is_number(word) {
+                positionals.push(word)
+            } else if word == "--" {
+                only_words = true
+            } else if word.starts_with("--") {
+                let body = word.slice(2, word.len())
+                let cut = body.find("=")
+                let name = (if cut == null { body } else { body.slice(0, cut) }).to_string()
+                let given: String? = if cut == null { null } else { body.slice(cut + 1, body.len()).to_string() }
+                let spec = by_long(specs, name)
+                if spec == null { return Err(Error.new(ErrorKind.InvalidData, "unknown flag --${name}")) }
+                at = take(spec, given, words, at, slots, "--" + name)?
+            } else {
+                var place = 1
+                while place < word.len() {
+                    let letter = word.slice(place, place + 1).to_string()
+                    let spec = by_short(specs, letter)
+                    if spec == null { return Err(Error.new(ErrorKind.InvalidData, "unknown flag -${letter}")) }
+                    if spec.is_switch {
+                        at = take(spec, null, words, at, slots, "-" + letter)?
+                        place = place + 1
+                    } else {
+                        var rest = word.slice(place + 1, word.len()).to_string()
+                        if rest.starts_with("=") { rest = rest.slice(1, rest.len()).to_string() }
+                        at = take(spec, if rest == "" { null } else { rest }, words, at, slots, "-" + letter)?
+                        place = word.len()
+                    }
+                }
+            }
+        }
+        var next = 0
+        for spec in specs {
+            if !spec.positional { continue }
+            while next < positionals.len() {
+                var slot = slots[spec.index]
+                slot.add(positionals[next])
+                next = next + 1
+                if !spec.is_list { break }
+            }
+        }
+        if next < positionals.len() {
+            return Err(Error.new(ErrorKind.InvalidData, "unexpected argument ${positionals[next]}"))
+        }
+        var out: T = @__default<T>()
+        comptime for f in @fields(T) {
+            let part = value_of<@FieldType(T, f.name)>(specs[f.index], slots[f.index].values)?
+            @set_field(out, f.name, part)
+        }
+        return Ok(out)
+    }
+}

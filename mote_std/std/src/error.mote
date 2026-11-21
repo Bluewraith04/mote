@@ -1,0 +1,30 @@
+// Error and ErrorKind.
+
+pub enum ErrorKind {
+    NotFound
+    PermissionDenied
+    InvalidData
+    Interrupted
+    AlreadyExists
+    WouldBlock
+    TimedOut
+    Unsupported
+    Other
+}
+
+pub class Error {
+    pub kind: ErrorKind
+    pub message: String
+
+    pub fn new(kind: ErrorKind, message: String) -> Error { return Error { kind: kind, message: message } }
+    pub fn other(message: String) -> Error { return Error { kind: Other, message: message } }
+    pub fn context(self, what: String) -> Error { return Error { kind: self.kind, message: "${what}: ${self.message}" } }
+    pub fn to_string(self) -> String { return self.message }
+}
+
+pub fn context<T>(result: Result<T, Error>, what: String) -> Result<T, Error> {
+    return match result {
+        Ok(value) => Ok(value)
+        Err(e) => Err(e.context(what))
+    }
+}

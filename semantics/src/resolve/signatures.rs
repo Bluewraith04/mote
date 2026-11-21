@@ -3,9 +3,10 @@ use mote_syntax as ast;
 use mote_syntax::{BindingKind, ExprKind, ItemKind, Member, ParamKind, PatternKind, StmtKind, UnaryOp, VariantPayload};
 
 use super::lower::Scope;
+use crate::comptime;
 use crate::cx::{Progress, Cx};
-use crate::defs::{Bound, DefId, DefKind, Field, GenericParam, LangItem, Param, Payload, Receiver, Variant};
-use crate::types::TyId;
+use crate::defs::{Bound, DefId, DefKind, ExtendId, Field, GenericParam, Param, Payload, Receiver, TyHead, Variant};
+use crate::types::{ConstArg, ConstVal, GenericArg, IntTy, TyId, TyKind};
 
 /// A function's signature as the syntax tree writes it.
 pub(crate) struct FnAst<'a> {
@@ -16,18 +17,29 @@ pub(crate) struct FnAst<'a> {
 }
 
 fn generic_names(generics: &[GenericParam]) -> Vec<Symbol> {
-    generics.iter().map(|param| param.name).collect()
+    generics.iter().map(GenericParam::name).collect()
+}
+
+fn generic_const_flags(generics: &[GenericParam]) -> Vec<bool> {
+    generics.iter().map(GenericParam::is_const).collect()
 }
 
 impl<'a> Cx<'a> {
     /// Resolves every definition's generics, then its types, then checks overloads.
     pub(super) fn signatures(&mut self) {
         let defs: Vec<DefId> = self.program.defs.iter().map(|(id, _)| id).collect();
+        let extends: Vec<ExtendId> = self.program.extends.iter().map(|(id, _)| id).collect();
         for &def in &defs {
             self.lower_generic_names(def);
         }
+        for &ext in &extends {
+            self.lower_extend_generic_names(ext);
+        }
         for &def in &defs {
             self.lower_bounds(def);
+        }
+        for &ext in &extends {
+            self.lower_extend_header(ext);
         }
         for &def in &defs {
             match &self.program.defs[def].kind {
@@ -36,6 +48,9 @@ impl<'a> Cx<'a> {
                 DefKind::Enum(_) => self.lower_enum(def),
                 DefKind::Alias(_) => self.ensure_alias(def),
                 DefKind::Global(_) => self.lower_global(def),
+                DefKind::Const(_) => {
+                    let _ = self.ensure_const_def(def);
+                }
                 DefKind::Trait(_) | DefKind::Test => {}
             }
         }
@@ -54,7 +69,14 @@ impl<'a> Cx<'a> {
         let (item, member) = self.item_of(def)?;
         match (&item.kind, member) {
             (ItemKind::Function(f), None) => Some(FnAst { generics: &f.generics, params: &f.params, ret: f.ret, body: Some(&f.body) }),
-            (ItemKind::NativeFunction(f), None) => Some(FnAst { generics: &f.generics, params: &f.params, ret: f.ret, body: None }),
+            (ItemKind::ExternBlock(eb), Some(member)) => {
+                let decl = &eb.decls[member as usize];
+                Some(FnAst { generics: &[], params: &decl.params, ret: decl.ret, body: None })
+            }
+            (ItemKind::Extend(ext), Some(member)) => {
+                let function = &ext.methods[member as usize].function;
+                Some(FnAst { generics: &function.generics, params: &function.params, ret: function.ret, body: Some(&function.body) })
+            }
             (ItemKind::Record(record), Some(member)) => match &record.members[member as usize] {
                 Member::Method(method) => Some(FnAst { generics: &method.function.generics, params: &method.function.params, ret: method.function.ret, body: Some(&method.function.body) }),
                 Member::Field(_) => None,
@@ -75,7 +97,6 @@ impl<'a> Cx<'a> {
         match self.item_of(def) {
             Some((item, None)) => match &item.kind {
                 ItemKind::Function(f) => &f.generics,
-                ItemKind::NativeFunction(f) => &f.generics,
                 ItemKind::Record(record) => &record.generics,
                 ItemKind::Enum(en) => &en.generics,
                 ItemKind::Trait(tr) => &tr.generics,
@@ -100,102 +121,194 @@ impl<'a> Cx<'a> {
         }
     }
 
-    /// A definition's type parameter names, without bounds.
-    fn lower_generic_names(&mut self, def: DefId) {
-        let mut lowered: Vec<GenericParam> = Vec::new();
-        for generic in self.generics_ast(def) {
-            if lowered.iter().any(|param| param.name == generic.name.name) {
-                let message = format!("`{}` is defined twice", self.text(generic.name.name));
-                self.error(generic.name.span, message);
+    fn ast_generic_name(param: &'a ast::GenericParam) -> ast::Ident {
+        match param {
+            ast::GenericParam::Type { name, .. } | ast::GenericParam::Const { name, .. } => *name,
+        }
+    }
+
+    fn lower_generic_name_list(&mut self, written: &'a [ast::GenericParam]) -> Vec<GenericParam> {
+        let mut lowered = Vec::new();
+        for generic in written {
+            let ident = Self::ast_generic_name(generic);
+            if lowered.iter().any(|param: &GenericParam| param.name() == ident.name) {
+                let message = format!("`{}` is defined twice", self.text(ident.name));
+                self.error(ident.span, message);
                 continue;
             }
-            lowered.push(GenericParam { name: generic.name.name, bounds: Vec::new() });
+            match generic {
+                ast::GenericParam::Type { .. } => lowered.push(GenericParam::Type { name: ident.name, bounds: Vec::new() }),
+                ast::GenericParam::Const { .. } => lowered.push(GenericParam::Const { name: ident.name, ty: TyId::INT }),
+            }
         }
+        lowered
+    }
+
+    /// A definition's generic parameter names, without bounds.
+    fn lower_generic_names(&mut self, def: DefId) {
+        if let Some(owner) = self.program.defs[def].owner
+            && matches!(self.program.defs[owner].kind, DefKind::Trait(_))
+        {
+            let generics = self.generics_ast(def);
+            if let Some(first) = generics.first() {
+                self.error(Self::ast_generic_name(first).span, "trait methods cannot have type parameters");
+            }
+        }
+        let lowered = self.lower_generic_name_list(self.generics_ast(def));
         if let Some(generics) = self.generics_mut(def) {
             *generics = lowered;
         }
     }
 
-    /// The bounds of a definition's type parameters, once every name and trait arity is known.
-    fn lower_bounds(&mut self, def: DefId) {
-        let scope = self.scope_for(def);
-        let written = self.generics_ast(def);
-        let mut bounds: Vec<Vec<Bound>> = Vec::new();
-        let names: Vec<Symbol> = match &self.program.defs[def].kind {
-            DefKind::Function(function) => generic_names(&function.generics),
-            DefKind::Record(record) => generic_names(&record.generics),
-            DefKind::Enum(en) => generic_names(&en.generics),
-            DefKind::Trait(item) => generic_names(&item.generics),
-            DefKind::Alias(alias) => generic_names(&alias.generics),
-            _ => return,
-        };
-        for name in names {
-            let Some(generic) = written.iter().find(|generic| generic.name.name == name) else {
-                bounds.push(Vec::new());
+    fn lower_extend_generic_names(&mut self, ext: ExtendId) {
+        let origin = self.program.extends[ext].origin;
+        let module = self.program.extends[ext].module;
+        let ItemKind::Extend(decl) = &self.ast(module)[origin.item].kind else { return };
+        let lowered = self.lower_generic_name_list(&decl.generics);
+        self.program.extends[ext].generics = lowered;
+    }
+
+    fn lower_generic_bounds_with(&mut self, scope: &Scope, written: &'a [ast::GenericParam], generics: &mut [GenericParam]) {
+        for param in generics.iter_mut() {
+            let name = param.name();
+            let Some(ast_param) = written.iter().find(|g| Self::ast_generic_name(g).name == name) else {
                 continue;
             };
-            bounds.push(generic.bounds.iter().filter_map(|&bound| self.trait_ref(&scope, bound)).collect());
-        }
-        if let Some(generics) = self.generics_mut(def) {
-            for (param, bound) in generics.iter_mut().zip(bounds) {
-                param.bounds = bound;
+            match (param, ast_param) {
+                (GenericParam::Type { bounds, .. }, ast::GenericParam::Type { bounds: ast_bounds, .. }) => {
+                    *bounds = ast_bounds.iter().filter_map(|&b| self.trait_ref(scope, b)).collect();
+                }
+                (GenericParam::Const { ty, .. }, ast::GenericParam::Const { ty: ast_ty, .. }) => {
+                    let lowered_ty = self.lower_type(scope, *ast_ty);
+                    if !matches!(self.program.types.kind(lowered_ty), TyKind::Error | TyKind::Int(_) | TyKind::Bool | TyKind::String) {
+                        self.error(self.ast(scope.module)[*ast_ty].span, "`const` generic parameter type must be an integer, `Bool`, or `String`");
+                    }
+                    *ty = lowered_ty;
+                }
+                _ => {}
             }
         }
     }
 
-    /// `Self` of a type: itself applied to its own parameters; a built-in type is its own type.
-    fn self_type(&mut self, def: DefId, names: &[Symbol]) -> TyId {
-        let args: Vec<TyId> = names.iter().enumerate().map(|(index, &name)| self.program.types.param(index as u32, name)).collect();
-        let lang = self.program.defs[def].lang;
-        if let Some(ty) = lang.and_then(LangItem::primitive) {
-            return ty;
+    /// The bounds of a definition's type parameters and types of its const parameters.
+    fn lower_bounds(&mut self, def: DefId) {
+        let scope = self.scope_for(def);
+        let written = self.generics_ast(def);
+        let mut current = match &self.program.defs[def].kind {
+            DefKind::Function(function) => function.generics.clone(),
+            DefKind::Record(record) => record.generics.clone(),
+            DefKind::Enum(en) => en.generics.clone(),
+            DefKind::Trait(item) => item.generics.clone(),
+            DefKind::Alias(alias) => alias.generics.clone(),
+            _ => return,
+        };
+        self.lower_generic_bounds_with(&scope, written, &mut current);
+        if let Some(generics) = self.generics_mut(def) {
+            *generics = current;
         }
-        match lang {
-            Some(LangItem::Option) if args.len() == 1 => self.program.types.optional(args[0]),
-            Some(LangItem::Array) if args.len() == 1 => self.program.types.array(args[0]),
-            _ => self.program.types.adt(def, args),
+    }
+
+    fn lower_extend_header(&mut self, ext: ExtendId) {
+        let origin = self.program.extends[ext].origin;
+        let module = self.program.extends[ext].module;
+        let ItemKind::Extend(decl) = &self.ast(module)[origin.item].kind else { return };
+        let mut generics = self.program.extends[ext].generics.clone();
+        let params = generic_names(&generics);
+        let const_params = generic_const_flags(&generics);
+        let mut scope = Scope { module, params, const_params, self_ty: None, bound: Vec::new() };
+        self.lower_generic_bounds_with(&scope, &decl.generics, &mut generics);
+        let target = self.lower_type(&scope, decl.target);
+        scope.self_ty = Some(target);
+        let traits = self.lower_traits(&scope, &decl.traits);
+        let extend_def = &mut self.program.extends[ext];
+        extend_def.generics = generics;
+        extend_def.target = target;
+        extend_def.traits = traits;
+        if let Some(head) = TyHead::of(&self.program.types, target) {
+            self.program.extend_by_head.entry(head).or_default().push(ext);
+        } else if target != TyId::ERROR {
+            self.error(self.ast(module)[decl.target].span, "cannot `extend` this type");
         }
+    }
+
+    /// `Self` of a type: itself applied to its own parameters.
+    fn self_type(&mut self, def: DefId, generics: &[GenericParam]) -> TyId {
+        let args: Vec<GenericArg> = generics
+            .iter()
+            .enumerate()
+            .map(|(index, param)| match param {
+                GenericParam::Type { name, .. } => GenericArg::Type(self.program.types.param(index as u32, *name)),
+                GenericParam::Const { name, .. } => GenericArg::Const(ConstArg::Param { index: index as u32, name: *name }),
+            })
+            .collect();
+        self.program.types.adt(def, args)
     }
 
     /// The names a definition's types are written against.
     pub(crate) fn scope_for(&mut self, def: DefId) -> Scope {
         let module = self.program.defs[def].module;
         let mut params = Vec::new();
+        let mut const_params = Vec::new();
         let mut self_ty = None;
-        if let Some(owner) = self.program.defs[def].owner {
+        if let Some(ext) = self.program.defs[def].extend {
+            let extend_def = &self.program.extends[ext];
+            params = generic_names(&extend_def.generics);
+            const_params = generic_const_flags(&extend_def.generics);
+            self_ty = (extend_def.target != TyId::ERROR).then_some(extend_def.target);
+        } else if let Some(owner) = self.program.defs[def].owner {
             match &self.program.defs[owner].kind {
                 DefKind::Trait(item) => {
                     params.push(self.self_name);
+                    const_params.push(false);
                     params.extend(generic_names(&item.generics));
+                    const_params.extend(generic_const_flags(&item.generics));
                     self_ty = Some(self.program.types.param(0, self.self_name));
                 }
-                DefKind::Record(record) => params = generic_names(&record.generics),
-                DefKind::Enum(en) => params = generic_names(&en.generics),
+                DefKind::Record(record) => {
+                    let g = record.generics.clone();
+                    params = generic_names(&g);
+                    const_params = generic_const_flags(&g);
+                    self_ty = Some(self.self_type(owner, &g));
+                }
+                DefKind::Enum(en) => {
+                    let g = en.generics.clone();
+                    params = generic_names(&g);
+                    const_params = generic_const_flags(&g);
+                    self_ty = Some(self.self_type(owner, &g));
+                }
                 _ => {}
-            }
-            if self_ty.is_none() && matches!(self.program.defs[owner].kind, DefKind::Record(_) | DefKind::Enum(_)) {
-                self_ty = Some(self.self_type(owner, &params));
             }
         }
         match &self.program.defs[def].kind {
-            DefKind::Function(function) => params.extend(generic_names(&function.generics)),
+            DefKind::Function(function) => {
+                params.extend(generic_names(&function.generics));
+                const_params.extend(generic_const_flags(&function.generics));
+            }
             DefKind::Record(record) => {
-                params = generic_names(&record.generics);
-                self_ty = Some(self.self_type(def, &params));
+                let g = record.generics.clone();
+                params = generic_names(&g);
+                const_params = generic_const_flags(&g);
+                self_ty = Some(self.self_type(def, &g));
             }
             DefKind::Enum(en) => {
-                params = generic_names(&en.generics);
-                self_ty = Some(self.self_type(def, &params));
+                let g = en.generics.clone();
+                params = generic_names(&g);
+                const_params = generic_const_flags(&g);
+                self_ty = Some(self.self_type(def, &g));
             }
-            DefKind::Alias(alias) => params = generic_names(&alias.generics),
+            DefKind::Alias(alias) => {
+                params = generic_names(&alias.generics);
+                const_params = generic_const_flags(&alias.generics);
+            }
             DefKind::Trait(item) => {
                 params = std::iter::once(self.self_name).chain(generic_names(&item.generics)).collect();
+                const_params = std::iter::once(false).chain(generic_const_flags(&item.generics)).collect();
                 self_ty = Some(self.program.types.param(0, self.self_name));
             }
             _ => {}
         }
         let bound = self.trait_names.get(&def).cloned().unwrap_or_default();
-        Scope { module, params, self_ty, bound }
+        Scope { module, params, const_params, self_ty, bound }
     }
 
     fn param_type(&mut self, scope: &Scope, name: ast::Ident, ty: Option<Id<ast::Type>>) -> TyId {
@@ -213,13 +326,16 @@ impl<'a> Cx<'a> {
         let Some(signature) = self.fn_ast(def) else { return };
         let scope = self.scope_for(def);
         let owner = self.program.defs[def].owner;
-        let owner_is_enum = owner.is_some_and(|owner| matches!(self.program.defs[owner].kind, DefKind::Enum(_)));
+        let extend = self.program.defs[def].extend;
+        let has_owner = owner.is_some() || extend.is_some();
+        let owner_is_enum = owner.is_some_and(|owner| matches!(self.program.defs[owner].kind, DefKind::Enum(_)))
+            || extend.is_some_and(|ext| matches!(self.program.types.kind(self.program.extends[ext].target), TyKind::Adt { def: target_def, .. } if self.program.defs[*target_def].enum_def().is_some()));
         let mut receiver = Receiver::None;
         let mut params = Vec::new();
         for (position, param) in signature.params.iter().enumerate() {
             match &param.kind {
                 ParamKind::SelfValue { is_var } => {
-                    if owner.is_none() {
+                    if !has_owner {
                         self.error(param.span, "`self` is only for methods");
                     } else if position != 0 {
                         self.error(param.span, "`self` comes first");
@@ -262,7 +378,7 @@ impl<'a> Cx<'a> {
             return;
         }
         let ty = self.lower_type(scope, field.ty);
-        seen.push(Field { name: field.name.name, ty, is_pub: field.is_pub, is_var: field.binding == Some(BindingKind::Var), default: field.default, span: field.name.span });
+        seen.push(Field { name: field.name.name, ty, is_pub: field.is_pub, is_var: field.binding == Some(BindingKind::Var), default: field.default, doc: field.doc, span: field.name.span });
     }
 
     fn lower_traits(&mut self, scope: &Scope, traits: &[Id<ast::Type>]) -> Vec<Bound> {
@@ -350,11 +466,71 @@ impl<'a> Cx<'a> {
             return;
         }
         let Some(annotation) = binding.ty else { return };
-        let scope = Scope { module, params: Vec::new(), self_ty: None, bound: Vec::new() };
+        let scope = Scope::empty(module);
         let ty = self.lower_type(&scope, annotation);
         if let DefKind::Global(global) = &mut self.program.defs[def].kind {
             global.ty = ty;
         }
+    }
+
+    /// Evaluates a module-level `const` item once; a cycle is reported cleanly.
+    pub(crate) fn ensure_const_def(&mut self, def: DefId) -> ConstVal {
+        if let Some(val) = self.program.const_vals.get(&def) {
+            return val.clone();
+        }
+        let span = self.program.defs[def].span;
+        if self.const_progress.get(&def) == Some(&Progress::Resolving) {
+            let name = self.text(self.program.defs[def].name);
+            self.error(span, format!("`const {name}` refers to itself"));
+            return ConstVal::Int(0, IntTy::I64);
+        }
+        self.const_progress.insert(def, Progress::Resolving);
+        let module = self.program.defs[def].module;
+        let DefKind::Const(c) = &self.program.defs[def].kind else {
+            self.const_progress.insert(def, Progress::Done);
+            return ConstVal::Int(0, IntTy::I64);
+        };
+        let (ast_ty, expr) = (c.ast_ty, c.expr);
+        let declared_ty = ast_ty.map(|t| {
+            let scope = Scope::empty(module);
+            self.lower_type(&scope, t)
+        });
+        let val = match comptime::eval_ast_const(self, module, expr) {
+            Ok(v) => v,
+            Err(msg) => {
+                self.error(self.ast(module)[expr].span, msg);
+                ConstVal::Int(0, IntTy::I64)
+            }
+        };
+        let inferred_ty = match &val {
+            ConstVal::Int(_, int) => self.program.types.int(*int),
+            ConstVal::Bool(_) => TyId::BOOL,
+            ConstVal::String(_) => TyId::STRING,
+            ConstVal::Null => TyId::UNIT,
+            ConstVal::Type(_) => TyId::STRING,
+            ConstVal::Struct { ty, .. } | ConstVal::Enum { ty, .. } => *ty,
+            ConstVal::Tuple(_) | ConstVal::Array(_) => declared_ty.unwrap_or(TyId::ERROR),
+        };
+        let final_ty = if let Some(d_ty) = declared_ty {
+            if let ConstVal::Int(n, _) = &val
+                && let TyKind::Int(target_int) = self.program.types.kind(d_ty)
+            {
+                if !target_int.fits(*n) {
+                    self.error(span, format!("constant value {n} does not fit in {}", self.program.render(d_ty, self.interner)));
+                } else {
+                    self.program.const_vals.insert(def, ConstVal::Int(*n, *target_int));
+                }
+            }
+            d_ty
+        } else {
+            inferred_ty
+        };
+        self.program.const_vals.entry(def).or_insert_with(|| val.clone());
+        if let DefKind::Const(c) = &mut self.program.defs[def].kind {
+            c.ty = final_ty;
+        }
+        self.const_progress.insert(def, Progress::Done);
+        self.program.const_vals[&def].clone()
     }
 
     /// Resolves an alias's target once; a use while it resolves is a cycle.

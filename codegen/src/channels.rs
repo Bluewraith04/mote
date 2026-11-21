@@ -18,7 +18,7 @@ impl Lowering<'_, '_, '_> {
     /// The message type of a `Sender` or `Receiver` operand.
     fn message_of(&self, end: TyId) -> Result<TyId, CompileError> {
         let message = match self.env.program.types.kind(end) {
-            TyKind::Adt { args, .. } => args.first().copied().ok_or_else(|| internal("a channel end without a message type"))?,
+            TyKind::Builtin { args, .. } => args.first().copied().ok_or_else(|| internal("a channel end without a message type"))?,
             _ => return Err(internal("a channel call on a value that is not a channel end")),
         };
         if matches!(self.env.program.types.kind(message), TyKind::Optional(_)) {

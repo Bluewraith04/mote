@@ -1,0 +1,163 @@
+// Tests for Pointer<T>, Buffer<T>, @is_flat, path-first imports, and Buffer views.
+import std.test.{assert, assert_eq}
+import std.mem.*
+
+struct Vec2 {
+    x: Float
+    y: Float
+}
+
+struct Headered {
+    tag: UInt8
+    val: Int64
+}
+
+test "comptime @is_flat classifies flat vs GC reference types" {
+    assert(@is_flat(Int), "Int is flat")
+    assert(@is_flat(Float32), "Float32 is flat")
+    assert(@is_flat(Bool), "Bool is flat")
+    assert(@is_flat(Pointer<Int>), "Pointer<Int> is flat")
+    assert(@is_flat(Pointer<String>), "Pointer handle itself is flat")
+    assert(@is_flat(Vec2), "flat struct is flat")
+    assert(@is_flat((Int, Float)), "flat tuple is flat")
+    assert(@is_flat([Int; 4]), "fixed array of Int is flat")
+    assert(@is_flat(Int?), "optional flat type is flat")
+    assert(!@is_flat(String), "String is GC-managed")
+    assert(!@is_flat([Int]), "dynamic array is GC-managed")
+    assert(!@is_flat(List<Int>), "List is GC-managed")
+    assert(!@is_flat((Int, String)), "tuple holding String is not flat")
+    assert(!@is_flat(Vec2) == false, "double check Vec2")
+}
+
+test "Pointer<T> low-level alloc, alignment, indexing, realloc, copy, zero, cast, and free" {
+    let nil_ptr = Pointer<Int>.nil()
+    assert(nil_ptr.is_null(), "nil is null")
+    nil_ptr.free()
+
+    var p = Pointer<Int>.alloc(4)
+    assert(!p.is_null(), "alloc returns non-null")
+    assert(p.address % (64 as UInt64) == (0 as UInt64), "64-byte SIMD aligned")
+
+    p.store(100)
+    p[1] = 200
+    p.store(300, 2)
+    p[3] = 400
+    assert_eq(p.load(), 100)
+    assert_eq(p[1], 200)
+    assert_eq(p.offset(2).load(), 300)
+    assert_eq(p.offset(3).offset(-1).load(), 300)
+
+    let same = Pointer<Int>.from_address(p.address)
+    assert_eq(same.load(3), 400)
+
+    p = p.realloc(6)
+    assert(p.address % (64 as UInt64) == (0 as UInt64), "realloc preserves 64-byte alignment")
+    assert_eq(p[0], 100)
+    assert_eq(p[3], 400)
+    p[4] = 500
+    p[5] = 600
+
+    p.offset(1).copy_from(p, 4)
+    assert_eq(p[0], 100)
+    assert_eq(p[1], 100)
+    assert_eq(p[2], 200)
+    assert_eq(p[3], 300)
+    assert_eq(p[4], 400)
+
+    p.offset(2).zero(2)
+    assert_eq(p[1], 100)
+    assert_eq(p[2], 0)
+    assert_eq(p[3], 0)
+    assert_eq(p[4], 400)
+
+    let raw_bytes = p.cast<UInt8>()
+    assert_eq(raw_bytes.address, p.address)
+    assert_eq(raw_bytes.load(0), 100 as UInt8)
+
+    p = p.realloc(2)
+    assert_eq(p[0], 100)
+    assert_eq(p[1], 100)
+    p.free()
+
+    var pts = Pointer<Vec2>.alloc(2)
+    pts[0] = Vec2 { x: 1.5, y: 2.5 }
+    pts[1] = Vec2 { x: -3.0, y: 4.0 }
+    assert_eq(pts.offset(1).load().x, -3.0)
+    assert_eq(pts.load(0).y, 2.5)
+    pts.free()
+}
+
+test "Buffer<T> lifecycle, operations, with Closeable, and Span/MutSpan integration" {
+    let empty = Buffer<Int>.alloc(0)
+    assert_eq(empty.len(), 0)
+    assert(empty.is_empty(), "empty buffer")
+    assert_eq(empty.close().is_ok(), true)
+    assert(empty.is_closed(), "empty closed")
+    assert_eq(empty.close().is_ok(), true)
+
+    var z = Buffer<Headered>.zeroed(3)
+    assert_eq(z[0].val, 0 as Int64)
+    assert_eq(z[2].tag, 0 as UInt8)
+    z[1] = Headered { tag: 7 as UInt8, val: 99 as Int64 }
+    assert_eq(z.get(1).val, 99 as Int64)
+    assert_eq(z.get_or(9, Headered { tag: 1 as UInt8, val: -1 as Int64 }).val, -1 as Int64)
+    assert_eq(z.get_or(1, Headered { tag: 1 as UInt8, val: -1 as Int64 }).tag, 7 as UInt8)
+    let _ = z.close()
+
+    with guard = Buffer<Int>.from_array([10, 20, 30, 40]) {
+        var buf = guard
+        assert_eq(buf.len(), 4)
+        assert(!buf.is_empty(), "non-empty")
+        assert(!buf.is_closed(), "open inside with")
+        assert(buf.as_ptr().address % (64 as UInt64) == (0 as UInt64), "64-byte aligned")
+
+        buf.set(1, 25)
+        assert_eq(buf.get(1), 25)
+        assert(buf.to_array() == [10, 25, 30, 40], "to_array after set")
+
+        let sp = guard.span()
+        assert_eq(sp.len(), 4)
+        assert(sp[1..3].to_array() == [25, 30], "slice over Buffer.span")
+        assert_eq(sp.step(2).sum(), 40)
+
+        var mv = buf.mut_span()
+        mv[1..3].fill(99)
+        assert_eq(buf[1], 99)
+        assert_eq(buf[2], 99)
+        mv.reverse_in_place()
+        assert(buf.to_array() == [40, 99, 99, 10], "reverse_in_place via mut_span")
+
+        var loop_acc = 0
+        for x in Span<Int>.from_buffer(guard) {
+            loop_acc += x
+        }
+        assert_eq(loop_acc, 248)
+
+        buf.realloc(6)
+        buf[4] = 50
+        buf[5] = 60
+        assert_eq(buf.len(), 6)
+
+        var src = Buffer<Int>.alloc(6)
+        src.fill(7)
+        buf.copy_from(src)
+        assert(buf.to_array() == [7, 7, 7, 7, 7, 7], "copy_from")
+        src.zero()
+        assert(src.to_array() == [0, 0, 0, 0, 0, 0], "zero")
+        let _ = src.close()
+
+        var mspan = MutSpan<Int>.from_buffer(buf)
+        mspan.fill(3)
+        assert_eq(buf[5], 3)
+
+        let replacement: [Int] = [1, 2, 3, 4, 5, 6]
+        buf.copy_from_span(replacement.span())
+        assert(buf.to_array() == [1, 2, 3, 4, 5, 6], "copy_from_span")
+    }
+
+    // Ensure non-flat Span<String> and MutSpan<String> continue compiling alongside Buffer<T>.
+    var strs: [String] = ["a", "b", "c"]
+    var sm = strs.mut_span()
+    sm[1] = "z"
+    assert(strs.span().to_array() == ["a", "z", "c"], "Span<String> still works")
+}

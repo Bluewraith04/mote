@@ -5,7 +5,7 @@ mod common;
 use mote::cli;
 use mote_abi::{CType, Entry, FaultKind, HandleKind, Scalar, CONTEXT, CONTEXT_FIELDS};
 use mote_ir::intrinsics::{self, effect};
-use mote_semantics::{LangItem, ATTRIBUTES};
+use mote_semantics::ATTRIBUTES;
 use mote_syntax::KEYWORDS;
 
 use common::{TABLE_CLOSE as CLOSE, TABLE_OPEN as OPEN};
@@ -22,7 +22,6 @@ fn tables() -> Vec<(&'static str, String)> {
         ("fault-kinds", fault_kinds()),
         ("intrinsics", intrinsic_rows()),
         ("keywords", keywords()),
-        ("lang-items", lang_items()),
         ("std-modules", std_modules()),
         ("usage", usage()),
     ]
@@ -85,7 +84,7 @@ fn abi_ctypes() -> String {
 }
 
 fn std_modules() -> String {
-    let mut names: Vec<String> = std::fs::read_dir(common::root().join("std/src"))
+    let mut names: Vec<String> = std::fs::read_dir(common::root().join("mote_std/std/src"))
         .expect("the std source")
         .filter_map(|entry| entry.ok()?.path().file_stem().map(|stem| stem.to_string_lossy().into_owned()))
         .filter(|name| name != "lib" && name != "prelude")
@@ -125,14 +124,6 @@ fn intrinsic_rows() -> String {
 fn keywords() -> String {
     let words: Vec<String> = KEYWORDS.iter().map(|(word, _)| format!("`{word}`")).collect();
     format!("* Reserved: {}.\n", words.join(" "))
-}
-
-fn lang_items() -> String {
-    let mut out = String::from("| `@lang` name | Handle |\n|---|---|\n");
-    for item in LangItem::ALL {
-        out.push_str(&format!("| `{}` | {} |\n", item.name(), if item.is_handle() { "yes" } else { "no" }));
-    }
-    out
 }
 
 /// The text of `mote help` after the version line.
@@ -232,7 +223,7 @@ fn tables_every_generated_table_in_the_documents_is_what_the_code_says() {
 #[test]
 fn tables_the_keywords_are_the_words_the_lexer_reserves() {
     assert!(keywords().starts_with("* Reserved: `Self` `as` "));
-    assert_eq!(KEYWORDS.len(), 33);
+    assert_eq!(KEYWORDS.len(), 36);
 }
 
 #[test]

@@ -87,7 +87,11 @@ fn typetable_a_recursive_enum_holds_its_children_in_boxes() {
     for field in &node.fields {
         assert!(matches!(map.table.get(field.ty).kind, Kind::Box(inner) if inner == tree), "{:?}", map.table.get(field.ty).kind);
     }
-    let tree_ty = pipeline.module.functions.iter().find_map(|(_, function)| function.params.first().map(|&param| function.regs[param].ty)).unwrap();
+    let tree_ty = pipeline.module.functions.iter().find_map(|(_, function)| {
+        matches!(&function.kind, FunctionKind::Instance(instance) if pipeline.interner.resolve(pipeline.program.defs[instance.def].name) == "sum")
+            .then(|| function.params.first().map(|&param| function.regs[param].ty))
+            .flatten()
+    }).unwrap();
     assert_eq!(map.id(tree_ty), tree);
     assert_eq!(map.boxed(tree_ty), node.fields[0].ty);
 }
@@ -134,16 +138,16 @@ fn typetable_a_list_has_a_buffer_array_and_an_array_strides_by_its_element() {
 
 #[test]
 fn typetable_handles_have_their_kinds_and_a_channel_is_behind_its_ends() {
-    let source = "import { Channel, Mutex } from std.sync\n\nfn main() {\n    let (tx, rx) = Channel<Int>(1)\n    let m = Mutex(5)\n    scope {\n        let t = spawn { return 1 }\n        tx.send(2)\n        println(rx.recv())\n        println(t.await())\n    }\n    println(m.get())\n}\n";
+    let source = "import Channel from std.sync\n\nfn main() {\n    let (tx, rx) = Channel<Int>(1)\n    let m = Mutex(5)\n    scope {\n        let t = spawn { return 1 }\n        tx.send(2)\n        println(rx.recv())\n        println(t.await())\n    }\n    println(m.get())\n}\n";
     let (_pipeline, map) = mapped(source);
     let kind = |name: &str| match &entry(&map, name).1.kind {
         Kind::Handle(handle, payload) => (*handle, payload.len()),
         other => panic!("{name} is {other:?}"),
     };
-    assert_eq!(kind("std.sync.Sender<Int>"), (HandleKind::Sender, 0));
-    assert_eq!(kind("std.sync.Receiver<Int>"), (HandleKind::Receiver, 0));
-    assert_eq!(kind("std.sync.Mutex<Int>"), (HandleKind::Mutex, 1));
-    assert_eq!(kind("std.task.Task<Int>"), (HandleKind::Task, 1));
+    assert_eq!(kind("Sender<Int>"), (HandleKind::Sender, 0));
+    assert_eq!(kind("Receiver<Int>"), (HandleKind::Receiver, 0));
+    assert_eq!(kind("Mutex<Int>"), (HandleKind::Mutex, 1));
+    assert_eq!(kind("Task<Int>"), (HandleKind::Task, 1));
     assert_eq!(kind("Channel<Int>"), (HandleKind::Channel, 1));
 }
 
@@ -169,7 +173,7 @@ fn typetable_a_named_function_used_as_a_value_is_a_closure_with_no_captures() {
 
 #[test]
 fn typetable_every_std_test_file_gets_a_table_with_an_entry_for_each_register() {
-    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../std/tests");
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../mote_std/std/tests");
     let mut paths: Vec<_> = std::fs::read_dir(&dir).expect("the std/tests directory").map(|entry| entry.expect("a directory entry").path()).collect();
     paths.sort();
     for path in paths.iter().filter(|path| path.extension().is_some_and(|extension| extension == "mote")) {
@@ -187,7 +191,7 @@ fn typetable_every_std_test_file_gets_a_table_with_an_entry_for_each_register() 
 
 #[test]
 fn typetable_every_type_of_a_register_has_an_entry_and_a_second_build_gives_the_same_bytes() {
-    let source = "import { Channel } from std.sync\nimport { Stream } from std.collections\n\nenum Tree {\n    Leaf(Int)\n    Node(Tree, Tree)\n}\n\nclass Cell {\n    var items: List<(Int, String)> = []\n    var by_name: Map<String, Int> = {}\n    var next: Cell? = null\n}\n\nfn gen() -> Stream<Int> {\n    yield 1\n    yield 2\n}\n\nfn main() {\n    var c = Cell()\n    c.items.push((1, \"a\"))\n    c.by_name[\"a\"] = 1\n    let t = Tree.Node(Tree.Leaf(1), Tree.Leaf(2))\n    let u: Int | String | Float = 1\n    let fixed: [Int; 3] = [1, 2, 3]\n    let (tx, rx) = Channel<String>(1)\n    for v in gen() { println(v) }\n    println(fixed[0])\n    println(c.by_name.len())\n}\n";
+    let source = "import Channel from std.sync\n\nenum Tree {\n    Leaf(Int)\n    Node(Tree, Tree)\n}\n\nclass Cell {\n    var items: List<(Int, String)> = []\n    var by_name: Map<String, Int> = {}\n    var next: Cell? = null\n}\n\nfn gen() -> Stream<Int> {\n    yield 1\n    yield 2\n}\n\nfn main() {\n    var c = Cell()\n    c.items.push((1, \"a\"))\n    c.by_name[\"a\"] = 1\n    let t = Tree.Node(Tree.Leaf(1), Tree.Leaf(2))\n    let u: Int | String | Float = 1\n    let fixed: [Int; 3] = [1, 2, 3]\n    let (tx, rx) = Channel<String>(1)\n    for v in gen() { println(v) }\n    println(fixed[0])\n    println(c.by_name.len())\n}\n";
     let (pipeline, map) = mapped(source);
     for (_, function) in pipeline.module.functions.iter() {
         for (_, reg) in function.regs.iter() {

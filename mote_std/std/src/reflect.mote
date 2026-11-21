@@ -1,0 +1,207 @@
+// Static compile-time reflection, formatting, and shallow duplication.
+
+pub enum Kind {
+    Null
+    Bool
+    Int
+    Float
+    String
+    Tuple
+    Array
+    FixedArray
+    Optional
+    Union
+    Any
+    Function
+    List
+    Handle
+    Map
+    Set
+    Class
+    Struct
+    Enum
+}
+
+pub enum Shape {
+    Unit
+    Tuple
+    Named
+}
+
+pub struct TypeInfo {
+    pub name: String
+    pub kind: Kind
+    pub is_pub: Bool
+    pub size: Int
+    pub align: Int
+    pub field_count: Int
+    pub variant_count: Int
+    pub doc: String
+}
+
+pub struct FieldInfo {
+    pub name: String
+    pub type_name: String
+    pub index: Int
+    pub is_var: Bool
+    pub is_pub: Bool
+    pub has_default: Bool
+    pub doc: String
+}
+
+pub struct VariantInfo {
+    pub name: String
+    pub index: Int
+    pub shape: Shape
+    pub field_count: Int
+}
+
+fn strip_generics(name: String) -> String {
+    var cur = match name.find("<") {
+        Some(i) => name.slice(0, i)
+        None => name.view()
+    }
+    var running = true
+    while running {
+        match cur.find(".") {
+            Some(dot) => {
+                cur = cur.slice(dot + 1, cur.len())
+            }
+            None => {
+                running = false
+            }
+        }
+    }
+    return cur.to_string()
+}
+
+fn quote_string(s: String) -> String {
+    var escaped = s.replace("\\", "\\\\")
+    escaped = escaped.replace("\"", "\\\"")
+    escaped = escaped.replace("\n", "\\n")
+    escaped = escaped.replace("\r", "\\r")
+    escaped = escaped.replace("\t", "\\t")
+    return "\"${escaped}\""
+}
+
+fn show_nested<T>(value: T, debug: Bool) -> String {
+    const info = @type_info(T)
+    comptime if info.kind == Kind.Null {
+        return "null"
+    } else comptime if info.kind == Kind.Bool {
+        if value { return "true" }
+        return "false"
+    } else comptime if info.kind == Kind.Int {
+        return @__num_to_string(value)
+    } else comptime if info.kind == Kind.Float {
+        return @__num_to_string(value)
+    } else comptime if info.kind == Kind.String {
+        return quote_string(value)
+    } else comptime if info.kind == Kind.Optional {
+        return match value {
+            Some(inner) => show_nested(inner, debug)
+            None => "null"
+        }
+    } else comptime if info.kind == Kind.Tuple {
+        var out = "("
+        var first = true
+        comptime for f in @fields(T) {
+            if !first { out = out + ", " }
+            first = false
+            out = out + show_nested(@field(value, f.name), debug)
+        }
+        return out + ")"
+    } else comptime if info.kind == Kind.Array || info.kind == Kind.FixedArray || info.kind == Kind.List {
+        var out = "["
+        var first = true
+        for item in value {
+            if !first { out = out + ", " }
+            first = false
+            out = out + show_nested(item, debug)
+        }
+        return out + "]"
+    } else comptime if info.kind == Kind.Map {
+        var out = "{"
+        var first = true
+        for (k, v) in value.items() {
+            if !first { out = out + ", " }
+            first = false
+            out = out + "${show_nested(k, debug)}: ${show_nested(v, debug)}"
+        }
+        return out + "}"
+    } else comptime if info.kind == Kind.Set {
+        var out = "{"
+        var first = true
+        for item in value.items() {
+            if !first { out = out + ", " }
+            first = false
+            out = out + show_nested(item, debug)
+        }
+        return out + "}"
+    } else comptime if info.kind == Kind.Struct || info.kind == Kind.Class {
+        let base = strip_generics(info.name)
+        comptime if info.field_count == 0 {
+            if debug { return base }
+            return "${base}()"
+        } else {
+            var out = if debug { "${base} { " } else { "${base}(" }
+            var first = true
+            comptime for f in @fields(T) {
+                if !first { out = out + ", " }
+                first = false
+                out = out + "${f.name}: ${show_nested(@field(value, f.name), debug)}"
+            }
+            if debug { return out + " }" }
+            return out + ")"
+        }
+    } else comptime if info.kind == Kind.Enum {
+        comptime for v in @variants(T) {
+            if @__variant_is(value, v.name) {
+                comptime if v.shape == Shape.Unit {
+                    return v.name
+                } else comptime if v.shape == Shape.Tuple {
+                    var out = "${v.name}("
+                    var first = true
+                    comptime for f in @__variant_fields(T, v.name) {
+                        if !first { out = out + ", " }
+                        first = false
+                        out = out + show_nested(@__variant_field(value, v.name, f.name), debug)
+                    }
+                    return out + ")"
+                } else {
+                    var out = if debug { "${v.name} { " } else { "${v.name}(" }
+                    var first = true
+                    comptime for f in @__variant_fields(T, v.name) {
+                        if !first { out = out + ", " }
+                        first = false
+                        out = out + "${f.name}: ${show_nested(@__variant_field(value, v.name, f.name), debug)}"
+                    }
+                    if debug { return out + " }" }
+                    return out + ")"
+                }
+            }
+        }
+        return strip_generics(info.name)
+    } else comptime if info.kind == Kind.Function {
+        return "<fn>"
+    } else {
+        return strip_generics(info.name)
+    }
+}
+
+pub fn show<T>(value: T) -> String {
+    const info = @type_info(T)
+    comptime if info.kind == Kind.String {
+        return value
+    } else {
+        return show_nested(value, false)
+    }
+}
+
+pub fn debug_text<T>(value: T) -> String {
+    return show_nested(value, true)
+}
+
+pub fn duplicate<T>(value: T) -> T {
+    return @__duplicate(value)
+}

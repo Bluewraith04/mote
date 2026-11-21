@@ -1,6 +1,0 @@
-import { Dyn, build } from std.meta
-
-fn main() {
-    let n: Int = build(0, [Dyn.of(1)])
-    println(n)
-}

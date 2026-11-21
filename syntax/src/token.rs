@@ -73,7 +73,10 @@ pub enum TokenKind {
     Import,
     From,
     As,
-    Native,
+    Comptime,
+    Const,
+    Extend,
+    Extern,
     Scope,
     Spawn,
     With,
@@ -186,14 +189,18 @@ pub struct Token {
 }
 
 /// Every keyword with its token, sorted by word.
-pub const KEYWORDS: [(&str, TokenKind); 33] = [
+pub const KEYWORDS: [(&str, TokenKind); 36] = [
     ("Self", TokenKind::SelfUpper),
     ("as", TokenKind::As),
     ("break", TokenKind::Break),
     ("class", TokenKind::Class),
+    ("comptime", TokenKind::Comptime),
+    ("const", TokenKind::Const),
     ("continue", TokenKind::Continue),
     ("else", TokenKind::Else),
     ("enum", TokenKind::Enum),
+    ("extend", TokenKind::Extend),
+    ("extern", TokenKind::Extern),
     ("false", TokenKind::False),
     ("fn", TokenKind::Fn),
     ("for", TokenKind::For),
@@ -204,7 +211,6 @@ pub const KEYWORDS: [(&str, TokenKind); 33] = [
     ("is", TokenKind::Is),
     ("let", TokenKind::Let),
     ("match", TokenKind::Match),
-    ("native", TokenKind::Native),
     ("null", TokenKind::Null),
     ("pub", TokenKind::Pub),
     ("return", TokenKind::Return),

@@ -2,10 +2,9 @@ use std::collections::HashSet;
 
 use mote_base::{Diagnostic, DiagnosticSink, Id, Interner, Span};
 
-use crate::defs::LangItem;
 use crate::program::Program;
 use crate::tree::{ArmBody, Block, Body, Condition, Else, Expr, ExprKind, IfStmt, Local, Match, Pattern, Stmt, StmtKind};
-use crate::types::TyKind;
+use crate::types::{BuiltinTy, TyKind};
 use crate::walk::{operands, pattern_locals};
 
 /// The channel ends a `spawn` took, on some path to here; `None` where control cannot arrive.
@@ -53,10 +52,7 @@ struct Flow<'a> {
 
 impl<'a> Flow<'a> {
     fn tracked(&self, local: Id<Local>) -> bool {
-        match self.program.types.kind(self.body.locals[local].ty) {
-            TyKind::Adt { def, .. } => matches!(self.program.defs[*def].lang, Some(LangItem::Sender | LangItem::Receiver)),
-            _ => false,
-        }
+        matches!(self.program.types.kind(self.body.locals[local].ty), TyKind::Builtin { kind: BuiltinTy::Sender | BuiltinTy::Receiver, .. })
     }
 
     fn use_local(&mut self, local: Id<Local>, span: Span) {
@@ -156,7 +152,11 @@ impl<'a> Flow<'a> {
                 }
             }
             StmtKind::Yield(value) | StmtKind::Expr(value) => self.expr(*value),
-            StmtKind::Error => {}
+            StmtKind::Const { .. }
+            | StmtKind::ComptimeIf(_)
+            | StmtKind::ComptimeFor { .. }
+            | StmtKind::ComptimeBlock(_)
+            | StmtKind::Error => {}
         }
     }
 

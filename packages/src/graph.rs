@@ -242,7 +242,7 @@ mod tests {
 
     #[test]
     fn graph_resolves_a_dot_import_to_the_sibling_file() {
-        let graph = build_of(pkg("app", &[], &[("main.mote", "import .util\nimport { f } from .util\nimport { * } from .sub.worker\n"), ("util.mote", ""), ("sub/worker.mote", "")]), Vec::new());
+        let graph = build_of(pkg("app", &[], &[("main.mote", "import .util\nimport f from .util\nimport * from .sub.worker\n"), ("util.mote", ""), ("sub/worker.mote", "")]), Vec::new());
         assert_eq!(texts(&graph), Vec::<String>::new());
         assert_eq!(leads_to(&graph, graph.packages[1].entry.unwrap()), ["app.util", "app.util", "app.sub.worker"]);
     }
@@ -258,7 +258,7 @@ mod tests {
 
     #[test]
     fn graph_resolves_std_imports_in_every_package() {
-        let app = pkg("app", &["pane"], &[("main.mote", "import std\nimport std.string as s\nimport { len } from std.string\nimport std.sub.deep\n")]);
+        let app = pkg("app", &["pane"], &[("main.mote", "import std\nimport std.string as s\nimport len from std.string\nimport std.sub.deep\n")]);
         let pane = pkg("pane", &[], &[("lib.mote", "import std.string\n")]);
         let graph = build_of(app, vec![pane]);
         assert_eq!(texts(&graph), Vec::<String>::new());
@@ -269,7 +269,7 @@ mod tests {
 
     #[test]
     fn graph_resolves_a_dependency_name_to_its_lib_and_its_files() {
-        let app = pkg("app", &["pane"], &[("main.mote", "import pane\nimport pane.nav\nimport { go } from pane.nav\n")]);
+        let app = pkg("app", &["pane"], &[("main.mote", "import pane\nimport pane.nav\nimport go from pane.nav\n")]);
         let pane = pkg("pane", &[], &[("lib.mote", ""), ("nav.mote", "")]);
         let graph = build_of(app, vec![pane]);
         assert_eq!(texts(&graph), Vec::<String>::new());
@@ -304,11 +304,11 @@ mod tests {
 
     #[test]
     fn graph_a_file_or_folder_that_starts_with_an_underscore_is_private_to_its_package() {
-        let app = pkg("app", &["pane"], &[("main.mote", "import pane._native\nimport pane._impl.deep\nimport pane.nav\nimport pane\n")]);
-        let pane = pkg("pane", &[], &[("lib.mote", "import ._native\nimport ._impl.deep\n"), ("_native.mote", ""), ("_impl/deep.mote", ""), ("nav.mote", "")]);
+        let app = pkg("app", &["pane"], &[("main.mote", "import pane._lib\nimport pane._impl.deep\nimport pane.nav\nimport pane\n")]);
+        let pane = pkg("pane", &[], &[("lib.mote", "import ._lib\nimport ._impl.deep\n"), ("_lib.mote", ""), ("_impl/deep.mote", ""), ("nav.mote", "")]);
         let graph = build_of(app, vec![pane]);
-        assert_eq!(texts(&graph), ["`pane._native` is private to `pane`", "`pane._impl.deep` is private to `pane`"]);
-        assert_eq!(leads_to(&graph, graph.packages[1].lib.unwrap()), ["pane._native", "pane._impl.deep"]);
+        assert_eq!(texts(&graph), ["`pane._lib` is private to `pane`", "`pane._impl.deep` is private to `pane`"]);
+        assert_eq!(leads_to(&graph, graph.packages[1].lib.unwrap()), ["pane._lib", "pane._impl.deep"]);
     }
 
     #[test]

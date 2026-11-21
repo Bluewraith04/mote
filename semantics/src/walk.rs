@@ -39,6 +39,7 @@ pub(crate) fn operands(kind: &ExprKind) -> Vec<Id<Expr>> {
             _ => args.clone(),
         },
         ExprKind::Field { object, .. } | ExprKind::TupleField { object, .. } => vec![*object],
+        ExprKind::SetField { object, value, .. } => vec![*object, *value],
         ExprKind::Index { object, index } => vec![*object, *index],
         ExprKind::Slice { object, start, end, step, .. } => std::iter::once(*object).chain(*start).chain(*end).chain(*step).collect(),
         ExprKind::Unary { operand, .. } => vec![*operand],
@@ -104,7 +105,8 @@ impl Walker<'_> {
                 self.expr(*value);
                 self.expr(*target);
             }
-            StmtKind::If(branch) => {
+            StmtKind::Const { init, .. } => self.expr(*init),
+            StmtKind::If(branch) | StmtKind::ComptimeIf(branch) => {
                 self.condition(&branch.condition);
                 self.block(&branch.then);
                 match &branch.otherwise {
@@ -121,8 +123,12 @@ impl Walker<'_> {
                 self.expr(looped.iterable);
                 self.block(&looped.body);
             }
+            StmtKind::ComptimeFor { iterable, body, .. } => {
+                self.expr(*iterable);
+                self.block(body);
+            }
             StmtKind::Match(matched) => self.matched(matched),
-            StmtKind::Scope(block) => self.block(block),
+            StmtKind::Scope(block) | StmtKind::ComptimeBlock(block) => self.block(block),
             StmtKind::With { init, body, .. } => {
                 self.expr(*init);
                 self.block(body);
@@ -157,6 +163,12 @@ impl Walker<'_> {
         match &self.body.exprs[id].kind {
             ExprKind::If { condition, then, otherwise } => {
                 self.condition(condition);
+                self.expr(*then);
+                self.expr(*otherwise);
+            }
+            ExprKind::Comptime(block) => self.block(block),
+            ExprKind::ComptimeIf { condition, then, otherwise } => {
+                self.expr(*condition);
                 self.expr(*then);
                 self.expr(*otherwise);
             }

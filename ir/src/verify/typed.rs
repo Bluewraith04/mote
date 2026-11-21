@@ -1,6 +1,6 @@
 //! The typed half of `verify`: operands, results, calls and terminators against the types of the registers.
 
-use mote_semantics::{BinaryOp, Conversion, DefId, DefKind, Enum, Function as Declared, LangItem, Payload, Record, TyId, TyKind, Types, UnaryOp};
+use mote_semantics::{BinaryOp, BuiltinTy, ConstArg, Conversion, DefId, DefKind, Enum, Function as Declared, GenericArg, Payload, Record, TyId, TyKind, Types, UnaryOp};
 
 use super::Check;
 use crate::intrinsics;
@@ -107,8 +107,8 @@ impl<'a> Check<'a> {
         }
     }
 
-    /// Whether `actual` is `declared`, each type parameter being the one type `bound` holds for it, or the first type it meets.
-    fn bind(&self, declared: TyId, actual: TyId, bound: &mut Vec<Option<TyId>>) -> bool {
+    /// Whether `actual` is `declared`, each generic parameter being the one arg `bound` holds for it, or the first arg it meets.
+    fn bind(&self, declared: TyId, actual: TyId, bound: &mut Vec<Option<GenericArg>>) -> bool {
         if self.is_error(declared) || self.is_error(actual) {
             return true;
         }
@@ -118,26 +118,64 @@ impl<'a> Check<'a> {
                 if bound.len() <= index {
                     bound.resize(index + 1, None);
                 }
-                match bound[index] {
-                    Some(held) => self.same(held, actual),
+                match &bound[index] {
+                    Some(GenericArg::Type(held)) => self.same(*held, actual),
+                    Some(GenericArg::Const(_)) => false,
                     None => {
-                        bound[index] = Some(actual);
+                        bound[index] = Some(GenericArg::Type(actual));
                         true
                     }
                 }
             }
-            (TyKind::Adt { def: a, args: x }, TyKind::Adt { def: b, args: y }) => a == b && x.len() == y.len() && x.iter().zip(y).all(|(&d, &t)| self.bind(d, t, bound)),
+            (TyKind::Builtin { kind: a, args: x }, TyKind::Builtin { kind: b, args: y }) => {
+                a == b && x.len() == y.len() && x.iter().zip(y).all(|(&d, &t)| self.bind(d, t, bound))
+            }
+            (TyKind::Adt { def: a, args: x }, TyKind::Adt { def: b, args: y }) => {
+                a == b && x.len() == y.len() && x.iter().zip(y).all(|(d, t)| self.bind_generic(d, t, bound))
+            }
             (TyKind::Tuple(x), TyKind::Tuple(y)) => x.len() == y.len() && x.iter().zip(y).all(|(&d, &t)| self.bind(d, t, bound)),
             (TyKind::Array(x), TyKind::Array(y)) | (TyKind::Optional(x), TyKind::Optional(y)) => self.bind(*x, *y, bound),
-            (TyKind::FixedArray(x, n), TyKind::FixedArray(y, m)) => n == m && self.bind(*x, *y, bound),
+            (TyKind::FixedArray(x, n), TyKind::FixedArray(y, m)) => self.bind_const(n, m, bound) && self.bind(*x, *y, bound),
             (TyKind::Union(x), TyKind::Union(y)) => x.len() == y.len() && y.iter().all(|&t| self.bind_one_of(x, t, bound)),
-            (TyKind::Function(f), TyKind::Function(g)) => f.params.len() == g.params.len() && f.params.iter().zip(&g.params).all(|(d, t)| d.is_var == t.is_var && self.bind(d.ty, t.ty, bound)) && self.bind(f.ret, g.ret, bound),
+            (TyKind::Function(f), TyKind::Function(g)) => {
+                f.params.len() == g.params.len()
+                    && f.params.iter().zip(&g.params).all(|(d, t)| d.is_var == t.is_var && self.bind(d.ty, t.ty, bound))
+                    && self.bind(f.ret, g.ret, bound)
+            }
             _ => declared == actual,
         }
     }
 
+    fn bind_const(&self, declared: &ConstArg, actual: &ConstArg, bound: &mut Vec<Option<GenericArg>>) -> bool {
+        match declared {
+            ConstArg::Param { index, .. } => {
+                let index = *index as usize;
+                if bound.len() <= index {
+                    bound.resize(index + 1, None);
+                }
+                match &bound[index] {
+                    Some(GenericArg::Const(held)) => held == actual,
+                    Some(GenericArg::Type(_)) => false,
+                    None => {
+                        bound[index] = Some(GenericArg::Const(actual.clone()));
+                        true
+                    }
+                }
+            }
+            _ => declared == actual,
+        }
+    }
+
+    fn bind_generic(&self, declared: &GenericArg, actual: &GenericArg, bound: &mut Vec<Option<GenericArg>>) -> bool {
+        match (declared, actual) {
+            (GenericArg::Type(d), GenericArg::Type(t)) => self.bind(*d, *t, bound),
+            (GenericArg::Const(d), GenericArg::Const(t)) => self.bind_const(d, t, bound),
+            _ => false,
+        }
+    }
+
     /// Whether `actual` is one of the `declared` types; a failed try leaves `bound` as it was.
-    fn bind_one_of(&self, declared: &[TyId], actual: TyId, bound: &mut Vec<Option<TyId>>) -> bool {
+    fn bind_one_of(&self, declared: &[TyId], actual: TyId, bound: &mut Vec<Option<GenericArg>>) -> bool {
         declared.iter().any(|&each| {
             let mut trial = bound.clone();
             let fits = self.bind(each, actual, &mut trial);
@@ -148,38 +186,45 @@ impl<'a> Check<'a> {
         })
     }
 
-    /// Whether `actual` is `declared` with the type parameters read from `args`.
-    fn shape(&self, declared: TyId, args: &[TyId], actual: TyId) -> bool {
-        self.bind(declared, actual, &mut args.iter().map(|&arg| Some(arg)).collect())
+    /// Whether `actual` is `declared` with the generic parameters read from `args`.
+    fn shape(&self, declared: TyId, args: &[GenericArg], actual: TyId) -> bool {
+        self.bind(declared, actual, &mut args.iter().cloned().map(Some).collect())
     }
 
     /// Whether the operand is a plain value of the declared type, under the parameters bound so far.
-    fn declared_binds(&self, operand: &Operand, declared: TyId, bound: &mut Vec<Option<TyId>>) -> bool {
+    fn declared_binds(&self, operand: &Operand, declared: TyId, bound: &mut Vec<Option<GenericArg>>) -> bool {
         match operand {
             Operand::Reg(reg) => self.function.regs.get(*reg).is_none_or(|found| !found.cell && self.bind(declared, found.ty, bound)),
             Operand::Const(constant) => match self.kind(declared) {
-                TyKind::Param { index, .. } => bound.get(*index as usize).copied().flatten().is_none_or(|held| self.const_fits(constant, held)),
+                TyKind::Param { index, .. } => bound.get(*index as usize).and_then(|slot| slot.as_ref()).and_then(GenericArg::as_type).is_none_or(|held| self.const_fits(constant, held)),
                 _ => self.types().has_param(declared) || self.const_fits(constant, declared),
             },
         }
     }
 
     /// Whether the operand is a plain value of the declared type.
-    fn declared_fits(&self, operand: &Operand, declared: TyId, args: &[TyId]) -> bool {
-        self.declared_binds(operand, declared, &mut args.iter().map(|&arg| Some(arg)).collect())
+    fn declared_fits(&self, operand: &Operand, declared: TyId, args: &[GenericArg]) -> bool {
+        self.declared_binds(operand, declared, &mut args.iter().cloned().map(Some).collect())
     }
 
-    fn want_declared(&mut self, operand: &Operand, declared: TyId, args: &[TyId], what: &str) {
+    fn want_declared(&mut self, operand: &Operand, declared: TyId, args: &[GenericArg], what: &str) {
         if !self.declared_fits(operand, declared, args) {
             let message = format!("{what} {} is not {}", self.show(operand), self.name(declared));
             self.problem(message);
         }
     }
 
-    fn lang(&self, ty: TyId, item: LangItem) -> Option<&'a [TyId]> {
-        let program = self.program;
-        match program.types.kind(ty) {
-            TyKind::Adt { def, args } if program.defs[*def].lang == Some(item) => Some(args),
+    fn builtin_ty(&self, ty: TyId, item: BuiltinTy) -> Option<&'a [TyId]> {
+        match self.kind(ty) {
+            TyKind::Builtin { kind, args } if *kind == item => Some(args),
+            _ => None,
+        }
+    }
+
+    fn std_adt(&self, ty: TyId, def: Option<DefId>) -> Option<&'a [GenericArg]> {
+        let target = def?;
+        match self.kind(ty) {
+            TyKind::Adt { def: found, args } if *found == target => Some(args),
             _ => None,
         }
     }
@@ -188,17 +233,17 @@ impl<'a> Check<'a> {
     fn elements(&self, ty: TyId) -> Option<TyId> {
         match self.kind(ty) {
             TyKind::Array(element) | TyKind::FixedArray(element, _) => Some(*element),
-            _ => self.lang(ty, LangItem::List).and_then(|args| args.first().copied()),
+            _ => self.builtin_ty(ty, BuiltinTy::List).and_then(|args| args.first().copied()),
         }
     }
 
-    fn record(&self, ty: TyId) -> Option<(&'a Record, &'a [TyId])> {
+    fn record(&self, ty: TyId) -> Option<(&'a Record, &'a [GenericArg])> {
         let program = self.program;
         let TyKind::Adt { def, args } = program.types.kind(ty) else { return None };
         Some((program.defs[*def].record()?, args))
     }
 
-    fn enum_of(&self, ty: TyId) -> Option<(&'a Enum, &'a [TyId])> {
+    fn enum_of(&self, ty: TyId) -> Option<(&'a Enum, &'a [GenericArg])> {
         let program = self.program;
         let TyKind::Adt { def, args } = program.types.kind(ty) else { return None };
         Some((program.defs[*def].enum_def()?, args))
@@ -222,6 +267,7 @@ impl<'a> Check<'a> {
                 TyKind::Union(parts) => parts.iter().all(|&each| self.contains(whole, each)),
                 _ => members.iter().any(|&member| self.contains(member, part)),
             },
+            TyKind::Any => true,
             _ => false,
         }
     }
@@ -240,7 +286,7 @@ impl<'a> Check<'a> {
             let message = format!("the result has the unresolved type {}", self.name(function.ret));
             self.fail(message);
         }
-        if function.is_generator && self.lang(function.ret, LangItem::Stream).is_none() && !self.is_error(function.ret) {
+        if function.is_generator && self.builtin_ty(function.ret, BuiltinTy::Stream).is_none() && !self.is_error(function.ret) {
             let message = format!("a generator returns a Stream, not {}", self.name(function.ret));
             self.fail(message);
         }
@@ -272,7 +318,7 @@ impl<'a> Check<'a> {
             Op::Cast(a) => self.cast(a, ty),
             Op::Show(a) => {
                 let ok = match a {
-                    Operand::Reg(_) => self.operand_ty(a).is_none_or(|found| matches!(self.kind(found), TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::String | TyKind::Tuple(_) | TyKind::Union(_) | TyKind::Function(_) | TyKind::Error)),
+                    Operand::Reg(_) => self.operand_ty(a).is_none_or(|found| matches!(self.kind(found), TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::String | TyKind::Tuple(_) | TyKind::Union(_) | TyKind::Any | TyKind::Array(_) | TyKind::FixedArray(..) | TyKind::Function(_) | TyKind::Error)),
                     Operand::Const(_) => true,
                 };
                 if !ok || !self.same(ty, TyId::STRING) {
@@ -295,7 +341,7 @@ impl<'a> Check<'a> {
                 TyKind::Error => {}
                 _ => self.problem(format!("builds {} from {} elements", self.name(ty), items.len())),
             },
-            Op::List(items) => match self.lang(ty, LangItem::List) {
+            Op::List(items) => match self.builtin_ty(ty, BuiltinTy::List) {
                 Some([element]) => {
                     for item in items {
                         self.want(item, *element, "element");
@@ -310,7 +356,7 @@ impl<'a> Check<'a> {
                         self.want(item, *element, "element");
                     }
                 }
-                TyKind::FixedArray(element, len) if *len as usize == items.len() => {
+                TyKind::FixedArray(element, len) if len.as_u32().is_some_and(|n| n as usize == items.len()) => {
                     for item in items {
                         self.want(item, *element, "element");
                     }
@@ -336,8 +382,8 @@ impl<'a> Check<'a> {
                 _ => self.problem(format!("builds {} with {} fields", self.name(ty), items.len())),
             },
             Op::Variant { variant, fields } => self.variant(*variant, fields, ty),
-            Op::Range { start, end, .. } => match self.lang(ty, LangItem::Range) {
-                Some([bound]) => {
+            Op::Range { start, end, .. } => match self.std_adt(ty, self.program.std.range) {
+                Some([GenericArg::Type(bound)]) => {
                     self.want(start, *bound, "start");
                     self.want(end, *bound, "end");
                 }
@@ -466,7 +512,7 @@ impl<'a> Check<'a> {
                 if let Some(found) = self.operand_ty(a) {
                     let inner = match self.kind(found) {
                         TyKind::Optional(inner) => Some(*inner),
-                        _ if matches!(inst.op, Op::Unwrap(_)) => self.lang(found, LangItem::Result).and_then(|args| args.first().copied()),
+                        _ if matches!(inst.op, Op::Unwrap(_)) => self.std_adt(found, self.program.std.result).and_then(|args| args.first().and_then(GenericArg::as_type)),
                         _ => None,
                     };
                     match inner {
@@ -531,7 +577,7 @@ impl<'a> Check<'a> {
             Op::Spawn { func, captures, scope } => {
                 self.carrier_types(*func, captures);
                 if let Some(target) = self.module.functions.get(*func) {
-                    match self.lang(ty, LangItem::Task) {
+                    match self.builtin_ty(ty, BuiltinTy::Task) {
                         Some([result]) if self.same(*result, target.ret) => {}
                         _ if self.is_error(ty) => {}
                         _ => self.problem(format!("starts a body returning {} as {}", self.name(target.ret), self.name(ty))),
@@ -558,7 +604,7 @@ impl<'a> Check<'a> {
             Op::Yield(a) => {
                 if !function.is_generator {
                     self.problem("yields outside a generator".to_string());
-                } else if let Some([element]) = self.lang(function.ret, LangItem::Stream) {
+                } else if let Some([element]) = self.builtin_ty(function.ret, BuiltinTy::Stream) {
                     self.want(a, *element, "value");
                 }
             }
@@ -600,7 +646,7 @@ impl<'a> Check<'a> {
             self.problem(format!("f{} is not a resume function", resume.index()));
             return;
         }
-        match (self.lang(ty, LangItem::Stream), self.kind(target.ret)) {
+        match (self.builtin_ty(ty, BuiltinTy::Stream), self.kind(target.ret)) {
             (Some([element]), TyKind::Optional(next)) if self.same(*element, *next) => {}
             _ if self.is_error(ty) => {}
             _ => self.problem(format!("f{} returns {}, not the next element of {}", resume.index(), self.name(target.ret), self.name(ty))),
@@ -698,9 +744,10 @@ impl<'a> Check<'a> {
             Conversion::ToUnion => match (self.kind(ty), from) {
                 (TyKind::Union(members), Some(found)) => members.iter().any(|&member| self.same(member, found)),
                 (TyKind::Union(members), None) => members.iter().any(|&member| self.fits(operand, member)),
+                (TyKind::Any, _) => true,
                 (kind, _) => matches!(kind, TyKind::Error),
             },
-            Conversion::WidenUnion => matches!(self.kind(ty), TyKind::Union(_) | TyKind::Error) && from.is_none_or(|found| matches!(self.kind(found), TyKind::Union(_)) && self.contains(ty, found)),
+            Conversion::WidenUnion => matches!(self.kind(ty), TyKind::Union(_) | TyKind::Any | TyKind::Error) && from.is_none_or(|found| matches!(self.kind(found), TyKind::Union(_) | TyKind::Any) && self.contains(ty, found)),
             Conversion::Narrow => from.is_none_or(|found| self.contains(found, ty)),
             Conversion::Adapt => from.is_none_or(|found| match (self.kind(found), self.kind(ty)) {
                 (TyKind::Function(_), TyKind::Function(_)) => true,
@@ -708,6 +755,7 @@ impl<'a> Check<'a> {
                 (TyKind::Error, _) | (_, TyKind::Error) => true,
                 _ => false,
             }),
+            Conversion::ToView => from.is_none_or(|found| mote_semantics::plan(self.program, found, ty).is_some()),
         };
         if !ok {
             self.problem(format!("{} does not turn {} into {}", conversion_name(conversion), self.show(operand), self.name(ty)));
@@ -740,13 +788,16 @@ impl<'a> Check<'a> {
     }
 
     /// The declared type of a field of the record or tuple the operand holds, with the record's type arguments.
-    fn field_of(&mut self, object: &Operand, index: u32) -> Option<(TyId, &'a [TyId])> {
+    fn field_of(&mut self, object: &Operand, index: u32) -> Option<(TyId, &'a [GenericArg])> {
         let found = self.operand_ty(object)?;
         if self.is_error(found) {
             return None;
         }
         if let TyKind::Tuple(elements) = self.kind(found) {
             return elements.get(index as usize).map(|&element| (element, &[][..]));
+        }
+        if matches!(self.kind(found), TyKind::Builtin { kind: BuiltinTy::Pointer, .. }) && index == 0 {
+            return Some((TyId::UINT64, &[][..]));
         }
         let Some((record, args)) = self.record(found) else {
             self.problem(format!("{} is not a record", self.show(object)));
@@ -768,7 +819,7 @@ impl<'a> Check<'a> {
             self.problem(format!("tests for the unresolved type {}", self.name(target)));
         }
         if let Some(found) = self.operand_ty(operand)
-            && !matches!(self.kind(found), TyKind::Union(_) | TyKind::Error)
+            && !matches!(self.kind(found), TyKind::Union(_) | TyKind::Any | TyKind::Error)
         {
             self.problem(format!("{} is not a union", self.show(operand)));
         }
@@ -826,10 +877,6 @@ impl<'a> Check<'a> {
                     Some(_) => {}
                     None => self.problem(format!("`{text}` is not an intrinsic")),
                 }
-                let declared = self.intrinsics.get(text).map_or(&[][..], Vec::as_slice);
-                if !declared.is_empty() && !declared.iter().any(|&each| self.declaration_fits(each, args, outs, dest)) {
-                    self.problem(format!("the arguments and result do not fit a declaration of `{text}`"));
-                }
             }
             Callee::Native(def) => {
                 let program = self.program;
@@ -837,7 +884,7 @@ impl<'a> Check<'a> {
                     self.problem("calls a name that is not a function".to_string());
                     return;
                 };
-                if !function_def.native {
+                if function_def.link.is_none() {
                     self.problem("calls a function that is not native".to_string());
                 }
                 if function_def.params.len() != args.len() {
@@ -864,18 +911,9 @@ impl<'a> Check<'a> {
     }
 
     /// Whether the registers that take the final values fit the `var` parameters of the declaration.
-    fn outs_fit(&self, declared: &Declared, outs: &[RegId], bound: &mut Vec<Option<TyId>>) -> bool {
+    fn outs_fit(&self, declared: &Declared, outs: &[RegId], bound: &mut Vec<Option<GenericArg>>) -> bool {
         let writes: Vec<TyId> = declared.params.iter().filter(|param| param.is_var).map(|param| param.ty).collect();
         writes.len() == outs.len() && writes.iter().zip(outs).all(|(&ty, &out)| self.function.regs.get(out).is_none_or(|reg| self.bind(ty, reg.ty, bound)))
-    }
-
-    /// Whether a call with these arguments and result can be a call of the declaration, one type for each of its type parameters.
-    fn declaration_fits(&self, declared: &Declared, args: &[Operand], outs: &[RegId], dest: Option<TyId>) -> bool {
-        let mut bound = Vec::new();
-        declared.params.len() == args.len()
-            && args.iter().zip(&declared.params).all(|(arg, param)| param.variadic || self.declared_binds(arg, param.ty, &mut bound))
-            && dest.is_none_or(|result| self.bind(declared.ret, result, &mut bound))
-            && self.outs_fit(declared, outs, &mut bound)
     }
 
     fn closure(&mut self, func: FuncId, captures: &[Operand], ty: TyId) {

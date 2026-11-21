@@ -1,4 +1,4 @@
-import { Task, sleep, with_timeout } from std.task
+import { sleep, with_timeout } from std.task
 
 fn main() {
     let slow = spawn {

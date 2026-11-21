@@ -35,8 +35,8 @@ pub struct Command {
     pub run: fn(&Parsed, &Path) -> Outcome,
 }
 
-const STD: Flag = Flag { name: "std", value: Some("dir"), help: "Use this directory as the std instead of the embedded one" };
-const CORE: Flag = Flag { name: "core", value: Some("dir"), help: "Use the core libraries in this directory instead of the embedded ones" };
+const STD: Flag = Flag { name: "std", value: Some("dir"), help: "Use this directory as the std instead of mote_std/std" };
+const CORE: Flag = Flag { name: "core", value: Some("dir"), help: "Use the libraries in this directory instead of mote_std" };
 
 const LIB: Flag = Flag { name: "lib", value: None, help: "Make a library with src/lib.mote in place of a program with src/main.mote" };
 const FILTER: Flag = Flag { name: "filter", value: Some("text"), help: "Run only the test blocks whose name contains the text" };
@@ -354,10 +354,20 @@ fn install_package(parsed: &Parsed, cwd: &Path) -> Outcome {
     if let Err(error) = std::fs::create_dir_all(&bin) {
         return Outcome::failed(format!("error: cannot make {}: {error}\n", mote_packages::shown(&bin)));
     }
-    let out = bin.join(&pipeline.packages.root().manifest.name);
+    let out = executable_path(&bin.join(&pipeline.packages.root().manifest.name));
     match crate::executable::link(&mut pipeline, &out) {
         Ok(()) => Outcome { stdout: format!("installed {}\n", mote_packages::shown(&out)), stderr: pipeline.warnings.concat(), code: OK },
         Err(failure) => Outcome::failed(failure.to_string()),
+    }
+}
+
+/// Appends `.exe` on Windows when missing.
+fn executable_path(base: &Path) -> PathBuf {
+    let suffix = std::env::consts::EXE_SUFFIX;
+    if suffix.is_empty() || base.to_string_lossy().to_ascii_lowercase().ends_with(suffix) {
+        base.to_path_buf()
+    } else {
+        PathBuf::from(format!("{}{}", base.display(), suffix))
     }
 }
 
@@ -366,7 +376,7 @@ fn below_package(file: &str, cwd: &Path, dir: &Path) -> Result<String, String> {
     let given = std::fs::canonicalize(cwd.join(file)).map_err(|_| format!("no such file {file}"))?;
     let root = std::fs::canonicalize(dir).map_err(|error| format!("cannot read {}: {error}", mote_packages::shown(dir)))?;
     let below = given.strip_prefix(&root).map_err(|_| format!("{file} is not in the package"))?;
-    Ok(below.to_string_lossy().into_owned())
+    Ok(below.to_string_lossy().replace('\\', "/"))
 }
 
 fn init_package(parsed: &Parsed, cwd: &Path) -> Outcome {
@@ -457,8 +467,9 @@ fn compile_package(parsed: &Parsed, cwd: &Path) -> Outcome {
 
 fn build_package(parsed: &Parsed, cwd: &Path) -> Outcome {
     emit(parsed, cwd, |pipeline, base| {
-        crate::executable::link(pipeline, base)?;
-        Ok(base.to_path_buf())
+        let out = executable_path(base);
+        crate::executable::link(pipeline, &out)?;
+        Ok(out)
     })
 }
 
@@ -562,7 +573,7 @@ mod tests {
     fn cli_help_for_a_command_shows_its_arguments_and_flags() {
         let outcome = run("help check");
         assert_eq!(outcome.code, OK);
-        assert_eq!(outcome.stdout, "Usage: mote check [dir] [--std <dir>] [--core <dir>]\n\nCheck a package without running it\n\nFlags:\n  --std <dir>   Use this directory as the std instead of the embedded one\n  --core <dir>  Use the core libraries in this directory instead of the embedded ones\n");
+        assert_eq!(outcome.stdout, "Usage: mote check [dir] [--std <dir>] [--core <dir>]\n\nCheck a package without running it\n\nFlags:\n  --std <dir>   Use this directory as the std instead of mote_std/std\n  --core <dir>  Use the libraries in this directory instead of mote_std\n");
         assert_eq!(run("check --help"), outcome);
         assert_eq!(run("check -h"), outcome);
     }
@@ -741,7 +752,7 @@ mod tests {
         let scratch = Scratch::new();
         let outcome = execute(&words("check"), &scratch.dir);
         assert_eq!(outcome.code, FAILED);
-        assert_eq!(outcome.stderr, format!("error: no mote.toml in {}/ or any parent directory\n", scratch.dir.display()));
+        assert_eq!(outcome.stderr, format!("error: no mote.toml in {}/ or any parent directory\n", mote_packages::shown(&scratch.dir)));
     }
 
     #[test]
@@ -750,7 +761,7 @@ mod tests {
         scratch.write("app/mote.toml", "[package]\nname = \"app\"\n");
         let outcome = at(&dir, "check");
         assert_eq!(outcome.code, FAILED);
-        assert_eq!(outcome.stderr, format!("error: {}/mote.toml:1: `package.version`: missing\n", dir.display()));
+        assert_eq!(outcome.stderr, format!("error: {}/mote.toml:1: `package.version`: missing\n", mote_packages::shown(&dir)));
     }
 
     #[test]
@@ -764,9 +775,12 @@ mod tests {
         let (_scratch, dir) = package("fn main() {\n    println(\"hi\")\n}\n");
         let outcome = at(&dir, "compile");
         assert_eq!((outcome.code, outcome.stderr.as_str()), (OK, ""));
-        assert_eq!(outcome.stdout, format!("wrote {}\n", dir.join("target/app.o").display()));
+        assert_eq!(outcome.stdout, format!("wrote {}\n", mote_packages::shown(&dir.join("target/app.o"))));
         let bytes = std::fs::read(dir.join("target/app.o")).unwrap();
+        #[cfg(target_os = "linux")]
         assert_eq!(&bytes[..4], b"\x7fELF");
+        #[cfg(target_os = "windows")]
+        assert_eq!(&bytes[..2], &[0x64, 0x86]);
     }
 
     #[test]
@@ -774,8 +788,9 @@ mod tests {
         let (_scratch, dir) = package("fn main() {\n    println(\"hi\")\n}\n");
         let outcome = at(&dir, "build");
         assert_eq!((outcome.code, outcome.stderr.as_str()), (OK, ""));
-        assert_eq!(outcome.stdout, format!("wrote {}\n", dir.join("target/app").display()));
-        let ran = std::process::Command::new(dir.join("target/app")).output().unwrap();
+        let exe = dir.join(format!("target/app{}", std::env::consts::EXE_SUFFIX));
+        assert_eq!(outcome.stdout, format!("wrote {}\n", mote_packages::shown(&exe)));
+        let ran = std::process::Command::new(&exe).output().unwrap();
         assert_eq!((String::from_utf8_lossy(&ran.stdout).as_ref(), ran.status.code()), ("hi\n", Some(0)));
     }
 
@@ -817,7 +832,7 @@ mod tests {
 
     #[test]
     fn cli_jit_runs_the_test_blocks_and_reports_each_one() {
-        let (_scratch, dir) = package("import { assert } from std.test\n\nprintln(\"setup\")\n\ntest \"adds\" {\n    println(\"quiet\")\n    assert(1 + 1 == 2)\n}\n\ntest \"breaks\" {\n    println(\"loud\")\n    assert(1 + 1 == 3)\n}\n\n@ignore\ntest \"later\" {\n    assert(false)\n}\n");
+        let (_scratch, dir) = package("import assert from std.test\n\nprintln(\"setup\")\n\ntest \"adds\" {\n    println(\"quiet\")\n    assert(1 + 1 == 2)\n}\n\ntest \"breaks\" {\n    println(\"loud\")\n    assert(1 + 1 == 3)\n}\n\n@ignore\ntest \"later\" {\n    assert(false)\n}\n");
         let compiled = at(&dir, "test");
         assert_eq!(compiled.code, FAILED);
         assert!(compiled.stdout.starts_with("setup\ntest adds (src/main.mote:5) ... ok\n"), "{}", compiled.stdout);
@@ -912,8 +927,8 @@ mod tests {
 
     #[test]
     fn cli_run_test_includes_the_tests_directory_after_src_and_run_ignores_it() {
-        let (scratch, dir) = package("import { assert } from std.test\n\nfn main() {\n    println(\"hi\")\n}\n\ntest \"in src\" {\n    assert(true)\n}\n");
-        scratch.write("app/tests/more.mote", "import { assert_eq } from std.test\n\ntest \"in tests\" {\n    assert_eq(1, 2)\n}\n");
+        let (scratch, dir) = package("import assert from std.test\n\nfn main() {\n    println(\"hi\")\n}\n\ntest \"in src\" {\n    assert(true)\n}\n");
+        scratch.write("app/tests/more.mote", "import assert_eq from std.test\n\ntest \"in tests\" {\n    assert_eq(1, 2)\n}\n");
         let outcome = at(&dir, "test");
         assert_eq!((outcome.code, outcome.stderr.as_str()), (FAILED, ""));
         assert!(outcome.stdout.starts_with("test in src (src/main.mote:7) ... ok\ntest in tests (tests/more.mote:3) ... FAILED\n"), "{}", outcome.stdout);
@@ -965,7 +980,7 @@ mod tests {
 
     #[test]
     fn cli_run_test_lists_one_line_per_block_and_exits_1_when_one_fails() {
-        let source = "import { assert } from std.test\n\ntest \"adds\" {\n    assert(1 + 1 == 2)\n}\n\ntest \"breaks\" {\n    assert(1 + 1 == 3)\n}\n\n@ignore\ntest \"later\" {\n}\n";
+        let source = "import assert from std.test\n\ntest \"adds\" {\n    assert(1 + 1 == 2)\n}\n\ntest \"breaks\" {\n    assert(1 + 1 == 3)\n}\n\n@ignore\ntest \"later\" {\n}\n";
         let (_scratch, dir) = package(source);
         let outcome = at(&dir, "test");
         assert_eq!((outcome.code, outcome.stderr.as_str()), (FAILED, ""));
@@ -976,7 +991,7 @@ mod tests {
 
     #[test]
     fn cli_run_test_exits_0_when_every_block_passes() {
-        let (_scratch, dir) = package("import { assert } from std.test\n\ntest \"adds\" {\n    assert(1 + 1 == 2)\n}\n");
+        let (_scratch, dir) = package("import assert from std.test\n\ntest \"adds\" {\n    assert(1 + 1 == 2)\n}\n");
         let outcome = at(&dir, "test");
         assert_eq!(outcome, Outcome { stdout: "test adds (src/main.mote:3) ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 skipped\n".into(), stderr: String::new(), code: OK });
     }

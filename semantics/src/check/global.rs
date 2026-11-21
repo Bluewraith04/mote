@@ -48,7 +48,7 @@ impl Cx<'_> {
             return;
         }
         let annotated = binding.ty.is_some();
-        let scope = Scope { module, params: Vec::new(), self_ty: None, bound: Vec::new() };
+        let scope = Scope { module, params: Vec::new(), const_params: Vec::new(), self_ty: None, bound: Vec::new() };
         let mut f = FnCx::new(module, scope, TyId::UNIT);
         let init = if annotated {
             let ty = self.global_ty(def);
@@ -77,11 +77,11 @@ impl Cx<'_> {
         for &member in &group {
             self.globals.insert(member, Progress::Resolving);
         }
-        let scope = Scope { module, params: Vec::new(), self_ty: None, bound: Vec::new() };
+        let scope = Scope { module, params: Vec::new(), const_params: Vec::new(), self_ty: None, bound: Vec::new() };
         let mut f = FnCx::new(module, scope, TyId::UNIT);
         let init = match binding.ty {
             Some(ty) => {
-                let ty = self.written_type(&f, ty);
+                let ty = self.written_type(&mut f, ty);
                 self.expr_to(&mut f, binding.init, ty)
             }
             None => self.expr(&mut f, binding.init, None),
@@ -135,7 +135,7 @@ impl Cx<'_> {
             if stmts.is_empty() {
                 continue;
             }
-            let scope = Scope { module, params: Vec::new(), self_ty: None, bound: Vec::new() };
+            let scope = Scope { module, params: Vec::new(), const_params: Vec::new(), self_ty: None, bound: Vec::new() };
             let mut f = FnCx::new(module, scope, TyId::UNIT);
             f.top_level = true;
             let mut checked = Vec::new();

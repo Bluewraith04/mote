@@ -29,14 +29,16 @@ impl Parser<'_> {
         let start = self.start();
         let doc = self.take_doc(start);
         let mut attrs = Vec::new();
-        while self.at(T::At) {
+        while self.at(T::At) && self.looks_like_attr() {
             attrs.push(self.attribute());
             self.skip_newlines();
         }
         let is_pub = self.eat(T::Pub);
         let kind = match self.peek() {
             T::Fn => ItemKind::Function(self.function()),
-            T::Native => ItemKind::NativeFunction(self.native_function()),
+            T::Extern => ItemKind::ExternBlock(self.extern_block()),
+            T::Extend => ItemKind::Extend(self.extend_decl()),
+            T::Const => ItemKind::Const(self.const_decl()),
             T::Ident(name) if name == self.words.test && matches!(self.peek_at(1), T::String(_)) => ItemKind::Test(self.test()),
             T::Struct => ItemKind::Record(self.record(RecordKind::Struct)),
             T::Class => ItemKind::Record(self.record(RecordKind::Class)),
@@ -53,6 +55,56 @@ impl Parser<'_> {
         };
         let span = self.span_from(start);
         self.ast.items.alloc(Item { doc, attrs, is_pub, kind, span })
+    }
+
+    fn looks_like_attr(&self) -> bool {
+        let mut i = 1;
+        if !matches!(self.peek_at(i), T::Ident(_)) {
+            return true;
+        }
+        i += 1;
+        if self.peek_at(i) == T::Lt {
+            return false;
+        }
+        if self.peek_at(i) != T::OpenParen {
+            return true;
+        }
+        let mut depth = 0i32;
+        loop {
+            match self.peek_at(i) {
+                T::OpenParen | T::OpenBracket | T::OpenBrace => depth += 1,
+                T::CloseParen | T::CloseBracket | T::CloseBrace => {
+                    depth -= 1;
+                    if depth <= 0 {
+                        i += 1;
+                        break;
+                    }
+                }
+                T::Eof => return false,
+                _ => {}
+            }
+            i += 1;
+        }
+        while self.peek_at(i) == T::Newline {
+            i += 1;
+        }
+        matches!(
+            self.peek_at(i),
+            T::At
+                | T::Pub
+                | T::Fn
+                | T::Extern
+                | T::Extend
+                | T::Const
+                | T::Struct
+                | T::Class
+                | T::Enum
+                | T::Trait
+                | T::Type
+                | T::Import
+                | T::Let
+                | T::Var
+        ) || (matches!(self.peek_at(i), T::Ident(n) if n == self.words.test) && matches!(self.peek_at(i + 1), T::String(_)))
     }
 
     fn attribute(&mut self) -> Attribute {
@@ -105,15 +157,21 @@ impl Parser<'_> {
         let params = self.free(|p| {
             let mut params = Vec::new();
             loop {
-                let name = p.name();
-                let mut bounds = Vec::new();
-                if p.eat(T::Colon) {
-                    bounds.push(p.ty());
-                    while p.eat(T::Plus) {
+                if p.eat(T::Const) {
+                    let name = p.name();
+                    let ty = if p.expect(T::Colon) { p.ty() } else { p.error_type() };
+                    params.push(GenericParam::Const { name, ty });
+                } else {
+                    let name = p.name();
+                    let mut bounds = Vec::new();
+                    if p.eat(T::Colon) {
                         bounds.push(p.ty());
+                        while p.eat(T::Plus) {
+                            bounds.push(p.ty());
+                        }
                     }
+                    params.push(GenericParam::Type { name, bounds });
                 }
-                params.push(GenericParam { name, bounds });
                 if !p.eat(T::Comma) || matches!(p.peek(), T::Gt | T::Shr) {
                     return params;
                 }
@@ -183,14 +241,78 @@ impl Parser<'_> {
         Function { name, generics, params, ret, body }
     }
 
-    fn native_function(&mut self) -> NativeFunction {
+    fn extern_block(&mut self) -> ExternBlock {
         self.bump();
+        let library = match self.peek() {
+            T::String(s) => {
+                self.bump();
+                s
+            }
+            _ => {
+                self.unexpected("a library name string");
+                self.words.wildcard
+            }
+        };
+        let mut decls = Vec::new();
+        if self.open_brace() {
+            while !self.at(T::CloseBrace) && !self.at(T::Eof) {
+                let (failures, pos) = (self.failures, self.pos);
+                decls.push(self.extern_fn());
+                if self.failures != failures || self.pos == pos {
+                    self.bump_if_stuck(pos);
+                    self.skip_member();
+                }
+            }
+            self.expect(T::CloseBrace);
+        }
+        ExternBlock { library, decls }
+    }
+
+    fn extern_fn(&mut self) -> ExternFn {
+        let start = self.start();
+        let doc = self.take_doc(start);
+        let mut attrs = Vec::new();
+        while self.at(T::At) && self.looks_like_attr() {
+            attrs.push(self.attribute());
+            self.skip_newlines();
+        }
+        let is_pub = self.eat(T::Pub);
         self.expect(T::Fn);
-        let name = self.name();
-        let generics = self.generics();
+        let name = self.member_name();
         let params = self.params();
         let ret = self.return_type();
-        NativeFunction { name, generics, params, ret }
+        ExternFn { doc, attrs, is_pub, name, params, ret, span: self.span_from(start) }
+    }
+
+    fn extend_decl(&mut self) -> Extend {
+        self.bump();
+        let generics = self.generics();
+        let target = self.ty();
+        let traits = self.traits();
+        let mut methods = Vec::new();
+        if self.open_brace() {
+            while !self.at(T::CloseBrace) && !self.at(T::Eof) {
+                let (failures, pos) = (self.failures, self.pos);
+                let start = self.start();
+                let doc = self.take_doc(start);
+                let is_pub = self.eat(T::Pub);
+                methods.push(self.method(doc, is_pub, start));
+                if self.failures != failures || self.pos == pos {
+                    self.bump_if_stuck(pos);
+                    self.skip_member();
+                }
+            }
+            self.expect(T::CloseBrace);
+        }
+        Extend { generics, target, traits, methods }
+    }
+
+    pub(super) fn const_decl(&mut self) -> ConstDecl {
+        self.bump();
+        let name = self.name();
+        let ty = if self.eat(T::Colon) { Some(self.ty()) } else { None };
+        let value = if self.expect(T::Eq) { self.expr() } else { self.error_expr() };
+        ConstDecl { name, ty, value }
     }
 
     fn test(&mut self) -> Test {
@@ -239,7 +361,7 @@ impl Parser<'_> {
             match self.peek() {
                 T::Eof => return,
                 T::CloseBrace if depth == 0 => return,
-                T::Pub | T::Fn | T::Var | T::Let if depth == 0 => return,
+                T::Pub | T::Fn | T::Var | T::Let | T::At if depth == 0 => return,
                 T::Ident(_) if depth == 0 && self.peek_at(1) == T::Colon => return,
                 T::OpenParen | T::OpenBracket | T::OpenBrace => depth += 1,
                 T::CloseParen | T::CloseBracket | T::CloseBrace => depth = depth.saturating_sub(1),
@@ -369,23 +491,57 @@ impl Parser<'_> {
 
     fn import(&mut self) -> Import {
         self.bump();
-        if !self.eat(T::OpenBrace) {
-            let path = self.module_path();
-            let alias = if self.eat(T::As) { Some(self.name()) } else { None };
-            return Import::Module { path, alias };
+        if self.eat(T::OpenBrace) {
+            return match self.import_list() {
+                Some(names) => {
+                    self.expect(T::From);
+                    Import::Names { names, from: self.module_path() }
+                }
+                None => {
+                    self.expect(T::From);
+                    Import::Glob { from: self.module_path() }
+                }
+            };
         }
         if self.eat(T::Star) {
-            self.expect(T::CloseBrace);
             self.expect(T::From);
             return Import::Glob { from: self.module_path() };
+        }
+        if matches!(self.peek(), T::Ident(_))
+            && (self.peek_at(1) == T::From
+                || (self.peek_at(1) == T::As && matches!(self.peek_at(2), T::Ident(_)) && self.peek_at(3) == T::From))
+        {
+            let name = self.name();
+            let alias = if self.eat(T::As) { Some(self.name()) } else { None };
+            self.expect(T::From);
+            return Import::Names { names: vec![ImportName { name, alias }], from: self.module_path() };
+        }
+        let path = self.module_path();
+        if self.eat(T::Dot) {
+            if self.eat(T::OpenBrace) {
+                return match self.import_list() {
+                    Some(names) => Import::Names { names, from: path },
+                    None => Import::Glob { from: path },
+                };
+            }
+            self.expect(T::Star);
+            return Import::Glob { from: path };
+        }
+        let alias = if self.eat(T::As) { Some(self.name()) } else { None };
+        Import::Module { path, alias }
+    }
+
+    fn import_list(&mut self) -> Option<Vec<ImportName>> {
+        if self.eat(T::Star) {
+            self.expect(T::CloseBrace);
+            return None;
         }
         let names = self.list(T::CloseBrace, |p| {
             let name = p.name();
             let alias = if p.eat(T::As) { Some(p.name()) } else { None };
             ImportName { name, alias }
         });
-        self.expect(T::From);
-        Import::Names { names, from: self.module_path() }
+        Some(names)
     }
 
     fn module_path(&mut self) -> ModulePath {

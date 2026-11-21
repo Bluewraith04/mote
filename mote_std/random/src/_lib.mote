@@ -1,0 +1,6 @@
+// The functions of the external library `random`.
+
+extern "random" {
+    @blocking
+    pub fn random_fill(buffer: [UInt8]) -> Int
+}

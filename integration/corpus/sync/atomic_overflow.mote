@@ -1,7 +1,5 @@
-import std.atomic as atomic
-
 fn main() {
-    let a = atomic.Int64(9223372036854775807)
+    let a = AtomicInt(9223372036854775807)
     println(a.load())
     println(a.fetch_add(1))
 }

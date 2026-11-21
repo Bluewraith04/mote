@@ -207,20 +207,6 @@ fn a_loop_keeps_what_was_written_before_it() {
 }
 
 #[test]
-fn an_intrinsic_call_fits_a_declaration_in_std() {
-    let mut compiled = compile("");
-    let name = compiled.interner.intern("string_len");
-    let mut b = FunctionBuilder::new(FunctionKind::Start, TyId::UNIT);
-    b.value(TyId::INT, Op::Call { callee: Callee::Intrinsic(name), args: vec![Operand::Const(Const::String(name))], outs: vec![] }, span());
-    b.value(TyId::INT, Op::Call { callee: Callee::Intrinsic(name), args: vec![Operand::Const(Const::Int(3))], outs: vec![] }, span());
-    b.terminate(Terminator::Return(None));
-    let mut module = Module::new();
-    module.add(b.finish().expect("closed"));
-    let found: Vec<String> = verify(&module, &compiled.program, &compiled.interner).into_iter().map(|error| error.message).collect();
-    assert_eq!(found, ["`r1 = call intrinsic string_len(3)`: the arguments and result do not fit a declaration of `string_len`"]);
-}
-
-#[test]
 fn a_yield_belongs_to_a_generator() {
     let found = problems(TyId::UNIT, |b, _| {
         b.emit(None, Op::Yield(Operand::Const(Const::Int(1))), span());
@@ -248,34 +234,6 @@ fn an_intrinsic_takes_the_arguments_of_its_row() {
     module.add(b.finish().expect("closed"));
     let found: Vec<String> = verify(&module, &Program::new(), &interner).into_iter().map(|error| error.message).collect();
     assert_eq!(found, ["`r0 = call intrinsic string_len()`: `string_len` takes 1 arguments, found 0"]);
-}
-
-#[test]
-fn an_intrinsic_call_ties_one_type_parameter_across_the_parameters_that_name_it() {
-    let mut compiled = compile("");
-    let equal = compiled.interner.intern("equal_of");
-    let get = compiled.interner.intern("array_get");
-    let ints = compiled.program.types.array(TyId::INT);
-    let mut b = FunctionBuilder::new(FunctionKind::Start, TyId::UNIT);
-    let (n, text, array) = (b.param(TyId::INT, None, false), b.param(TyId::STRING, None, false), b.param(ints, None, false));
-    let call = |name, args: Vec<Operand>| Op::Call { callee: Callee::Intrinsic(name), args, outs: vec![] };
-    b.value(TyId::BOOL, call(equal, vec![Operand::Reg(n), Operand::Reg(n)]), span());
-    b.value(TyId::BOOL, call(equal, vec![Operand::Reg(n), Operand::Reg(text)]), span());
-    b.value(TyId::BOOL, call(equal, vec![Operand::Reg(text), Operand::Const(Const::Int(1))]), span());
-    b.value(TyId::INT, call(get, vec![Operand::Reg(array), Operand::Const(Const::Int(0))]), span());
-    b.value(TyId::STRING, call(get, vec![Operand::Reg(array), Operand::Const(Const::Int(0))]), span());
-    b.terminate(Terminator::Return(None));
-    let mut module = Module::new();
-    module.add(b.finish().expect("closed"));
-    let found: Vec<String> = verify(&module, &compiled.program, &compiled.interner).into_iter().map(|error| error.message).collect();
-    assert_eq!(
-        found,
-        [
-            "`r4 = call intrinsic equal_of(r0, r1)`: the arguments and result do not fit a declaration of `equal_of`",
-            "`r5 = call intrinsic equal_of(r1, 1)`: the arguments and result do not fit a declaration of `equal_of`",
-            "`r7 = call intrinsic array_get(r2, 0)`: the arguments and result do not fit a declaration of `array_get`",
-        ]
-    );
 }
 
 /// The messages `verify` finds in a module of a plain function and a resume function with the slots Int and String, built by `build`.
@@ -313,9 +271,8 @@ fn a_frame_slot_is_for_a_resume_function() {
 
 #[test]
 fn a_generator_stream_is_built_over_a_resume_function() {
-    let mut compiled = compile("import { Stream } from std.collections\n");
-    let def = compiled.program.lang[&mote_semantics::LangItem::Stream];
-    let stream = compiled.program.types.adt(def, vec![TyId::INT]);
+    let mut compiled = compile("");
+    let stream = compiled.program.types.builtin(mote_semantics::BuiltinTy::Stream, vec![TyId::INT]);
     let mut module = Module::new();
     let mut plain = FunctionBuilder::new(FunctionKind::Start, TyId::UNIT);
     plain.terminate(Terminator::Return(None));

@@ -15,17 +15,17 @@ use mote_abi::{closure_signature, passing, signature, Entry, FaultTable, FrameDe
 use mote_runtime::{CodeMap, FunctionInfo, GlobalRoot, HeapConfig};
 use mote_base::{Interner, Symbol};
 use mote_ir::{string_constants, Callee, EntryKind, FuncId, Function, FunctionKind, Module, Op, Operand};
-use mote_semantics::{DefId, DefKind, LangItem, Program, TyId, TyKind};
+use mote_semantics::{Conversion, DefId, DefKind, Program, TyId, TyKind};
 
-use mote_runtime::dynamic::{self, mote_dyn};
 use crate::debug::{self, Debug};
 use crate::frames;
 use crate::function::{abi_params, const_ty, Env, Imports, Lowering};
 use crate::host::Feed;
-use mote_runtime::helpers::{self, mote_fmod, mote_print, mote_math, mote_show, mote_string_compare, mote_string_cut, mote_system, mote_text, mote_value};
+use mote_runtime::helpers::{self, mote_fmod, mote_math, mote_mem, mote_print, mote_show, mote_string_compare, mote_string_cut, mote_system, mote_text, mote_value};
 use mote_runtime::loader::{self, mote_native};
 use crate::meta;
 use crate::native;
+use crate::rows::{emitter, Emitter};
 use crate::tasks;
 use crate::typetable::{self, TypeMap};
 use crate::values::{emit_store, leaves_of, Addr};
@@ -77,6 +77,8 @@ pub struct Compiled {
     pub(crate) args: Vec<String>,
     /// Where the program's output goes as it is printed; none keeps it for `Ran::output`.
     pub(crate) sink: Option<Box<dyn Write + Send>>,
+    /// True when the reachable program contains no spawn, channels, ports, locks, sleep, or blocking externs.
+    pub(crate) single_threaded: bool,
 }
 
 impl Compiled {
@@ -199,7 +201,7 @@ pub fn compile(module: &Module, program: &mut Program, interner: &Interner, entr
 
 /// The position of the variant of `Result` with the name.
 fn result_variant(program: &Program, interner: &Interner, name: &str) -> Option<u32> {
-    let def = *program.lang.get(&LangItem::Result)?;
+    let def = program.std.result?;
     match &program.defs[def].kind {
         DefKind::Enum(item) => item.variants.iter().position(|variant| interner.resolve(variant.name) == name).map(|at| at as u32),
         _ => None,
@@ -232,6 +234,7 @@ pub(crate) struct Lowered<M> {
     pub link: LinkTable,
     pub native_slots: Option<DataId>,
     pub failure: Option<DataId>,
+    pub single_threaded: bool,
 }
 
 fn build(module: &Module, program: &mut Program, interner: &Interner, entry: Option<EntryKind>, error_text: Option<FuncId>) -> Result<Compiled, CompileError> {
@@ -245,12 +248,12 @@ fn build(module: &Module, program: &mut Program, interner: &Interner, entry: Opt
     builder.symbol(helpers::COMPARE, mote_string_compare as *const u8);
     builder.symbol(helpers::CUT, mote_string_cut as *const u8);
     builder.symbol(helpers::MATH, mote_math as *const u8);
+    builder.symbol(helpers::MEM, mote_mem as *const u8);
     builder.symbol(helpers::TEXT, mote_text as *const u8);
     builder.symbol(helpers::SYSTEM, mote_system as *const u8);
     builder.symbol(helpers::VALUE, mote_value as *const u8);
-    builder.symbol(dynamic::DYN, mote_dyn as *const u8);
     builder.symbol(loader::NATIVE, mote_native as *const u8);
-    let Lowered { module: mut jit, run, faults, types, safepoints, debug, roots, link, native_slots, failure } = lower(JITModule::new(builder), module, program, interner, entry, error_text, &[])?;
+    let Lowered { module: mut jit, run, faults, types, safepoints, debug, roots, link, native_slots, failure, single_threaded } = lower(JITModule::new(builder), module, program, interner, entry, error_text, &[], false)?;
     jit.finalize_definitions().map_err(CompileError::internal)?;
     let address = jit.get_finalized_function(run) as usize;
     let meta = meta::build(program, interner, &types);
@@ -267,11 +270,38 @@ fn build(module: &Module, program: &mut Program, interner: &Interner, entry: Opt
     for (data, slots) in roots {
         code.add_root(GlobalRoot { address: jit.get_finalized_data(data).0 as usize, slots });
     }
-    Ok(Compiled { jit, faults, types, meta, run: address, link, native_slots, files: Vec::new(), failure, code, functions, heap: HeapConfig::default(), scheduler: mote_scheduler::Config::new(), feeds: Vec::new(), args: Vec::new(), sink: None })
+    Ok(Compiled { jit, faults, types, meta, run: address, link, native_slots, files: Vec::new(), failure, code, functions, heap: HeapConfig::default(), scheduler: mote_scheduler::Config::new(), feeds: Vec::new(), args: Vec::new(), sink: None, single_threaded })
 }
 
-/// Lowers the functions start-up and the entry reach into the module, with the data they use; the slots of a library that `statics` marks are relocations to its symbols.
-pub(crate) fn lower<M: ClifModule>(mut jit: M, module: &Module, program: &mut Program, interner: &Interner, entry: Option<EntryKind>, error_text: Option<FuncId>, statics: &[bool]) -> Result<Lowered<M>, CompileError> {
+/// Returns true when no reachable instruction uses tasks, channels, ports, locks, sleep, or blocking extern calls.
+fn is_single_threaded(module: &Module, order: &[FuncId], interner: &Interner, natives: &HashMap<DefId, usize>, link: &LinkTable) -> bool {
+    for &id in order {
+        for (_, block) in module.functions[id].blocks.iter() {
+            for inst in &block.insts {
+                match &inst.op {
+                    Op::Spawn { .. } | Op::ScopeBegin | Op::ScopeEnd(_) => return false,
+                    Op::Call { callee: Callee::Intrinsic(name), .. }
+                        if matches!(emitter(interner.resolve(*name)), Some(Emitter::Task | Emitter::Channel | Emitter::Lock)) =>
+                    {
+                        return false;
+                    }
+                    Op::Call { callee: Callee::Native(def), .. }
+                        if natives.get(def).is_some_and(|&index| link.functions[index].sig.blocking) =>
+                    {
+                        return false;
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    true
+}
+
+/// Lowers the functions start-up and the entry reach into the module, with the data they use; the slots of a library that `statics` marks are relocations to its symbols, and `colocated` selects 32-bit PC-relative or 64-bit absolute internal references.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn lower<M: ClifModule>(mut jit: M, module: &Module, program: &mut Program, interner: &Interner, entry: Option<EntryKind>, error_text: Option<FuncId>, statics: &[bool], colocated: bool) -> Result<Lowered<M>, CompileError> {
+    let (local_linkage, export_linkage) = if colocated { (Linkage::Local, Linkage::Export) } else { (Linkage::Preemptible, Linkage::Preemptible) };
     let types = typetable::build(module, program, interner);
     let program: &Program = program;
     let ok_tag = result_variant(program, interner, "Ok");
@@ -281,7 +311,7 @@ pub(crate) fn lower<M: ClifModule>(mut jit: M, module: &Module, program: &mut Pr
     }
     let result_ty = found.map(|entry| module.functions[entry].ret);
     let result_error = result_ty.and_then(|ty| match program.types.kind(ty) {
-        TyKind::Adt { def, args } if program.lang.get(&LangItem::Result) == Some(def) && args.len() == 2 => Some(args[1]),
+        TyKind::Adt { def, args } if program.std.result == Some(*def) && args.len() == 2 => args[1].as_type(),
         _ => None,
     });
     let exit_int = result_ty.is_some_and(|ty| matches!(program.types.kind(ty), TyKind::Int(_)));
@@ -306,11 +336,11 @@ pub(crate) fn lower<M: ClifModule>(mut jit: M, module: &Module, program: &mut Pr
         text: import(&mut jit, helpers::TEXT, &c_signature(&[I64, I32, I64, I64, I64, I32, I32, I32], &[I64], host))?,
         system: import(&mut jit, helpers::SYSTEM, &c_signature(&[I64, I32, I64, I32, I32, I32], &[I64], host))?,
         value: import(&mut jit, helpers::VALUE, &c_signature(&[I64, I32, I32, I64, I64], &[I64], host))?,
-        dynamic: import(&mut jit, dynamic::DYN, &c_signature(&[I64, I32, I64, I64, I64, I64], &[I64], host))?,
         native: import(&mut jit, loader::NATIVE, &c_signature(&[I64, I32, I64, I64], &[I64], host))?,
         fault_message: import(&mut jit, Entry::FaultMessage.name(), &c_signature(Entry::FaultMessage.params(), Entry::FaultMessage.results(), host))?,
         poll: import(&mut jit, Entry::Poll.name(), &c_signature(Entry::Poll.params(), Entry::Poll.results(), host))?,
         fmod: import(&mut jit, helpers::FMOD, &c_signature(&[F64, F64], &[F64], host))?,
+        mem: import(&mut jit, helpers::MEM, &c_signature(&[I32, I64, I64, I64, I64], &[I64], host))?,
         task_spawn: import(&mut jit, Entry::TaskSpawn.name(), &c_signature(Entry::TaskSpawn.params(), Entry::TaskSpawn.results(), host))?,
         task_await: import(&mut jit, Entry::TaskAwait.name(), &c_signature(Entry::TaskAwait.params(), Entry::TaskAwait.results(), host))?,
         task_cancel: import(&mut jit, Entry::TaskCancel.name(), &c_signature(Entry::TaskCancel.params(), Entry::TaskCancel.results(), host))?,
@@ -349,14 +379,14 @@ pub(crate) fn lower<M: ClifModule>(mut jit: M, module: &Module, program: &mut Pr
     let mut signatures: HashMap<FuncId, Signature> = HashMap::new();
     for &id in &order {
         let sig = function_signature(&module.functions[id], closure_conv.contains(&id), &types)?;
-        let clif = jit.declare_function(&format!("f{}", id.index()), Linkage::Local, &sig).map_err(CompileError::internal)?;
+        let clif = jit.declare_function(&format!("f{}", id.index()), local_linkage, &sig).map_err(CompileError::internal)?;
         funcs.insert(id, clif);
         signatures.insert(id, sig);
     }
     let mut cells: HashMap<DefId, DataId> = HashMap::new();
     for (position, &def) in globals.iter().enumerate() {
         let DefKind::Global(global) = &program.defs[def].kind else { return Err(CompileError::internal("a global that is not a global")) };
-        let data = jit.declare_data(&format!("g{position}"), Linkage::Local, true, false).map_err(CompileError::internal)?;
+        let data = jit.declare_data(&format!("g{position}"), local_linkage, true, false).map_err(CompileError::internal)?;
         let mut description = DataDescription::new();
         description.define_zeroinit(types.table.layout(types.id(global.ty)).size.div_ceil(8).max(1) as usize * 8);
         jit.define_data(data, &description).map_err(CompileError::internal)?;
@@ -370,12 +400,40 @@ pub(crate) fn lower<M: ClifModule>(mut jit: M, module: &Module, program: &mut Pr
                 continue;
             }
             let contents = string_object(types.id(TyId::STRING), interner.resolve(text));
-            let data = jit.declare_data(&format!("s{}", strings.len()), Linkage::Local, false, false).map_err(CompileError::internal)?;
+            let data = jit.declare_data(&format!("s{}", strings.len()), local_linkage, false, false).map_err(CompileError::internal)?;
             let mut description = DataDescription::new();
             description.define(contents.into_boxed_slice());
             description.set_align(8);
             jit.define_data(data, &description).map_err(CompileError::internal)?;
             strings.insert(text, data);
+        }
+    }
+
+    // The types an `Any` can hold: whatever is boxed into one, and the members of a union widened into one.
+    let mut any_members: Vec<TyId> = Vec::new();
+    for &id in &order {
+        let function = &module.functions[id];
+        for (_, block) in function.blocks.iter() {
+            for inst in &block.insts {
+                let Op::Convert { conversion: Conversion::ToUnion | Conversion::WidenUnion, operand } = &inst.op else { continue };
+                if !inst.dest.is_some_and(|dest| matches!(program.types.kind(function.regs[dest].ty), TyKind::Any)) {
+                    continue;
+                }
+                let held = match operand {
+                    Operand::Reg(reg) => function.regs[*reg].ty,
+                    Operand::Const(constant) => const_ty(constant),
+                };
+                let held: Vec<TyId> = match program.types.kind(held) {
+                    TyKind::Union(members) => members.clone(),
+                    TyKind::Any => continue,
+                    _ => vec![held],
+                };
+                for held in held {
+                    if !any_members.contains(&held) {
+                        any_members.push(held);
+                    }
+                }
+            }
         }
     }
 
@@ -385,7 +443,7 @@ pub(crate) fn lower<M: ClifModule>(mut jit: M, module: &Module, program: &mut Pr
         for (_, block) in function.blocks.iter() {
             for inst in &block.insts {
                 let Op::Call { callee: Callee::Intrinsic(name), args, .. } = &inst.op else { continue };
-                if interner.resolve(*name) != "typeof" {
+                if interner.resolve(*name) != "type_tag" {
                     continue;
                 }
                 let Some(arg) = args.first() else { continue };
@@ -395,6 +453,7 @@ pub(crate) fn lower<M: ClifModule>(mut jit: M, module: &Module, program: &mut Pr
                 };
                 let named: Vec<TyId> = match program.types.kind(ty) {
                     TyKind::Union(members) => members.clone(),
+                    TyKind::Any => any_members.iter().copied().chain([TyId::ANY]).collect(),
                     _ => vec![ty],
                 };
                 for ty in named {
@@ -402,7 +461,7 @@ pub(crate) fn lower<M: ClifModule>(mut jit: M, module: &Module, program: &mut Pr
                         continue;
                     }
                     let contents = string_object(types.id(TyId::STRING), &program.render_source(ty, interner));
-                    let data = jit.declare_data(&format!("t{}", type_names.len()), Linkage::Local, false, false).map_err(CompileError::internal)?;
+                    let data = jit.declare_data(&format!("t{}", type_names.len()), local_linkage, false, false).map_err(CompileError::internal)?;
                     let mut description = DataDescription::new();
                     description.define(contents.into_boxed_slice());
                     description.set_align(8);
@@ -413,64 +472,12 @@ pub(crate) fn lower<M: ClifModule>(mut jit: M, module: &Module, program: &mut Pr
         }
     }
 
-    let mut meta_tables: HashMap<&'static str, DataId> = HashMap::new();
-    let mut wanted: Vec<(&'static str, mote_abi::TypeId)> = Vec::new();
-    for &id in &order {
-        let function = &module.functions[id];
-        for (_, block) in function.blocks.iter() {
-            for inst in &block.insts {
-                let Op::Call { callee: Callee::Intrinsic(name), .. } = &inst.op else { continue };
-                let key = match interner.resolve(*name) {
-                    "meta_ints" => "meta_ints",
-                    "meta_texts" => "meta_texts",
-                    _ => continue,
-                };
-                let Some(dest) = inst.dest else { continue };
-                if wanted.iter().all(|(found, _)| *found != key) {
-                    wanted.push((key, types.id(function.regs[dest].ty)));
-                }
-            }
-        }
-    }
-    if !wanted.is_empty() {
-        let table = mote_ir::reflect::encode(program);
-        for (key, array) in wanted {
-            let data = jit.declare_data(key, Linkage::Local, false, false).map_err(CompileError::internal)?;
-            let mut description = DataDescription::new();
-            description.set_align(8);
-            let mut contents = Header::new(array, FLAG_STATIC).bits().to_le_bytes().to_vec();
-            if key == "meta_ints" {
-                contents.extend((table.ints.len() as u64).to_le_bytes());
-                for number in &table.ints {
-                    contents.extend((*number as i64).to_le_bytes());
-                }
-                description.define(contents.into_boxed_slice());
-            } else {
-                contents.extend((table.texts.len() as u64).to_le_bytes());
-                let first = contents.len();
-                contents.resize(first + table.texts.len() * 8, 0);
-                description.define(contents.into_boxed_slice());
-                for (at, text) in table.texts.iter().enumerate() {
-                    let string = jit.declare_data(&format!("x{at}"), Linkage::Local, false, false).map_err(CompileError::internal)?;
-                    let mut inner = DataDescription::new();
-                    inner.define(string_object(types.id(TyId::STRING), text).into_boxed_slice());
-                    inner.set_align(8);
-                    jit.define_data(string, &inner).map_err(CompileError::internal)?;
-                    let target = jit.declare_data_in_data(string, &mut description);
-                    description.write_data_addr((first + at * 8) as u32, target, 0);
-                }
-            }
-            jit.define_data(data, &description).map_err(CompileError::internal)?;
-            meta_tables.insert(key, data);
-        }
-    }
-
     let (link, failures) = program.link_table(interner);
-    let natives: HashMap<DefId, usize> = program.linked_natives().into_iter().filter(|def| failures.iter().all(|failure| failure.def != *def)).enumerate().map(|(index, def)| (def, index)).collect();
+    let natives: HashMap<DefId, usize> = program.linked_libraries().into_iter().filter(|def| failures.iter().all(|failure| failure.def != *def)).enumerate().map(|(index, def)| (def, index)).collect();
     let native_slots = if link.functions.is_empty() {
         None
     } else {
-        let data = jit.declare_data("mote_natives", Linkage::Export, true, false).map_err(CompileError::internal)?;
+        let data = jit.declare_data("mote_natives", export_linkage, true, false).map_err(CompileError::internal)?;
         let mut description = DataDescription::new();
         let linked = |index: usize| statics.get(link.functions[index].library as usize).copied().unwrap_or(false);
         if (0..link.functions.len()).any(linked) {
@@ -490,7 +497,7 @@ pub(crate) fn lower<M: ClifModule>(mut jit: M, module: &Module, program: &mut Pr
     let mut thunks: HashMap<usize, ClifFunc> = HashMap::new();
     for index in (0..link.functions.len()).filter(|&index| link.functions[index].sig.blocking) {
         let thunk_signature = c_signature(&[mote_abi::Scalar::I64], &[], host);
-        let id = jit.declare_function(&format!("thunk{index}"), Linkage::Local, &thunk_signature).map_err(CompileError::internal)?;
+        let id = jit.declare_function(&format!("thunk{index}"), local_linkage, &thunk_signature).map_err(CompileError::internal)?;
         thunks.insert(index, id);
     }
 
@@ -509,7 +516,7 @@ pub(crate) fn lower<M: ClifModule>(mut jit: M, module: &Module, program: &mut Pr
                 if task_thunks.contains_key(&task) {
                     continue;
                 }
-                let clif = jit.declare_function(&format!("task{}", task.raw()), Linkage::Local, &c_signature(&[I64, I64, I64], &[], host)).map_err(CompileError::internal)?;
+                let clif = jit.declare_function(&format!("task{}", task.raw()), local_linkage, &c_signature(&[I64, I64, I64], &[], host)).map_err(CompileError::internal)?;
                 task_thunks.insert(task, clif);
             }
         }
@@ -537,7 +544,7 @@ pub(crate) fn lower<M: ClifModule>(mut jit: M, module: &Module, program: &mut Pr
                 if defer_thunks.contains_key(func) {
                     continue;
                 }
-                let clif = jit.declare_function(&format!("close{}", func.index()), Linkage::Local, &c_signature(&[I64, I64], &[], host)).map_err(CompileError::internal)?;
+                let clif = jit.declare_function(&format!("close{}", func.index()), local_linkage, &c_signature(&[I64, I64], &[], host)).map_err(CompileError::internal)?;
                 defer_thunks.insert(*func, clif);
             }
         }
@@ -545,7 +552,7 @@ pub(crate) fn lower<M: ClifModule>(mut jit: M, module: &Module, program: &mut Pr
 
     let mut statics: HashMap<FuncId, DataId> = HashMap::new();
     for &id in order.iter().filter(|id| closure_conv.contains(id) && module.functions[**id].captures.is_empty() && !matches!(module.functions[**id].kind, FunctionKind::Resume { .. })) {
-        let data = jit.declare_data(&format!("c{}", id.index()), Linkage::Local, false, false).map_err(CompileError::internal)?;
+        let data = jit.declare_data(&format!("c{}", id.index()), local_linkage, false, false).map_err(CompileError::internal)?;
         let mut description = DataDescription::new();
         let mut contents = Header::new(types.closure(id), FLAG_STATIC).bits().to_le_bytes().to_vec();
         contents.extend([0; 8]);
@@ -557,6 +564,7 @@ pub(crate) fn lower<M: ClifModule>(mut jit: M, module: &Module, program: &mut Pr
         statics.insert(id, data);
     }
 
+    let single_threaded = is_single_threaded(module, &order, interner, &natives, &link);
     let mut faults = FaultTable::new();
     let mut context = jit.make_context();
     let mut builder_context = FunctionBuilderContext::new();
@@ -567,7 +575,7 @@ pub(crate) fn lower<M: ClifModule>(mut jit: M, module: &Module, program: &mut Pr
         context.func.signature = signatures[&id].clone();
         context.func.name = UserFuncName::user(0, id.index() as u32);
         let frame = {
-            let env = Env { module, program, interner, types: &types, ok_tag, clif: &jit, funcs: &funcs, globals: &cells, strings: &strings, type_names: &type_names, meta_tables: &meta_tables, natives: &natives, link: &link, native_slots, thunks: &thunks, task_thunks: &task_thunks, viewed_tasks: &viewed_tasks, defer_thunks: &defer_thunks, closure_conv: &closure_conv, statics: &statics, imports };
+            let env = Env { module, program, interner, types: &types, ok_tag, clif: &jit, funcs: &funcs, globals: &cells, strings: &strings, type_names: &type_names, any_members: &any_members, natives: &natives, link: &link, native_slots, thunks: &thunks, task_thunks: &task_thunks, viewed_tasks: &viewed_tasks, defer_thunks: &defer_thunks, closure_conv: &closure_conv, statics: &statics, imports };
             let builder = FunctionBuilder::new(&mut context.func, &mut builder_context);
             Lowering::lower(builder, env, &mut faults, id)?
         };
@@ -627,7 +635,7 @@ pub(crate) fn lower<M: ClifModule>(mut jit: M, module: &Module, program: &mut Pr
 
     let failure = match (result_error, exit_int) {
         (Some(_), _) | (_, true) => {
-            let data = jit.declare_data("mote_failure", Linkage::Export, true, false).map_err(CompileError::internal)?;
+            let data = jit.declare_data("mote_failure", export_linkage, true, false).map_err(CompileError::internal)?;
             let mut description = DataDescription::new();
             description.define_zeroinit(24);
             description.set_align(8);
@@ -638,7 +646,7 @@ pub(crate) fn lower<M: ClifModule>(mut jit: M, module: &Module, program: &mut Pr
     };
     let held = match result_error {
         Some(_) => {
-            let data = jit.declare_data("entry_result", Linkage::Local, true, false).map_err(CompileError::internal)?;
+            let data = jit.declare_data("entry_result", local_linkage, true, false).map_err(CompileError::internal)?;
             let mut description = DataDescription::new();
             description.define_zeroinit(types.table.layout(types.id(result_ty.expect("a result"))).size.div_ceil(8).max(1) as usize * 8);
             description.set_align(8);
@@ -649,7 +657,7 @@ pub(crate) fn lower<M: ClifModule>(mut jit: M, module: &Module, program: &mut Pr
     };
     let run = {
         let sig = c_signature(&[mote_abi::Scalar::I64], &[], host);
-        let run = jit.declare_function("mote_run", Linkage::Export, &sig).map_err(CompileError::internal)?;
+        let run = jit.declare_function("mote_run", export_linkage, &sig).map_err(CompileError::internal)?;
         context.func.signature = sig;
         context.func.name = UserFuncName::user(1, 0);
         {
@@ -723,7 +731,7 @@ pub(crate) fn lower<M: ClifModule>(mut jit: M, module: &Module, program: &mut Pr
                 let cell = builder.ins().symbol_value(types::I64, cell);
                 let one = builder.ins().iconst(types::I64, 1);
                 emit_store(&mut builder, one, Addr { base: cell, offset: 0 });
-                let is_error = matches!(program.types.kind(error), TyKind::Adt { def, .. } if program.defs[*def].lang == Some(LangItem::Error));
+                let is_error = matches!(program.types.kind(error), TyKind::Adt { def, .. } if program.std.error == Some(*def));
                 if let Some(payload) = payload {
                     let text = if is_error {
                         let object = builder.ins().load(types::I64, MemFlags::trusted(), base, payload.offset as i32);
@@ -780,7 +788,7 @@ pub(crate) fn lower<M: ClifModule>(mut jit: M, module: &Module, program: &mut Pr
         roots.push((data, vec![Slot::Ref(8)]));
     }
     roots.retain(|(_, slots)| !slots.is_empty());
-    Ok(Lowered { module: jit, run, faults, types, safepoints, debug, roots, link, native_slots, failure })
+    Ok(Lowered { module: jit, run, faults, types, safepoints, debug, roots, link, native_slots, failure, single_threaded })
 }
 
 #[cfg(test)]

@@ -3,12 +3,12 @@ use std::collections::HashSet;
 use mote_abi::{CParam, CType, LinkTable, NativeSig};
 use mote_base::Interner;
 
-use crate::defs::{DefId, Function, LangItem, Receiver};
+use crate::defs::{DefId, Function, Receiver};
 use crate::program::Program;
 use crate::tree::{Body, Callee, ExprKind};
-use crate::types::{FloatTy, IntTy, TyId, TyKind};
+use crate::types::{BuiltinTy, FloatTy, IntTy, TyId, TyKind};
 
-/// Why a native signature cannot be a C signature.
+/// Why an extern signature cannot be a C signature.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NativeReason {
     MissingLink,
@@ -34,19 +34,19 @@ pub struct NativeError {
     pub reason: NativeReason,
 }
 
-/// A native function the program calls whose signature cannot cross to C.
+/// An extern function the program calls whose signature cannot cross to C.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct NativeFailure {
     pub def: DefId,
     pub error: NativeError,
 }
 
-fn is_lang(program: &Program, ty: TyId, item: LangItem) -> bool {
-    matches!(program.types.kind(ty), TyKind::Adt { def, .. } if program.defs[*def].lang == Some(item))
+fn is_pointer(ty: TyId, program: &Program) -> bool {
+    matches!(program.types.kind(ty), TyKind::Builtin { kind: BuiltinTy::Pointer, .. })
 }
 
-fn is_pointer(program: &Program, ty: TyId) -> bool {
-    is_lang(program, ty, LangItem::Pointer)
+fn is_port_end(ty: TyId, program: &Program) -> bool {
+    matches!(program.types.kind(ty), TyKind::Builtin { kind: BuiltinTy::PortEnd, .. })
 }
 
 /// The C type a Mote type becomes as a parameter or as a result.
@@ -69,16 +69,20 @@ pub fn c_type(program: &Program, ty: TyId, result: bool) -> Result<CType, Native
         TyKind::Unit if result => Ok(CType::Void),
         TyKind::Unit => Err(NativeReason::VoidParameter),
         TyKind::String => Ok(if result { CType::StringOut } else { CType::StringIn }),
-        TyKind::Array(_) if result => Err(NativeReason::ArrayResult),
+        TyKind::Array(_) | TyKind::FixedArray(..) if result => Err(NativeReason::ArrayResult),
         TyKind::Array(element) if matches!(types.kind(*element), TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool) => Ok(CType::Array),
-        TyKind::Adt { .. } if is_pointer(program, ty) => Ok(CType::Pointer),
-        TyKind::Adt { .. } if is_lang(program, ty, LangItem::PortEnd) => if result { Err(NativeReason::PortResult) } else { Ok(CType::PortEnd) },
-        TyKind::Optional(inner) if is_pointer(program, *inner) => Ok(CType::NullablePointer),
-        _ => Err(NativeReason::Unsupported),
+        TyKind::FixedArray(element, _) if matches!(types.kind(*element), TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool) => Ok(CType::FixedArray),
+        TyKind::Builtin { kind: BuiltinTy::Pointer, .. } => Ok(CType::Pointer),
+        TyKind::Builtin { kind: BuiltinTy::PortEnd, .. } => if result { Err(NativeReason::PortResult) } else { Ok(CType::PortEnd) },
+        TyKind::Optional(inner) if is_pointer(*inner, program) => Ok(CType::NullablePointer),
+        _ => {
+            let _ = is_port_end;
+            Err(NativeReason::Unsupported)
+        }
     }
 }
 
-/// The C signature of a `native fn`, or the first reason it has none.
+/// The C signature of an `extern` fn, or the first reason it has none.
 pub fn signature(function: &Function, program: &Program) -> Result<NativeSig, NativeError> {
     let fail = |param, ty, reason| NativeError { param, ty, reason };
     let Some(link) = function.link else {
@@ -110,8 +114,8 @@ pub fn signature(function: &Function, program: &Program) -> Result<NativeSig, Na
 }
 
 impl Program {
-    /// The native functions the instances, the globals and the top-level code call or name, in the order first seen.
-    pub fn linked_natives(&self) -> Vec<DefId> {
+    /// The external library functions the instances, the globals and the top-level code call or name, in the order first seen.
+    pub fn linked_libraries(&self) -> Vec<DefId> {
         let mut seen = HashSet::new();
         let mut found = Vec::new();
         let mut bodies: Vec<&Body> = self.order.iter().map(|instance| &self.bodies[instance]).collect();
@@ -123,8 +127,8 @@ impl Program {
                     ExprKind::Call { callee: Callee::Function(function), .. } | ExprKind::Function(function) => function.def,
                     _ => continue,
                 };
-                let native = self.defs[def].function().is_some_and(|function| function.native && function.intrinsic.is_none());
-                if native && seen.insert(def) {
+                let extern_fn = self.defs[def].function().is_some_and(|function| function.link.is_some());
+                if extern_fn && seen.insert(def) {
                     found.push(def);
                 }
             }
@@ -132,13 +136,13 @@ impl Program {
         found
     }
 
-    /// What the program loads at start-up, and the natives that cannot be loaded.
+    /// What the program loads at start-up, and the external calls that cannot be loaded.
     pub fn link_table(&self, interner: &Interner) -> (LinkTable, Vec<NativeFailure>) {
         let mut table = LinkTable::new();
         let mut failures = Vec::new();
-        for def in self.linked_natives() {
+        for def in self.linked_libraries() {
             let item = &self.defs[def];
-            let function = item.function().expect("a linked native is a function");
+            let function = item.function().expect("a linked function is a function");
             match signature(function, self) {
                 Ok(sig) => {
                     let link = function.link.expect("a valid signature has a link");
@@ -168,22 +172,19 @@ mod tests {
             .map(|(index, (ty, is_var))| Param { name: fixture.interner.intern(&format!("p{index}")), ty, is_var, default: None, variadic: false })
             .collect();
         let link = Link { library: fixture.interner.intern(library), symbol: fixture.interner.intern("symbol"), blocking };
-        Function { generics: Vec::new(), params, receiver: Receiver::None, ret, has_body: false, native: true, link: Some(link), intrinsic: None }
+        Function { generics: Vec::new(), params, receiver: Receiver::None, ret, has_body: false, link: Some(link) }
     }
 
     fn main_function() -> Function {
-        Function { generics: vec![], params: vec![], receiver: Receiver::None, ret: TyId::UNIT, has_body: true, native: false, link: None, intrinsic: None }
+        Function { generics: vec![], params: vec![], receiver: Receiver::None, ret: TyId::UNIT, has_body: true, link: None }
     }
 
-    /// A program with a `Pointer` lang item and `Pointer<Db>`.
+    /// A program with `Pointer<Db>`.
     fn with_pointer() -> (Fixture, TyId) {
         let mut fixture = Fixture::new();
-        let pointer = fixture.def("Pointer");
-        fixture.program.defs[pointer].lang = Some(LangItem::Pointer);
-        fixture.program.lang.insert(LangItem::Pointer, pointer);
         let db = fixture.def("Db");
-        let db_ty = fixture.program.types.adt(db, vec![]);
-        let ty = fixture.program.types.adt(pointer, vec![db_ty]);
+        let db_ty = fixture.program.types.adt_types(db, vec![]);
+        let ty = fixture.program.types.builtin(BuiltinTy::Pointer, vec![db_ty]);
         (fixture, ty)
     }
 
@@ -230,10 +231,7 @@ mod tests {
     #[test]
     fn a_port_end_crosses_as_a_parameter_only() {
         let mut fixture = Fixture::new();
-        let port = fixture.def("PortEnd");
-        fixture.program.defs[port].lang = Some(LangItem::PortEnd);
-        fixture.program.lang.insert(LangItem::PortEnd, port);
-        let ty = fixture.program.types.adt(port, vec![]);
+        let ty = fixture.program.types.builtin(BuiltinTy::PortEnd, vec![]);
         assert_eq!(c_type(&fixture.program, ty, false), Ok(CType::PortEnd));
         assert_eq!(c_type(&fixture.program, ty, true), Err(NativeReason::PortResult));
         let function = native(&mut fixture, "pane", vec![(ty, false)], TyId::UNIT, false);
@@ -246,7 +244,7 @@ mod tests {
     fn a_class_that_is_not_the_pointer_lang_item_does_not_cross() {
         let mut fixture = Fixture::new();
         let class = fixture.def("Db");
-        let ty = fixture.program.types.adt(class, vec![]);
+        let ty = fixture.program.types.adt_types(class, vec![]);
         let maybe = fixture.program.types.optional(ty);
         assert_eq!(c_type(&fixture.program, ty, false), Err(NativeReason::Unsupported));
         assert_eq!(c_type(&fixture.program, maybe, false), Err(NativeReason::Unsupported));
@@ -258,10 +256,23 @@ mod tests {
         let optional = program.types.optional(TyId::INT);
         let union = program.types.union(&[TyId::INT, TyId::STRING]);
         let tuple = program.types.tuple(vec![TyId::INT]);
-        let fixed = program.types.fixed_array(TyId::UINT8, 4);
-        for ty in [optional, union, tuple, fixed, TyId::ERROR] {
+        for ty in [optional, union, tuple, TyId::ERROR] {
             assert_eq!(c_type(&program, ty, false), Err(NativeReason::Unsupported));
         }
+    }
+
+    #[test]
+    fn fixed_arrays_of_scalars_cross_including_by_ref() {
+        let mut fixture = Fixture::new();
+        let fixed = fixture.program.types.fixed_array(TyId::UINT8, 32);
+        let bad_fixed = fixture.program.types.fixed_array(TyId::STRING, 4);
+        assert_eq!(c_type(&fixture.program, fixed, false), Ok(CType::FixedArray));
+        assert_eq!(c_type(&fixture.program, fixed, true), Err(NativeReason::ArrayResult));
+        assert_eq!(c_type(&fixture.program, bad_fixed, false), Err(NativeReason::Unsupported));
+        let by_ref = native(&mut fixture, "crypto", vec![(fixed, true)], TyId::INT32, false);
+        let sig = signature(&by_ref, &fixture.program).unwrap();
+        assert_eq!(sig.params, [CParam::by_ref(CType::FixedArray)]);
+        assert!(sig.is_valid());
     }
 
     #[test]
@@ -305,7 +316,7 @@ mod tests {
         assert_eq!(signature(&no_link, &fixture.program).unwrap_err().reason, NativeReason::MissingLink);
 
         let mut generic = native(&mut fixture, "m", vec![], TyId::UNIT, false);
-        generic.generics.push(GenericParam { name: fixture.interner.intern("T"), bounds: Vec::new() });
+        generic.generics.push(GenericParam::Type { name: fixture.interner.intern("T"), bounds: Vec::new() });
         assert_eq!(signature(&generic, &fixture.program).unwrap_err().reason, NativeReason::Generic);
 
         let mut method = native(&mut fixture, "m", vec![], TyId::UNIT, false);
@@ -345,7 +356,7 @@ mod tests {
         call(&mut body, puts);
         call(&mut body, main);
         fixture.program.add_body(Instance { def: main, args: vec![] }, body);
-        assert_eq!(fixture.program.linked_natives(), [puts, sin]);
+        assert_eq!(fixture.program.linked_libraries(), [puts, sin]);
         let (table, failures) = fixture.program.link_table(&fixture.interner);
         assert!(failures.is_empty());
         assert_eq!(table.libraries, ["c", "m"]);
@@ -368,7 +379,7 @@ mod tests {
         let mut body = Body::new();
         call(&mut body, second);
         fixture.program.top_level.insert(module, body);
-        assert_eq!(fixture.program.linked_natives(), [first, second]);
+        assert_eq!(fixture.program.linked_libraries(), [first, second]);
     }
 
     #[test]

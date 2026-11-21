@@ -1,0 +1,289 @@
+// A compiled regular expression and the captures of its matches.
+import join from std.string
+import Closeable from std.traits
+import Match from .span
+import { regex_captures, regex_free, regex_group_name, regex_groups, regex_is_match, regex_new } from ._lib
+
+/// The groups of one match; group 0 is the whole match.
+pub class Captures {
+    source: String
+    spans: List<Int>
+    names: List<String>
+
+    /// How many groups there are, group 0 included.
+    pub fn len(self) -> Int { return self.spans.len() / 2 }
+
+    /// The group at an index, or null when it did not take part in the match.
+    pub fn group(self, index: Int) -> Match? {
+        if index < 0 || index >= self.len() { return null }
+        let start = self.spans.get(index * 2)
+        let end = self.spans.get(index * 2 + 1)
+        if start < 0 { return null }
+        return Match { start: start, end: end, text: self.source.slice(start, end).to_string() }
+    }
+
+    /// The text of the group at an index.
+    pub fn get(self, index: Int) -> String? {
+        let found = self.group(index)
+        if found == null { return null }
+        return found.text
+    }
+
+    /// The text of the group with a name.
+    pub fn named(self, name: String) -> String? {
+        var index = 0
+        for each in self.names {
+            if each == name && name != "" { return self.get(index) }
+            index = index + 1
+        }
+        return null
+    }
+
+    /// The text of a group by `Int` index or `String` name.
+    pub fn __getitem__(self, key: Int | String) -> String? {
+        if key is Int { return self.get(key) }
+        return self.named(key)
+    }
+
+    /// The whole match.
+    pub fn whole(self) -> Match { return self.group(0)! }
+
+    /// The template with `$1`, `${1}`, `$name` and `${name}` replaced by groups (nothing for a group that is missing) and `$$` by `$`.
+    pub fn expand(self, template: String) -> String {
+        let bytes = template.bytes()
+        var parts: List<String> = []
+        var mark = 0
+        var at = 0
+        while at < bytes.len() {
+            if bytes[at] as Int != 36 {
+                at = at + 1
+                continue
+            }
+            parts.push(template.slice(mark, at).to_string())
+            if at + 1 < bytes.len() && bytes[at + 1] as Int == 36 {
+                parts.push("$")
+                at = at + 2
+                mark = at
+                continue
+            }
+            var name_start = at + 1
+            var name_end = name_start
+            var braced = false
+            if name_start < bytes.len() && bytes[name_start] as Int == 123 {
+                braced = true
+                name_start = name_start + 1
+                name_end = name_start
+                while name_end < bytes.len() && bytes[name_end] as Int != 125 {
+                    name_end = name_end + 1
+                }
+                if name_end >= bytes.len() {
+                    parts.push("$")
+                    at = at + 1
+                    mark = at
+                    continue
+                }
+            } else {
+                while name_end < bytes.len() && word_byte(bytes[name_end] as Int) {
+                    name_end = name_end + 1
+                }
+            }
+            if name_end == name_start {
+                parts.push("$")
+                at = at + 1
+                mark = at
+                continue
+            }
+            let name = template.slice(name_start, name_end).to_string()
+            parts.push(self.lookup(name))
+            at = if braced { name_end + 1 } else { name_end }
+            mark = at
+        }
+        parts.push(template.slice(mark, bytes.len()).to_string())
+        return join(parts, "")
+    }
+
+    fn lookup(self, name: String) -> String {
+        let number = digits(name)
+        let found = if number >= 0 { self.get(number) } else { self.named(name) }
+        return if found == null { "" } else { found }
+    }
+}
+
+fn word_byte(c: Int) -> Bool {
+    return (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c == 95
+}
+
+// The number a name of only digits is, or -1.
+fn digits(name: String) -> Int {
+    if name == "" { return -1 }
+    var value = 0
+    for c in name.bytes() {
+        let digit = c as Int
+        if digit < 48 || digit > 57 { return -1 }
+        value = value * 10 + digit - 48
+        if value > 1000000 { return -1 }
+    }
+    return value
+}
+
+fn char_length(first: Int) -> Int {
+    if first < 192 { return 1 }
+    if first < 224 { return 2 }
+    if first < 240 { return 3 }
+    return 4
+}
+
+fn signed(bytes: [UInt8], at: Int) -> Int {
+    let value = bytes[at] as Int + bytes[at + 1] as Int * 256 + bytes[at + 2] as Int * 65536 + bytes[at + 3] as Int * 16777216
+    return if value >= 2147483648 { value - 4294967296 } else { value }
+}
+
+/// A compiled regular expression. It is closed to free its memory; using it after that is a fault.
+pub class Regex: (Closeable) {
+    handle: AtomicInt
+    source: String
+    groups: Int
+    names: List<String>
+
+    /// Compiles a pattern in the syntax of the Rust `regex` crate; an `Err` says what is wrong with it.
+    pub fn new(pattern: String) -> Result<Regex, Error> {
+        var error: [UInt8] = [0; 512]
+        var handle = regex_new(pattern.bytes(), error)
+        if handle < 0 {
+            let size = -handle - 1
+            if size > error.len() {
+                error = [0; size]
+                handle = regex_new(pattern.bytes(), error)
+            }
+            let message = String.from_bytes(error.slice(0, -handle - 1))
+            return Err(Error.new(ErrorKind.InvalidData, "regex: " + (if message == null { "bad pattern" } else { message })))
+        }
+        let groups = regex_groups(handle)
+        var names: List<String> = []
+        for index in 0..groups {
+            var buffer: [UInt8] = [0; 128]
+            var size = regex_group_name(handle, index, buffer)
+            if size > buffer.len() {
+                buffer = [0; size]
+                size = regex_group_name(handle, index, buffer)
+            }
+            let name = if size < 0 { null } else { String.from_bytes(buffer.slice(0, size)) }
+            names.push(if name == null { "" } else { name })
+        }
+        return Ok(Regex { handle: AtomicInt(handle), source: pattern, groups: groups, names: names })
+    }
+
+    // The external handle, which must be open.
+    fn live(self) -> Int {
+        let handle = self.handle.load()
+        if handle == 0 { @fault("the regex is closed") }
+        return handle
+    }
+
+    /// The pattern text.
+    pub fn pattern(self) -> String { return self.source }
+
+    /// The names of the groups in order, "" for a group with none; index 0 is the whole match.
+    pub fn group_names(self) -> List<String> { return self.names }
+
+    /// Whether the pattern matches anywhere in the text.
+    pub fn is_match(self, text: String) -> Bool { return regex_is_match(self.live(), text.bytes()) == 1 }
+
+    fn search(self, text: String, bytes: [UInt8], start: Int) -> Captures? {
+        let out: [UInt8] = [0; self.groups * 8]
+        let count = regex_captures(self.live(), bytes, start, out)
+        if count < 0 { return null }
+        var spans: List<Int> = []
+        for at in 0..count * 2 {
+            spans.push(signed(out, at * 4))
+        }
+        return Captures { source: text, spans: spans, names: self.names }
+    }
+
+    /// The first match at or after byte `start`, with its groups.
+    pub fn captures_from(self, text: String, start: Int) -> Captures? { return self.search(text, text.bytes(), start) }
+
+    /// The first match, with its groups.
+    pub fn captures(self, text: String) -> Captures? { return self.search(text, text.bytes(), 0) }
+
+    /// The first match.
+    pub fn find(self, text: String) -> Match? {
+        let found = self.captures(text)
+        if found == null { return null }
+        return found.whole()
+    }
+
+    /// Every match with its groups, left to right and not overlapping; an empty match next to the one before it is skipped.
+    pub fn captures_all(self, text: String) -> List<Captures> {
+        let bytes = text.bytes()
+        var out: List<Captures> = []
+        var next = 0
+        var last = -1
+        while next <= bytes.len() {
+            let found = self.search(text, bytes, next)
+            if found == null { break }
+            let whole = found.whole()
+            if whole.start == whole.end {
+                next = whole.end + (if whole.end < bytes.len() { char_length(bytes[whole.end] as Int) } else { 1 })
+                if whole.start == last { continue }
+            } else {
+                next = whole.end
+            }
+            out.push(found)
+            last = whole.end
+        }
+        return out
+    }
+
+    /// Every match.
+    pub fn find_all(self, text: String) -> List<Match> {
+        var out: List<Match> = []
+        for found in self.captures_all(text) {
+            out.push(found.whole())
+        }
+        return out
+    }
+
+    // The text with the first `limit` matches replaced (all of them for a limit of 0).
+    fn substitute(self, text: String, template: String, limit: Int) -> String {
+        var parts: List<String> = []
+        var mark = 0
+        var count = 0
+        for found in self.captures_all(text) {
+            if limit > 0 && count >= limit { break }
+            let whole = found.whole()
+            parts.push(text.slice(mark, whole.start).to_string())
+            parts.push(found.expand(template))
+            mark = whole.end
+            count = count + 1
+        }
+        parts.push(text.slice(mark, text.len()).to_string())
+        return join(parts, "")
+    }
+
+    /// The text with the first match replaced by the template (see `Captures.expand`).
+    pub fn replace(self, text: String, template: String) -> String { return self.substitute(text, template, 1) }
+
+    /// The text with every match replaced by the template.
+    pub fn replace_all(self, text: String, template: String) -> String { return self.substitute(text, template, 0) }
+
+    /// The pieces of the text between the matches.
+    pub fn split(self, text: String) -> List<String> {
+        var parts: List<String> = []
+        var mark = 0
+        for found in self.find_all(text) {
+            if found.start == found.end && (found.start == 0 || found.start == text.len()) { continue }
+            parts.push(text.slice(mark, found.start).to_string())
+            mark = found.end
+        }
+        parts.push(text.slice(mark, text.len()).to_string())
+        return parts
+    }
+
+    pub fn close(self) -> Result<Null, Error> {
+        let handle = self.handle.swap(0)
+        if handle == 0 { return Err(Error.new(ErrorKind.Other, "regex: already closed")) }
+        regex_free(handle)
+        return Ok(null)
+    }
+}

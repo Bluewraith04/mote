@@ -94,15 +94,15 @@ fn packages_the_same_source_in_two_directories_makes_the_same_zip() {
 }
 
 #[test]
-fn packages_a_zip_with_a_native_library_keeps_the_native_beside_the_package() {
+fn packages_a_zip_with_a_shared_library_keeps_the_lib_beside_the_package() {
     let scratch = Scratch::new();
     let home = scratch.path("home");
     let source = gadget(&scratch, "gadget");
-    scratch.write("gadget/native/x86_64-linux/libgadget.so", "not a real library");
+    scratch.write("gadget/lib/x86_64-linux/libgadget.so", "not a real library");
     run("package", &source, &home);
     let app = app(&scratch);
     run("add ../gadget/target/gadget-0.1.0.zip", &app, &home);
     let cached: Vec<PathBuf> = fs::read_dir(home.join("cache")).unwrap().map(|entry| entry.unwrap().path()).collect();
     assert_eq!(cached.len(), 1);
-    assert_eq!(fs::read_to_string(cached[0].join("native/x86_64-linux/libgadget.so")).unwrap(), "not a real library");
+    assert_eq!(fs::read_to_string(cached[0].join("lib/x86_64-linux/libgadget.so")).unwrap(), "not a real library");
 }

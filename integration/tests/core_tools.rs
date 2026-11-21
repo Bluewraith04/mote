@@ -36,7 +36,7 @@ fn copy_tree(from: &Path, to: &Path) {
     }
 }
 
-/// A scratch copy of a fixture set, so the repository gets no built natives.
+/// A scratch copy of a fixture set, so the repository gets no built shared libraries.
 fn fixtures(scratch: &Scratch, set: &str) -> PathBuf {
     let to = scratch.path(set);
     copy_tree(&root().join("tools/fixtures").join(set), &to);
@@ -44,7 +44,15 @@ fn fixtures(scratch: &Scratch, set: &str) -> PathBuf {
 }
 
 fn script(name: &str, args: &[&str], envs: &[(&str, &Path)]) -> Output {
+    #[cfg(not(target_os = "windows"))]
     let mut command = Command::new(root().join("tools").join(name));
+    #[cfg(target_os = "windows")]
+    let mut command = {
+        let ps1 = name.strip_suffix(".sh").map(|stem| format!("{stem}.ps1")).unwrap_or_else(|| name.to_string());
+        let mut cmd = Command::new("powershell.exe");
+        cmd.args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File"]).arg(root().join("tools").join(ps1));
+        cmd
+    };
     command.args(args).current_dir(root());
     for (key, value) in envs {
         command.env(key, value);
@@ -58,9 +66,13 @@ fn mote() -> PathBuf {
     BINARY
         .get_or_init(|| {
             let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
-            let built = Command::new(cargo).args(["build", "--quiet", "--offline", "-p", "mote"]).current_dir(root()).status().unwrap();
+            let mut args = vec!["build", "--quiet", "--offline", "-p", "mote"];
+            if !cfg!(debug_assertions) {
+                args.push("--release");
+            }
+            let built = Command::new(cargo).args(&args).current_dir(root()).status().unwrap();
             assert!(built.success(), "cargo build -p mote failed");
-            let binary = std::env::current_exe().unwrap().parent().unwrap().parent().unwrap().join("mote");
+            let binary = std::env::current_exe().unwrap().parent().unwrap().parent().unwrap().join(format!("mote{}", std::env::consts::EXE_SUFFIX));
             assert!(binary.is_file(), "{} is missing", binary.display());
             binary
         })
@@ -68,37 +80,42 @@ fn mote() -> PathBuf {
 }
 
 #[test]
-fn core_tools_check_passes_when_each_native_has_a_build_script() {
+fn core_tools_check_passes_when_each_external_library_has_a_build_script() {
     let scratch = Scratch::new();
     let core = fixtures(&scratch, "core");
-    let output = script("build-core-natives.sh", &["--check", "--core", core.to_str().unwrap()], &[]);
+    let output = script("build-std-libs.sh", &["--check", "--core", core.to_str().unwrap()], &[]);
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
-    assert_eq!(String::from_utf8_lossy(&output.stdout), "ok: 3 libraries, 1 with a native\n");
-    assert!(!core.join("ping/native/x86_64-linux").exists());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "ok: 3 libraries, 1 with a shared library\n");
+    assert!(!core.join("ping/lib").join(mote_packages::host_triple()).exists());
 }
 
 #[test]
-fn core_tools_check_names_a_library_whose_native_has_no_build_script() {
+fn core_tools_check_names_a_library_whose_external_library_has_no_build_script() {
     let scratch = Scratch::new();
     let core = fixtures(&scratch, "core-broken");
-    let output = script("build-core-natives.sh", &["--check", "--core", core.to_str().unwrap()], &[]);
+    let output = script("build-std-libs.sh", &["--check", "--core", core.to_str().unwrap()], &[]);
     assert_eq!(output.status.code(), Some(1));
-    assert_eq!(String::from_utf8_lossy(&output.stderr), "orphan: declares a native and has no native/build.sh or rust/Cargo.toml\n");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    #[cfg(not(target_os = "windows"))]
+    assert_eq!(stderr, "orphan: declares an external library and has no lib/build.sh or rust/Cargo.toml\n");
+    #[cfg(target_os = "windows")]
+    assert!(stderr.contains("orphan: declares an external library and has no"), "{stderr}");
 }
 
 #[test]
-fn core_tools_build_writes_the_shared_library_and_the_archive_of_the_native() {
+fn core_tools_build_writes_the_shared_library_and_the_archive() {
     let scratch = Scratch::new();
     let core = fixtures(&scratch, "core");
-    let output = script("build-core-natives.sh", &["--core", core.to_str().unwrap()], &[]);
+    let output = script("build-std-libs.sh", &["--core", core.to_str().unwrap()], &[]);
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
-    assert!(core.join("ping/native/x86_64-linux/libping.so").is_file());
-    assert!(core.join("ping/native/x86_64-linux/libping.a").is_file());
-    assert!(!core.join("plain/native").exists());
+    let libs = core.join("ping/lib").join(mote_packages::host_triple());
+    assert!(libs.join(mote_packages::library_file("ping")).is_file());
+    assert!(libs.join(mote_packages::archive_file("ping")).is_file());
+    assert!(!core.join("plain/lib").exists());
 }
 
 #[test]
-fn core_tools_test_core_builds_the_native_then_runs_the_tests() {
+fn core_tools_test_core_builds_the_library_then_runs_the_tests() {
     let scratch = Scratch::new();
     let core = fixtures(&scratch, "core");
     let binary = mote();
@@ -111,14 +128,14 @@ fn core_tools_test_core_builds_the_native_then_runs_the_tests() {
 }
 
 #[test]
-fn core_tools_test_core_builds_the_natives_of_the_libraries_the_library_imports() {
+fn core_tools_test_core_builds_the_external_libraries_it_imports() {
     let scratch = Scratch::new();
     let core = fixtures(&scratch, "core");
     let output = script("test-core.sh", &["pinger", "--core", core.to_str().unwrap()], &[("MOTE", &mote())]);
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(output.status.success(), "{stdout}{}", String::from_utf8_lossy(&output.stderr));
     assert!(stdout.contains("1 passed; 0 failed"), "{stdout}");
-    assert!(core.join("ping/native/x86_64-linux/libping.so").is_file());
+    assert!(core.join("ping/lib").join(mote_packages::host_triple()).join(mote_packages::library_file("ping")).is_file());
 }
 
 /// `tools/test-core.sh NAME` on the library of the repository, which must pass.
@@ -154,24 +171,24 @@ fn core_fs_the_tests_of_the_library_pass() {
     library_passes("fs");
 }
 
-/// Builds the native of the library of the repository, links `source` against it into an executable and gives what it prints.
+/// Builds the shared library of the library of the repository, links `source` against it into an executable and gives what it prints.
 fn built_program_prints(library: &str, source: &str) -> String {
-    let built = script("build-core-natives.sh", &[library], &[]);
+    let built = script("build-std-libs.sh", &[library], &[]);
     assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
     let scratch = Scratch::new();
     let home = scratch.path("home");
     let app = scratch.package("app", "app", &[], &[("main.mote", source)]);
-    let built = run(&format!("build --core {}", root().join("core").display()), &app, &home);
+    let built = run(&format!("build --core {}", root().join("mote_std").display()), &app, &home);
     assert_eq!(built.code, 0, "{built:?}");
-    let ran = Command::new(app.join("target/app")).output().unwrap();
+    let ran = Command::new(app.join(format!("target/app{}", std::env::consts::EXE_SUFFIX))).output().unwrap();
     assert!(ran.status.success(), "{}", String::from_utf8_lossy(&ran.stderr));
     String::from_utf8_lossy(&ran.stdout).into_owned()
 }
 
 #[test]
-fn core_fs_a_built_program_links_the_native_archive_and_reads_a_file() {
+fn core_fs_a_built_program_links_the_archive_and_reads_a_file() {
     let data = std::env::temp_dir().join(format!("mote-fs-built-{}.txt", std::process::id()));
-    let source = format!("import {{ read_string, write_string }} from fs\n\nfn main() -> Result<Null, Error> {{\n    write_string(\"{0}\", \"stored\")?\n    println(read_string(\"{0}\")?)\n    return Ok(null)\n}}\n", data.display());
+    let source = format!("import {{ read_string, write_string }} from fs\n\nfn main() -> Result<Null, Error> {{\n    write_string(\"{0}\", \"stored\")?\n    println(read_string(\"{0}\")?)\n    return Ok(null)\n}}\n", mote_packages::shown(&data));
     assert_eq!(built_program_prints("fs", &source), "stored\n");
     fs::remove_file(data).unwrap();
 }
@@ -182,9 +199,13 @@ fn core_env_the_tests_of_the_library_pass() {
 }
 
 #[test]
-fn core_env_a_built_program_links_the_native_archive_and_reads_the_environment() {
-    let source = "import { get, set } from env\n\nfn main() -> Result<Null, Error> {\n    set(\"MOTE_ENV_BUILT\", \"yes\")?\n    println(get(\"MOTE_ENV_BUILT\")!)\n    println(get(\"HOME\") != null)\n    return Ok(null)\n}\n";
-    assert_eq!(built_program_prints("env", source), "yes\ntrue\n");
+fn core_env_a_built_program_links_the_archive_and_reads_the_environment() {
+    #[cfg(not(target_os = "windows"))]
+    let probe = "HOME";
+    #[cfg(target_os = "windows")]
+    let probe = "USERPROFILE";
+    let source = format!("import {{ get, set }} from env\n\nfn main() -> Result<Null, Error> {{\n    set(\"MOTE_ENV_BUILT\", \"yes\")?\n    println(get(\"MOTE_ENV_BUILT\")!)\n    println(get(\"{probe}\") != null)\n    return Ok(null)\n}}\n");
+    assert_eq!(built_program_prints("env", &source), "yes\ntrue\n");
 }
 
 #[test]
@@ -193,7 +214,7 @@ fn core_random_the_tests_of_the_library_pass() {
 }
 
 #[test]
-fn core_random_a_built_program_links_the_native_archive_and_draws_bytes() {
+fn core_random_a_built_program_links_the_archive_and_draws_bytes() {
     let source = "import { Random, system_bytes } from random\n\nfn main() -> Result<Null, Error> {\n    let bytes = system_bytes(12)?\n    println(bytes.len())\n    var random = Random.seeded(0)\n    println(random.next_bits())\n    return Ok(null)\n}\n";
     assert_eq!(built_program_prints("random", source), "12\n5987356902031041503\n");
 }
@@ -204,7 +225,7 @@ fn core_term_the_tests_of_the_library_pass() {
 }
 
 #[test]
-fn core_term_a_built_program_links_the_native_archive_and_reads_a_key() {
+fn core_term_a_built_program_links_the_archive_and_reads_a_key() {
     let source = "import { Pty } from term\n\nfn main() -> Result<Null, Error> {\n    let pty = Pty.open()?\n    var terminal = pty.terminal()\n    terminal.raw()?\n    pty.send(\"\\u{1b}[1;5A\")?\n    let event = terminal.read_event(1000)?\n    println(event!)\n    terminal.close()?\n    pty.close()?\n    return Ok(null)\n}\n";
     assert_eq!(built_program_prints("term", source), "Ctrl+Up\n");
 }
@@ -239,8 +260,8 @@ fn core_doc_the_tests_of_the_library_pass() {
 }
 
 #[test]
-fn core_doc_a_built_program_links_the_native_archive_and_writes_html() {
-    let source = "import { Doc } from doc\n\nfn main() -> Result<Null, Error> {\n    let doc = Doc.new()\n    let p = doc.element(\"p\")\n    p.set_attr(\"class\", \"lead\")?\n    p.append(doc.text(\"a < b\"))?\n    doc.root().append(p)?\n    let again = Doc.from_bytes(doc.bytes())?\n    println(again.root().to_html())\n    return Ok(null)\n}\n";
+fn core_doc_a_built_program_links_the_archive_and_writes_html() {
+    let source = "import doc\nimport Node from doc\n\nfn main() -> Result<Null, Error> {\n    let node = doc.p([\"a < b\"], class_name=\"lead\")\n    let again = Node.from_bytes(node.bytes())?\n    println(again.to_html())\n    return Ok(null)\n}\n";
     assert_eq!(built_program_prints("doc", source), "<p class=\"lead\">a &lt; b</p>\n");
 }
 
@@ -251,9 +272,7 @@ fn core_markdown_the_tests_of_the_library_pass() {
 
 #[test]
 fn core_markdown_a_built_program_links_both_archives_and_renders_text() {
-    let built = script("build-core-natives.sh", &["doc"], &[]);
-    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
-    let source = "import { parse, render, to_markdown } from markdown\n\nfn main() -> Result<Null, Error> {\n    println(render(\"# Hi\\n\\nsome *text*\")?)\n    let doc = parse(\"- a\\n- b\")?\n    println(to_markdown(doc.root()))\n    return Ok(null)\n}\n";
+    let source = "import { parse, render, to_markdown } from markdown\n\nfn main() -> Result<Null, Error> {\n    println(render(\"# Hi\\n\\nsome *text*\")?)\n    let root = parse(\"- a\\n- b\")?\n    println(to_markdown(root))\n    return Ok(null)\n}\n";
     assert_eq!(built_program_prints("markdown", source), "<h1>Hi</h1><p>some <em>text</em></p>\n- a\n- b\n\n");
 }
 
@@ -263,7 +282,7 @@ fn core_toml_the_tests_of_the_library_pass() {
 }
 
 #[test]
-fn core_toml_a_built_program_links_the_native_archive_and_reads_toml() {
+fn core_toml_a_built_program_links_the_archive_and_reads_toml() {
     let source = "import { parse } from toml\n\nfn main() -> Result<Null, Error> {\n    let table = parse(\"name = \\\"mote\\\"\\n[build]\\njobs = 4\\n\")?\n    println(table.get(\"build\")!.get(\"jobs\")!.as_int()!)\n    println(table.to_text()?)\n    return Ok(null)\n}\n";
     assert_eq!(built_program_prints("toml", source), "4\nname = \"mote\"\n\n[build]\njobs = 4\n\n");
 }
@@ -274,7 +293,7 @@ fn core_yaml_the_tests_of_the_library_pass() {
 }
 
 #[test]
-fn core_yaml_a_built_program_links_the_native_archive_and_reads_yaml() {
+fn core_yaml_a_built_program_links_the_archive_and_reads_yaml() {
     let source = "import { parse, to_text } from yaml\n\nfn main() -> Result<Null, Error> {\n    let doc = parse(\"name: mote\\nsteps:\\n  - build\\n  - test\\n\")?\n    println(doc.get(\"steps\")!.at(1)!.as_text()!)\n    println(to_text(doc)?)\n    return Ok(null)\n}\n";
     assert_eq!(built_program_prints("yaml", source), "test\nname: mote\nsteps:\n- build\n- test\n\n");
 }
@@ -285,11 +304,14 @@ fn core_process_the_tests_of_the_library_pass() {
 }
 
 #[test]
-fn core_process_a_built_program_links_the_native_archive_and_runs_a_child() {
-    let built = script("build-core-natives.sh", &["env"], &[]);
+fn core_process_a_built_program_links_the_archive_and_runs_a_child() {
+    let built = script("build-std-libs.sh", &["env"], &[]);
     assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    #[cfg(not(target_os = "windows"))]
     let source = "import { command } from process\n\nfn main() -> Result<Null, Error> {\n    let out = command(\"echo\").arg(\"from a child\").set_env(\"A\", \"b\").output()?\n    print(out.stdout_string()!)\n    println(out.status.code()!)\n    return Ok(null)\n}\n";
-    assert_eq!(built_program_prints("process", source), "from a child\n0\n");
+    #[cfg(target_os = "windows")]
+    let source = "import { command } from process\n\nfn main() -> Result<Null, Error> {\n    let out = command(\"cmd\").arg(\"/c\").arg(\"echo from a child\").set_env(\"A\", \"b\").output()?\n    print(out.stdout_string()!)\n    println(out.status.code()!)\n    return Ok(null)\n}\n";
+    assert_eq!(built_program_prints("process", source).replace("\r\n", "\n"), "from a child\n0\n");
 }
 
 #[test]
@@ -298,7 +320,7 @@ fn core_signal_the_tests_of_the_library_pass() {
 }
 
 #[test]
-fn core_signal_a_built_program_links_the_native_archive_and_receives_a_signal() {
+fn core_signal_a_built_program_links_the_archive_and_receives_a_signal() {
     let source = "import { Signal, pid, send, subscribe } from signal\n\nfn main() -> Result<Null, Error> {\n    let sub = subscribe([Signal.User1])?\n    send(pid(), Signal.User1)?\n    println(sub.next()!.number())\n    sub.close()?\n    return Ok(null)\n}\n";
     assert_eq!(built_program_prints("signal", source), "10\n");
 }
@@ -309,21 +331,21 @@ fn core_regex_the_tests_of_the_library_pass() {
 }
 
 #[test]
-fn core_regex_a_built_program_links_the_native_archive_and_matches() {
+fn core_regex_a_built_program_links_the_archive_and_matches() {
     let source = "import { Regex } from regex\n\nfn main() -> Result<Null, Error> {\n    let re = Regex.new(\"(?P<k>[a-z]+)=(?P<v>[0-9]+)\")?\n    let found = re.captures(\"size=42\")!\n    println(found.named(\"v\")!)\n    println(re.replace_all(\"a=1 b=2\", \"$v:$k\"))\n    re.close()?\n    return Ok(null)\n}\n";
     assert_eq!(built_program_prints("regex", source), "42\n1:a 2:b\n");
 }
 
 #[test]
-fn core_net_a_built_program_links_the_native_archive_and_talks_over_a_socket() {
+fn core_net_a_built_program_links_the_archive_and_talks_over_a_socket() {
     let source = "import { TcpListener, TcpStream } from net.socket\n\nfn main() -> Result<Null, Error> {\n    let listener = TcpListener.bind(\"127.0.0.1\", 0)?\n    let port = listener.port()?\n    let server = spawn {\n        let stream = listener.accept()!\n        stream.write_string(\"hi\")!\n        stream.close()!\n        return 0\n    }\n    let client = TcpStream.connect(\"localhost\", port)?\n    let bytes = client.read_all()?\n    println(String.from_bytes(bytes)!)\n    server.await()?\n    client.close()?\n    listener.close()?\n    return Ok(null)\n}\n";
     assert_eq!(built_program_prints("net", source), "hi\n");
 }
 
 #[test]
 fn core_net_a_built_program_links_the_tls_archive_and_shakes_hands() {
-    let tests = std::fs::read_to_string(root().join("core/net/tests/keys.mote")).unwrap();
-    let keys = tests.strip_prefix("import { join } from std.string\n").unwrap();
+    let tests = std::fs::read_to_string(root().join("mote_std/net/tests/keys.mote")).unwrap();
+    let keys = tests.strip_prefix("import join from std.string\n").unwrap();
     let main = "import { join } from std.string\nimport { TcpListener } from net.socket\nimport { TlsAcceptor, TlsStream } from net.tls\n\nfn main() -> Result<Null, Error> {\n    let acceptor = TlsAcceptor.new(certificate(), private_key())?\n    let listener = TcpListener.bind(\"127.0.0.1\", 0)?\n    let port = listener.port()?\n    let server = spawn {\n        let secure = acceptor.accept(listener.accept()!)!\n        let got = secure.read(16)!\n        secure.write(got)!\n        secure.close()!\n        return 0\n    }\n    let client = TlsStream.connect_trusting(\"localhost\", port, authority())?\n    client.write_string(\"secret\")?\n    println(String.from_bytes(client.read_all()?)!)\n    server.await()?\n    client.close()?\n    listener.close()?\n    return Ok(null)\n}\n\n";
     assert_eq!(built_program_prints("net", &format!("{main}{keys}")), "secret\n");
 }
@@ -344,7 +366,7 @@ fn core_compress_the_tests_of_the_library_pass() {
 }
 
 #[test]
-fn core_compress_a_built_program_links_the_native_archive_and_round_trips() {
+fn core_compress_a_built_program_links_the_archive_and_round_trips() {
     let source = "import { Format, compress, decompress } from compress\n\nfn main() -> Result<Null, Error> {\n    let packed = compress(Format.Gzip, \"hello hello hello hello\".bytes())?\n    println(packed.len())\n    println(String.from_bytes(decompress(Format.Gzip, packed)?)!)\n    return Ok(null)\n}\n";
     assert_eq!(built_program_prints("compress", source), "28\nhello hello hello hello\n");
 }
@@ -358,10 +380,8 @@ fn core_pane_the_layout_tests_pass() {
 }
 
 #[test]
-fn core_pane_a_built_program_links_the_native_archive_and_lays_out_a_view() {
-    let built = script("build-core-natives.sh", &["doc"], &[]);
-    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
-    let source = "import { Doc } from doc\nimport { layout } from pane\n\nfn main() -> Result<Null, Error> {\n    let doc = Doc.new()\n    let row = doc.element(\"row\")\n    let box = doc.element(\"box\")\n    box.set_attr(\"width\", \"100\")?\n    box.set_attr(\"id\", \"b\")?\n    row.append(box)?\n    row.append(doc.element(\"spacer\"))?\n    let result = layout(row, 300, 50)?\n    let area = result.area(\"b\")!\n    println(\"${area.w}x${area.h}\")\n    return Ok(null)\n}\n";
+fn core_pane_a_built_program_links_the_archive_and_lays_out_a_view() {
+    let source = "import doc\nimport { layout } from pane\n\nfn main() -> Result<Null, Error> {\n    let row = doc.el(\"row\", [\n        doc.el(\"box\", id=\"b\", attrs=[(\"width\", \"100\")]),\n        doc.el(\"spacer\")\n    ])\n    let result = layout(row, 300, 50)?\n    let area = result.area(\"b\")!\n    println(\"${area.w}x${area.h}\")\n    return Ok(null)\n}\n";
     assert_eq!(built_program_prints("pane", source), "100x0\n");
 }
 
@@ -391,9 +411,7 @@ fn core_pane_the_builder_tests_pass() {
 
 #[test]
 fn core_pane_a_built_program_runs_a_headless_window_through_the_linked_init() {
-    let built = script("build-core-natives.sh", &["doc"], &[]);
-    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
-    let source = "import { Doc, Node } from doc\nimport { Event, Next, Window } from pane\n\nfn view(count: Int, doc: Doc) -> Node {\n    let box = doc.element(\"box\")\n    box.set_attr(\"id\", \"b\")!\n    return box\n}\n\nfn step(count: Int, event: Event) -> Next<Int> {\n    return Next.Continue(count + 1)\n}\n\nfn main() -> Result<Null, Error> {\n    var window = Window.headless(200, 100)\n    window.inject(Event.Click(null, 5, 5, 0))\n    window.inject(Event.Key(65))\n    let count = window.run(0, view, step)!\n    println(count)\n    println(window.frames.len())\n    window.close()\n    return Ok(null)\n}\n";
+    let source = "import doc\nimport Node from doc\nimport { Event, Next, Window } from pane\n\nfn view(count: Int) -> Node {\n    return doc.el(\"box\", id=\"b\")\n}\n\nfn step(count: Int, event: Event) -> Next<Int> {\n    return Next.Continue(count + 1)\n}\n\nfn main() -> Result<Null, Error> {\n    var window = Window.headless(200, 100)\n    window.inject(Event.Click(null, 5, 5, 0))\n    window.inject(Event.Key(65))\n    let count = window.run(0, view, step)!\n    println(count)\n    println(window.frames.len())\n    window.close()\n    return Ok(null)\n}\n";
     assert_eq!(built_program_prints("pane", source), "2\n3\n");
 }
 
@@ -415,7 +433,7 @@ fn core_sqlite_the_tests_of_the_library_pass() {
 }
 
 #[test]
-fn core_sqlite_a_built_program_links_the_native_archive_and_queries() {
+fn core_sqlite_a_built_program_links_the_archive_and_queries() {
     let source = "import { Database, Value } from sqlite\n\nfn main() -> Result<Null, Error> {\n    let db = Database.memory()?\n    db.execute_batch(\"CREATE TABLE t (k TEXT, n INTEGER)\")?\n    db.execute(\"INSERT INTO t VALUES (?, ?)\", [Value.Text(\"one\"), Value.Integer(1)])?\n    let found = db.query_row(\"SELECT k, n FROM t\")?\n    let row = found!\n    println(row.get(0).as_text()!)\n    println(row.get(1).as_int()!)\n    db.close()?\n    return Ok(null)\n}\n";
     assert_eq!(built_program_prints("sqlite", source), "one\n1\n");
 }
@@ -426,9 +444,9 @@ fn core_archive_the_tests_of_the_library_pass() {
 }
 
 #[test]
-fn core_archive_a_built_program_links_the_native_archives_and_packs_entries() {
+fn core_archive_a_built_program_links_the_archives_and_packs_entries() {
     for library in ["fs", "compress"] {
-        let built = script("build-core-natives.sh", &[library], &[]);
+        let built = script("build-std-libs.sh", &[library], &[]);
         assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
     }
     let source = "import { Entry, Format, read, write } from archive\n\nfn main() -> Result<Null, Error> {\n    let packed = write(Format.TarGz, [Entry.file(\"a.txt\", \"hello\".bytes()), Entry.directory(\"d\")])?\n    let entries = read(Format.TarGz, packed)?\n    println(entries.len())\n    println(entries.get(0).text()!)\n    let zipped = read(Format.Zip, write(Format.Zip, entries)?)?\n    println(zipped.get(1).path)\n    return Ok(null)\n}\n";
@@ -441,8 +459,8 @@ fn core_crypto_the_tests_of_the_library_pass() {
 }
 
 #[test]
-fn core_crypto_a_built_program_links_the_native_archive_and_hashes() {
-    let source = "import { Algorithm, hash_text, hmac, to_hex } from crypto\n\nfn main() -> Result<Null, Error> {\n    println(to_hex(hash_text(Algorithm.Sha256, \"abc\")))\n    println(to_hex(hmac(Algorithm.Sha256, \"Jefe\".bytes(), \"what do ya want for nothing?\".bytes())))\n    return Ok(null)\n}\n";
+fn core_crypto_a_built_program_links_the_archive_and_hashes() {
+    let source = "import { Algorithm, hash_text, hmac } from crypto\n\nfn main() -> Result<Null, Error> {\n    println(hash_text(Algorithm.Sha256, \"abc\"))\n    println(hmac(Algorithm.Sha256, \"Jefe\".bytes(), \"what do ya want for nothing?\".bytes()).to_hex())\n    return Ok(null)\n}\n";
     assert_eq!(built_program_prints("crypto", source), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad\n5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843\n");
 }
 
@@ -460,13 +478,13 @@ fn core_tools_test_core_of_an_unknown_library_is_an_error() {
     let core = fixtures(&scratch, "core");
     let output = script("test-core.sh", &["missing", "--core", core.to_str().unwrap()], &[]);
     assert_eq!(output.status.code(), Some(1));
-    assert!(String::from_utf8_lossy(&output.stderr).starts_with("no library missing in "));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("no library missing in "));
 }
 
-/// Copies the fixture libraries into the scratch directory and builds their natives.
+/// Copies the fixture libraries into the scratch directory and builds their external libraries.
 fn built_core(scratch: &Scratch) -> PathBuf {
     let core = fixtures(scratch, "core");
-    let output = script("build-core-natives.sh", &["--core", core.to_str().unwrap()], &[]);
+    let output = script("build-std-libs.sh", &["--core", core.to_str().unwrap()], &[]);
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
     core
 }
@@ -504,16 +522,16 @@ fn core_tools_an_app_named_as_a_core_library_is_reserved() {
 }
 
 #[test]
-fn core_tools_a_built_program_carries_the_shared_native_it_opens_beside_it() {
+fn core_tools_a_built_program_carries_the_shared_library_it_opens_beside_it() {
     let scratch = Scratch::new();
     let home = scratch.path("home");
     let core = built_core(&scratch);
-    fs::remove_file(core.join("ping/native/x86_64-linux/libping.a")).unwrap();
+    fs::remove_file(core.join("ping/lib").join(mote_packages::host_triple()).join(mote_packages::archive_file("ping"))).unwrap();
     let app = adder(&scratch);
     assert_eq!(run(&format!("build --core {}", core.display()), &app, &home).code, 0);
-    assert!(app.join("target/native/libping.so").is_file());
+    assert!(app.join("target/lib").join(mote_packages::library_file("ping")).is_file());
     fs::remove_dir_all(&core).unwrap();
-    let ran = Command::new(app.join("target/app")).output().unwrap();
+    let ran = Command::new(app.join(format!("target/app{}", std::env::consts::EXE_SUFFIX))).output().unwrap();
     assert_eq!(String::from_utf8_lossy(&ran.stdout), "42\n", "{}", String::from_utf8_lossy(&ran.stderr));
 }
 
@@ -524,9 +542,9 @@ fn core_tools_a_built_program_with_a_linked_archive_needs_no_file_beside_it() {
     let core = built_core(&scratch);
     let app = adder(&scratch);
     assert_eq!(run(&format!("build --core {}", core.display()), &app, &home).code, 0);
-    assert!(!app.join("target/native").exists());
+    assert!(!app.join("target/lib").exists());
     fs::remove_dir_all(&core).unwrap();
-    let ran = Command::new(app.join("target/app")).output().unwrap();
+    let ran = Command::new(app.join(format!("target/app{}", std::env::consts::EXE_SUFFIX))).output().unwrap();
     assert_eq!(String::from_utf8_lossy(&ran.stdout), "42\n", "{}", String::from_utf8_lossy(&ran.stderr));
 }
 
@@ -543,12 +561,12 @@ fn mote_files(dir: &Path, below: &str, found: &mut Vec<String>) {
     }
 }
 
-/// Every library of `core/` with the files of its `src/`.
+/// Every non-`std` library of `mote_std/` with the files of its `src/`.
 fn core_sources() -> Vec<(String, Vec<String>)> {
     let mut libraries = Vec::new();
-    for entry in fs::read_dir(root().join("core")).unwrap() {
+    for entry in fs::read_dir(root().join("mote_std")).unwrap() {
         let dir = entry.unwrap().path();
-        if !dir.join("mote.toml").is_file() {
+        if !dir.join("mote.toml").is_file() || dir.file_name().is_some_and(|name| name == "std") {
             continue;
         }
         let mut files = Vec::new();
@@ -564,11 +582,11 @@ fn core_sources() -> Vec<(String, Vec<String>)> {
 fn core_layout_lib_mote_holds_only_reexports() {
     let mut problems = Vec::new();
     for (library, _) in core_sources() {
-        let text = fs::read_to_string(root().join("core").join(&library).join("src/lib.mote")).unwrap();
+        let text = fs::read_to_string(root().join("mote_std").join(&library).join("src/lib.mote")).unwrap();
         for (at, line) in text.lines().enumerate() {
             let line = line.trim();
             if !(line.is_empty() || line.starts_with("//") || line.starts_with("pub import ")) {
-                problems.push(format!("core/{library}/src/lib.mote:{}: {line}", at + 1));
+                problems.push(format!("mote_std/{library}/src/lib.mote:{}: {line}", at + 1));
             }
         }
     }
@@ -576,21 +594,38 @@ fn core_layout_lib_mote_holds_only_reexports() {
 }
 
 #[test]
-fn core_layout_natives_are_in_files_named_native() {
+fn core_layout_externs_follow_lib_convention() {
     let mut problems = Vec::new();
     for (library, files) in core_sources() {
         for file in files {
-            let text = fs::read_to_string(root().join("core").join(&library).join("src").join(&file)).unwrap();
+            let text = fs::read_to_string(root().join("mote_std").join(&library).join("src").join(&file)).unwrap();
             let name = file.rsplit('/').next().unwrap();
-            let native_file = name.starts_with('_') && name.ends_with("native.mote");
+            if name.contains("native") {
+                problems.push(format!("mote_std/{library}/src/{file}: legacy `_native` filename"));
+            }
+            let lib_file = name == "_lib.mote";
+            let mut in_extern = false;
             for (at, line) in text.lines().enumerate() {
-                let declares = line.starts_with("native fn ") || line.starts_with("pub native fn ") || line.starts_with("@link(");
-                let other = !(line.trim().is_empty() || line.starts_with("//") || line.starts_with("import ") || line.starts_with("pub import ") || declares || line.starts_with("@") || line.starts_with("let ") || line.starts_with("pub let "));
-                if declares && !native_file {
-                    problems.push(format!("core/{library}/src/{file}:{}: a native outside a `_native.mote` file", at + 1));
+                let trimmed = line.trim();
+                let opens_extern = trimmed.starts_with("extern \"") && trimmed.contains('{');
+                if line.starts_with("native fn ") || line.starts_with("pub native fn ") || line.starts_with("@link(") {
+                    problems.push(format!("mote_std/{library}/src/{file}:{}: legacy native fn syntax", at + 1));
                 }
-                if native_file && other {
-                    problems.push(format!("core/{library}/src/{file}:{}: a `_native.mote` file holds natives only: {line}", at + 1));
+                if opens_extern {
+                    if !trimmed.ends_with('}') {
+                        in_extern = true;
+                    }
+                    continue;
+                }
+                if in_extern {
+                    if trimmed == "}" {
+                        in_extern = false;
+                    }
+                    continue;
+                }
+                let other = !(trimmed.is_empty() || trimmed.starts_with("//") || trimmed.starts_with("import ") || trimmed.starts_with("pub import ") || trimmed.starts_with('@') || trimmed.starts_with("let ") || trimmed.starts_with("pub let ") || trimmed.starts_with("const ") || trimmed.starts_with("pub const "));
+                if lib_file && other {
+                    problems.push(format!("mote_std/{library}/src/{file}:{}: a `_lib.mote` file holds extern declarations and constants only: {line}", at + 1));
                 }
             }
         }
@@ -603,9 +638,9 @@ fn core_layout_no_file_is_longer_than_450_lines() {
     let mut problems = Vec::new();
     for (library, files) in core_sources() {
         for file in files {
-            let lines = fs::read_to_string(root().join("core").join(&library).join("src").join(&file)).unwrap().lines().count();
+            let lines = fs::read_to_string(root().join("mote_std").join(&library).join("src").join(&file)).unwrap().lines().count();
             if lines > 450 {
-                problems.push(format!("core/{library}/src/{file}: {lines} lines"));
+                problems.push(format!("mote_std/{library}/src/{file}: {lines} lines"));
             }
         }
     }

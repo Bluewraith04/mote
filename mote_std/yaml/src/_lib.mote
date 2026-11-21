@@ -1,0 +1,6 @@
+// The functions of the external library `yaml`.
+
+extern "yaml" {
+    pub fn yaml_parse(text: [UInt8], out: [UInt8]) -> Int
+    pub fn yaml_print(json: [UInt8], out: [UInt8]) -> Int
+}

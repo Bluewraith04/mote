@@ -19,7 +19,7 @@ fn packed_gadget(scratch: &Scratch, home: &Path) -> PathBuf {
 
 /// An app that prints what `gadget` says.
 fn app(scratch: &Scratch) -> PathBuf {
-    scratch.package("app", "app", &[], &[("main.mote", "import { hello } from gadget\n\nfn main() {\n    println(hello())\n}\n")])
+    scratch.package("app", "app", &[], &[("main.mote", "import hello from gadget\n\nfn main() {\n    println(hello())\n}\n")])
 }
 
 fn manifest_of(dir: &Path) -> String {
@@ -34,7 +34,7 @@ fn cli_package_writes_the_zip_below_target_and_says_what_it_holds() {
     let outcome = run("package", &dir, &home);
     assert_eq!(outcome.code, OK);
     let zip = dir.join("target/gadget-0.1.0.zip");
-    assert!(outcome.stdout.starts_with(&format!("wrote {} (3 files, ", zip.display())) && outcome.stdout.ends_with(" bytes)\n"), "{}", outcome.stdout);
+    assert!(outcome.stdout.starts_with(&format!("wrote {} (3 files, ", mote_packages::shown(&zip))) && outcome.stdout.ends_with(" bytes)\n"), "{}", outcome.stdout);
     assert!(zip.is_file());
 }
 
@@ -169,8 +169,8 @@ fn cli_install_links_a_package_directory_into_the_bin_of_the_home() {
     let tool = scratch.package("tool", "tool", &[], &[("main.mote", "fn main() {\n    println(\"from the tool\")\n}\n")]);
     let outcome = run("install", &tool, &home);
     assert_eq!(outcome.code, OK, "{}", outcome.stderr);
-    let exe = home.join("bin/tool");
-    assert_eq!(outcome.stdout, format!("installed {}\n", exe.display()));
+    let exe = home.join(format!("bin/tool{}", std::env::consts::EXE_SUFFIX));
+    assert_eq!(outcome.stdout, format!("installed {}\n", mote_packages::shown(&exe)));
     let ran = std::process::Command::new(&exe).output().unwrap();
     assert_eq!(String::from_utf8_lossy(&ran.stdout), "from the tool\n");
 }

@@ -1,6 +1,6 @@
 use mote_base::{Id, Span};
 
-use super::{Block, Expr, Function, Ident, Pattern, Type};
+use super::{Block, ConstDecl, Expr, Function, Ident, Pattern, Type};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Stmt {
@@ -11,12 +11,16 @@ pub struct Stmt {
 #[derive(Clone, Debug, PartialEq)]
 pub enum StmtKind {
     Binding(Binding),
+    Const(ConstDecl),
     Assign { target: Id<Expr>, op: AssignOp, value: Id<Expr> },
     If(If),
+    ComptimeIf(If),
     While { condition: Condition, body: Block },
     For { pattern: Id<Pattern>, iterable: Id<Expr>, body: Block },
+    ComptimeFor { pattern: Id<Pattern>, iterable: Id<Expr>, body: Block },
     Match(Match),
     Scope(Block),
+    ComptimeBlock(Block),
     With { name: Ident, init: Id<Expr>, body: Block },
     Spawn(SpawnBody),
     Return(Option<Id<Expr>>),

@@ -1,0 +1,890 @@
+// List, arrays, Map, Set, Range, Stream, Span, and MutSpan.
+
+import fault from std.option
+import Key from std.traits
+import Buffer from std.mem
+import { Kind, show } from std.reflect
+
+extend<T> List<T> {
+    pub fn new() -> List<T> { return @__list_new() }
+    pub fn len(self) -> Int { return @__list_len(self) }
+    pub fn is_empty(self) -> Bool { return @__list_len(self) == 0 }
+    pub fn push(var self, value: T) { @__list_push(self, value) }
+    pub fn pop(var self) -> T? { return @__list_pop(self) }
+    pub fn first(self) -> T? {
+        if @__list_len(self) == 0 { return None }
+        return Some(@__list_get(self, 0))
+    }
+    pub fn last(self) -> T? {
+        let n = @__list_len(self)
+        if n == 0 { return None }
+        return Some(@__list_get(self, n - 1))
+    }
+    pub fn get(self, index: Int) -> T { return @__list_get(self, index) }
+    pub fn get_or(self, index: Int, fallback: T) -> T {
+        if index < 0 || index >= @__list_len(self) { return fallback }
+        return @__list_get(self, index)
+    }
+    pub fn set(var self, index: Int, value: T) { @__list_set(self, index, value) }
+    pub fn contains(self, value: T) -> Bool { return @__list_contains(self, value) }
+    pub fn slice(self, start: Int, end: Int) -> Span<T> { return self.span().slice(start, end) }
+    pub fn __slice__(self, start: Int?, end: Int?, inclusive: Bool, step: Int?) -> Span<T> { return self.span().__slice__(start, end, inclusive, step) }
+    pub fn set_slice(var self, start: Int, end: Int, values: List<T>) { @__list_set_slice(self, start, end, values) }
+    pub fn clear(var self) { @__list_clear(self) }
+    pub fn clone(self) -> List<T> { return @__list_clone(self) }
+    pub fn deep_clone(self) -> List<T> { return @__deep_clone(self) }
+    pub fn to_array(self) -> [T] {
+        let count = @__list_len(self)
+        if count == 0 { return [] }
+        var out = [@__list_get(self, 0); count]
+        var i = 1
+        while i < count {
+            @__array_set(out, i, @__list_get(self, i))
+            i += 1
+        }
+        return out
+    }
+    pub fn stream(self) -> Stream<T> {
+        var i = 0
+        while i < @__list_len(self) {
+            yield @__list_get(self, i)
+            i += 1
+        }
+    }
+    pub fn span(self) -> Span<T> { return Span<T>.from_list(self) }
+    pub fn mut_span(var self) -> MutSpan<T> { return MutSpan<T>.from_list(self) }
+}
+
+extend<T> [T] {
+    pub fn len(self) -> Int { return @__array_len(self) }
+    pub fn is_empty(self) -> Bool { return @__array_len(self) == 0 }
+    pub fn first(self) -> T? {
+        if @__array_len(self) == 0 { return None }
+        return Some(@__array_get(self, 0))
+    }
+    pub fn last(self) -> T? {
+        let n = @__array_len(self)
+        if n == 0 { return None }
+        return Some(@__array_get(self, n - 1))
+    }
+    pub fn get(self, index: Int) -> T { return @__array_get(self, index) }
+    pub fn get_or(self, index: Int, fallback: T) -> T {
+        if index < 0 || index >= @__array_len(self) { return fallback }
+        return @__array_get(self, index)
+    }
+    pub fn set(var self, index: Int, value: T) { @__array_set(self, index, value) }
+    pub fn fill(var self, value: T) {
+        var i = 0
+        let n = @__array_len(self)
+        while i < n {
+            @__array_set(self, i, value)
+            i += 1
+        }
+    }
+    pub fn contains(self, value: T) -> Bool { return @__array_contains(self, value) }
+    pub fn slice(self, start: Int, end: Int) -> Span<T> { return self.span().slice(start, end) }
+    pub fn __slice__(self, start: Int?, end: Int?, inclusive: Bool, step: Int?) -> Span<T> { return self.span().__slice__(start, end, inclusive, step) }
+    pub fn clone(self) -> [T] { return @__array_clone(self) }
+    pub fn deep_clone(self) -> [T] { return @__deep_clone(self) }
+    pub fn to_list(self) -> List<T> {
+        var out: List<T> = []
+        var i = 0
+        while i < @__array_len(self) {
+            @__list_push(out, @__array_get(self, i))
+            i += 1
+        }
+        return out
+    }
+    pub fn stream(self) -> Stream<T> {
+        var i = 0
+        while i < @__array_len(self) {
+            yield @__array_get(self, i)
+            i += 1
+        }
+    }
+    pub fn span(self) -> Span<T> { return Span<T>.from_array(self) }
+    pub fn mut_span(var self) -> MutSpan<T> { return MutSpan<T>.from_array(self) }
+}
+
+// Insertion-ordered open addressing. `held_keys`, `held_values` and `hashes` hold the entries in the order set; `hashes` is -1 once an entry is removed.
+// `slots` is a power-of-two table of entry positions, -1 when empty; a removed entry keeps its slot until the next rebuild.
+pub class Map<K: Key, V> {
+    var held_keys: List<K>
+    var held_values: List<V>
+    var hashes: List<Int>
+    var slots: [Int]
+    var count: Int
+
+    pub fn new() -> Map<K, V> { return Map<K, V> { held_keys: [], held_values: [], hashes: [], slots: [-1; 8], count: 0 } }
+    pub fn len(self) -> Int { return self.count }
+    pub fn is_empty(self) -> Bool { return self.count == 0 }
+
+    fn find(self, key: K, hash: Int) -> Int {
+        let mask = self.slots.len() - 1
+        var at = hash & mask
+        while true {
+            let entry = self.slots[at]
+            if entry == -1 { return -1 }
+            if self.hashes[entry] == hash && @__key_eq(self.held_keys[entry], key) { return entry }
+            at = (at + 1) & mask
+        }
+        return -1
+    }
+
+    fn place(var self, hash: Int, entry: Int) {
+        let mask = self.slots.len() - 1
+        var at = hash & mask
+        while self.slots[at] != -1 { at = (at + 1) & mask }
+        self.slots[at] = entry
+    }
+
+    fn rebuild(var self) {
+        var size = 8
+        while size * 3 < (self.count + 1) * 8 { size *= 2 }
+        var keys: List<K> = []
+        var values: List<V> = []
+        var hashes: List<Int> = []
+        for entry in 0..self.held_keys.len() {
+            if self.hashes[entry] == -1 { continue }
+            keys.push(self.held_keys[entry])
+            values.push(self.held_values[entry])
+            hashes.push(self.hashes[entry])
+        }
+        self.held_keys = keys
+        self.held_values = values
+        self.hashes = hashes
+        self.slots = [-1; size]
+        for entry in 0..hashes.len() { self.place(hashes[entry], entry) }
+    }
+
+    pub fn get(self, key: K) -> V {
+        let entry = self.find(key, @__hash_of(key))
+        if entry == -1 { return fault("missing key") }
+        return self.held_values[entry]
+    }
+
+    pub fn get_or(self, key: K, fallback: V) -> V {
+        let entry = self.find(key, @__hash_of(key))
+        if entry == -1 { return fallback }
+        return self.held_values[entry]
+    }
+
+    pub fn set(var self, key: K, value: V) {
+        let hash = @__hash_of(key)
+        let entry = self.find(key, hash)
+        if entry != -1 {
+            self.held_values[entry] = value
+            return
+        }
+        if (self.held_keys.len() + 1) * 4 > self.slots.len() * 3 { self.rebuild() }
+        self.held_keys.push(key)
+        self.held_values.push(value)
+        self.hashes.push(hash)
+        self.place(hash, self.held_keys.len() - 1)
+        self.count += 1
+    }
+
+    pub fn contains_key(self, key: K) -> Bool { return self.find(key, @__hash_of(key)) != -1 }
+
+    pub fn remove(var self, key: K) {
+        let entry = self.find(key, @__hash_of(key))
+        if entry == -1 { return }
+        self.hashes[entry] = -1
+        self.count -= 1
+    }
+
+    pub fn clear(var self) {
+        self.held_keys = []
+        self.held_values = []
+        self.hashes = []
+        self.slots = [-1; 8]
+        self.count = 0
+    }
+
+    pub fn keys(self) -> List<K> {
+        var result: List<K> = []
+        for entry in 0..self.held_keys.len() {
+            if self.hashes[entry] != -1 { result.push(self.held_keys[entry]) }
+        }
+        return result
+    }
+
+    pub fn values(self) -> List<V> {
+        var result: List<V> = []
+        for entry in 0..self.held_keys.len() {
+            if self.hashes[entry] != -1 { result.push(self.held_values[entry]) }
+        }
+        return result
+    }
+
+    pub fn items(self) -> List<(K, V)> {
+        var result: List<(K, V)> = []
+        for entry in 0..self.held_keys.len() {
+            if self.hashes[entry] != -1 { result.push((self.held_keys[entry], self.held_values[entry])) }
+        }
+        return result
+    }
+
+    pub fn __eq__(self, other: Map<K, V>) -> Bool {
+        if self.count != other.count { return false }
+        for entry in 0..self.held_keys.len() {
+            if self.hashes[entry] == -1 { continue }
+            let found = other.find(self.held_keys[entry], self.hashes[entry])
+            if found == -1 || !@__equal_of(self.held_values[entry], other.held_values[found]) { return false }
+        }
+        return true
+    }
+
+    pub fn clone(self) -> Map<K, V> {
+        return Map<K, V> { held_keys: self.held_keys.clone(), held_values: self.held_values.clone(), hashes: self.hashes.clone(), slots: self.slots.clone(), count: self.count }
+    }
+
+    pub fn deep_clone(self) -> Map<K, V> {
+        var result = Map<K, V>()
+        for entry in 0..self.held_keys.len() {
+            if self.hashes[entry] != -1 { result.set(@__deep_clone(self.held_keys[entry]), @__deep_clone(self.held_values[entry])) }
+        }
+        return result
+    }
+}
+
+// A `Map` whose values are all `Null`.
+pub class Set<T: Key> {
+    var members: Map<T, Null>
+
+    pub fn new() -> Set<T> { return Set<T> { members: Map<T, Null>() } }
+    pub fn len(self) -> Int { return self.members.len() }
+    pub fn is_empty(self) -> Bool { return self.members.is_empty() }
+    pub fn clear(var self) { self.members.clear() }
+    pub fn add(var self, value: T) { self.members.set(value, null) }
+    pub fn remove(var self, value: T) { self.members.remove(value) }
+    pub fn contains(self, value: T) -> Bool { return self.members.contains_key(value) }
+    pub fn items(self) -> List<T> { return self.members.keys() }
+    pub fn __eq__(self, other: Set<T>) -> Bool { return self.members == other.members }
+    pub fn clone(self) -> Set<T> { return Set<T> { members: self.members.clone() } }
+    pub fn deep_clone(self) -> Set<T> { return Set<T> { members: self.members.deep_clone() } }
+}
+
+pub fn set_from<T: Key>(items: List<T>) -> Set<T> {
+    var result: Set<T> = Set<T>()
+    for item in items { result.add(item) }
+    return result
+}
+
+pub fn union<T: Key>(a: Set<T>, b: Set<T>) -> Set<T> {
+    var result = a.clone()
+    for item in b.items() { result.add(item) }
+    return result
+}
+
+pub fn intersection<T: Key>(a: Set<T>, b: Set<T>) -> Set<T> {
+    var result: Set<T> = Set<T>()
+    for item in a.items() {
+        if b.contains(item) { result.add(item) }
+    }
+    return result
+}
+
+pub fn difference<T: Key>(a: Set<T>, b: Set<T>) -> Set<T> {
+    var result: Set<T> = Set<T>()
+    for item in a.items() {
+        if !b.contains(item) { result.add(item) }
+    }
+    return result
+}
+
+pub fn map_from<K: Key, V>(pairs: List<(K, V)>) -> Map<K, V> {
+    var result: Map<K, V> = Map<K, V>()
+    for (key, value) in pairs { result.set(key, value) }
+    return result
+}
+
+pub fn merge<K: Key, V>(a: Map<K, V>, b: Map<K, V>) -> Map<K, V> {
+    var result = a.clone()
+    for (key, value) in b.items() { result.set(key, value) }
+    return result
+}
+
+pub fn map_values<K: Key, V, U>(m: Map<K, V>, change: (V) -> U) -> Map<K, U> {
+    var result: Map<K, U> = Map<K, U>()
+    for (key, value) in m.items() { result.set(key, change(value)) }
+    return result
+}
+
+pub fn filter_keys<K: Key, V>(m: Map<K, V>, keep: (K) -> Bool) -> Map<K, V> {
+    var result: Map<K, V> = Map<K, V>()
+    for (key, value) in m.items() {
+        if keep(key) { result.set(key, value) }
+    }
+    return result
+}
+
+pub struct Range<T> {
+    pub start: T
+    pub end: T
+    pub inclusive: Bool
+}
+
+extend<T> Stream<T> {
+    pub fn next(var self) -> T? { return @__stream_next(self) }
+    pub fn collect(var self) -> List<T> {
+        var result: List<T> = []
+        while true {
+            let item = @__stream_next(self)
+            if item == null { return result }
+            result.push(item)
+        }
+        return result
+    }
+}
+
+enum SpanBacking<T> {
+    Arr([T])
+    Lst(List<T>)
+    Str(String)
+    Buf(Buffer<T>)
+}
+
+enum MutSpanBacking<T> {
+    Arr([T])
+    Lst(List<T>)
+    Buf(Buffer<T>)
+}
+
+fn view_raw_index(offset: Int, length: Int, stride: Int, index: Int, backing_len: Int) -> Int {
+    if index < 0 || index >= length {
+        @__index_out_of_range()
+    }
+    let raw = offset + index * stride
+    if raw < 0 || raw >= backing_len {
+        @__index_out_of_range()
+    }
+    return raw
+}
+
+fn view_clamp_count(n: Int, length: Int) -> Int {
+    if n <= 0 { return 0 }
+    if n >= length { return length }
+    return n
+}
+
+fn view_slice_geom(offset: Int, length: Int, stride: Int, start: Int, end: Int) -> (Int, Int, Int) {
+    if start < 0 || end < start || end > length {
+        @__index_out_of_range()
+    }
+    return (offset + start * stride, end - start, stride)
+}
+
+fn view_step_geom(offset: Int, length: Int, stride: Int, step: Int) -> (Int, Int, Int) {
+    if step == 0 {
+        @__index_out_of_range()
+    }
+    if length == 0 {
+        return (offset, 0, stride)
+    }
+    if step > 0 {
+        let count = (length + step - 1) / step
+        return (offset, count, stride * step)
+    }
+    let neg = -step
+    let new_offset = offset + (length - 1) * stride
+    let count = (length + neg - 1) / neg
+    return (new_offset, count, stride * step)
+}
+
+fn view_slice_bounds(length: Int, start: Int?, end: Int?, inclusive: Bool, step: Int?) -> (Int, Int, Int) {
+    let s = start ?? 0
+    let e = match end {
+        Some(raw_end) => if inclusive { raw_end + 1 } else { raw_end }
+        None => length
+    }
+    let k = step ?? 1
+    if k < 1 {
+        @__index_out_of_range()
+    }
+    return (s, e, k)
+}
+
+fn mut_backing_len<T>(backing: MutSpanBacking<T>) -> Int {
+    return match backing {
+        MutSpanBacking.Arr(xs) => @__array_len(xs)
+        MutSpanBacking.Lst(xs) => @__list_len(xs)
+        MutSpanBacking.Buf(b) => b.len()
+    }
+}
+
+fn mut_to_span_backing<T>(backing: MutSpanBacking<T>) -> SpanBacking<T> {
+    return match backing {
+        MutSpanBacking.Arr(xs) => SpanBacking.Arr(xs)
+        MutSpanBacking.Lst(xs) => SpanBacking.Lst(xs)
+        MutSpanBacking.Buf(b) => SpanBacking.Buf(b)
+    }
+}
+
+fn view_read_str_byte<T>(s: String, raw: Int) -> T {
+    comptime if @type_name(T) == "UInt8" {
+        return @__string_byte_at(s, raw)
+    } else {
+        return fault("invalid String byte backing")
+    }
+}
+
+fn view_read_buf<T>(b: Buffer<T>, raw: Int) -> T {
+    comptime if @is_flat(T) {
+        return b.get(raw)
+    } else {
+        return fault("Buffer<T> requires a flat type")
+    }
+}
+
+fn view_write_buf<T>(var b: Buffer<T>, raw: Int, value: T) {
+    comptime if @is_flat(T) {
+        b.set(raw, value)
+    } else {
+        @fault("Buffer<T> requires a flat type")
+    }
+}
+
+/// A read-only zero-copy strided view over `[T]`, `List<T>`, `Bytes`, `Buffer<T>`, or `String` bytes.
+pub class Span<T> {
+    backing: SpanBacking<T>
+    offset: Int
+    length: Int
+    step_size: Int
+
+    pub fn empty() -> Span<T> {
+        let arr: [T] = []
+        return Span<T> { backing: SpanBacking.Arr(arr), offset: 0, length: 0, step_size: 1 }
+    }
+
+    pub fn from_array(xs: [T]) -> Span<T> {
+        return Span<T> { backing: SpanBacking.Arr(xs), offset: 0, length: @__array_len(xs), step_size: 1 }
+    }
+
+    pub fn from_list(xs: List<T>) -> Span<T> {
+        return Span<T> { backing: SpanBacking.Lst(xs), offset: 0, length: @__list_len(xs), step_size: 1 }
+    }
+
+    pub fn from_buffer(buf: Buffer<T>) -> Span<T> {
+        comptime if !@is_flat(T) {
+            @compile_error("Span.from_buffer requires a flat element type")
+        }
+        if buf.is_closed() {
+            @fault("Buffer is closed")
+        }
+        return Span<T> { backing: SpanBacking.Buf(buf), offset: 0, length: buf.len(), step_size: 1 }
+    }
+
+    pub fn from_string_bytes(s: String, start: Int, len: Int) -> Span<UInt8> {
+        let total = @__string_len(s)
+        if start < 0 || len < 0 || start + len > total {
+            @__index_out_of_range()
+        }
+        return Span<UInt8> { backing: SpanBacking.Str(s), offset: start, length: len, step_size: 1 }
+    }
+
+    pub fn len(self) -> Int { return self.length }
+    pub fn is_empty(self) -> Bool { return self.length == 0 }
+    pub fn stride(self) -> Int { return self.step_size }
+
+    fn backing_len(self) -> Int {
+        return match self.backing {
+            SpanBacking.Arr(xs) => @__array_len(xs)
+            SpanBacking.Lst(xs) => @__list_len(xs)
+            SpanBacking.Str(s) => @__string_len(s)
+            SpanBacking.Buf(b) => b.len()
+        }
+    }
+
+    pub fn get(self, index: Int) -> T {
+        let raw = view_raw_index(self.offset, self.length, self.step_size, index, self.backing_len())
+        return match self.backing {
+            SpanBacking.Arr(xs) => @__array_get(xs, raw)
+            SpanBacking.Lst(xs) => @__list_get(xs, raw)
+            SpanBacking.Str(s) => view_read_str_byte<T>(s, raw)
+            SpanBacking.Buf(b) => view_read_buf<T>(b, raw)
+        }
+    }
+
+    pub fn get_or(self, index: Int, fallback: T) -> T {
+        if index < 0 || index >= self.length { return fallback }
+        let raw = self.offset + index * self.step_size
+        if raw < 0 || raw >= self.backing_len() { return fallback }
+        return self.get(index)
+    }
+
+    pub fn first(self) -> T? {
+        if self.length == 0 { return None }
+        return Some(self.get(0))
+    }
+
+    pub fn last(self) -> T? {
+        if self.length == 0 { return None }
+        return Some(self.get(self.length - 1))
+    }
+
+    pub fn __getitem__(self, index: Int) -> T { return self.get(index) }
+
+    pub fn slice(self, start: Int, end: Int) -> Span<T> {
+        let (off, len, st) = view_slice_geom(self.offset, self.length, self.step_size, start, end)
+        return Span<T> { backing: self.backing, offset: off, length: len, step_size: st }
+    }
+
+    pub fn subspan(self, start: Int, count: Int) -> Span<T> {
+        if count < 0 || start < 0 || start + count > self.length {
+            @__index_out_of_range()
+        }
+        return self.slice(start, start + count)
+    }
+
+    pub fn take(self, n: Int) -> Span<T> {
+        return self.slice(0, view_clamp_count(n, self.length))
+    }
+
+    pub fn drop(self, n: Int) -> Span<T> {
+        return self.slice(view_clamp_count(n, self.length), self.length)
+    }
+
+    pub fn split_at(self, mid: Int) -> (Span<T>, Span<T>) {
+        if mid < 0 || mid > self.length {
+            @__index_out_of_range()
+        }
+        return (self.slice(0, mid), self.slice(mid, self.length))
+    }
+
+    pub fn step(self, step: Int) -> Span<T> {
+        let (off, len, st) = view_step_geom(self.offset, self.length, self.step_size, step)
+        return Span<T> { backing: self.backing, offset: off, length: len, step_size: st }
+    }
+
+    pub fn reversed(self) -> Span<T> { return self.step(-1) }
+
+    pub fn __slice__(self, start: Int?, end: Int?, inclusive: Bool, step: Int?) -> Span<T> {
+        let (s, e, k) = view_slice_bounds(self.length, start, end, inclusive, step)
+        let sub = self.slice(s, e)
+        if k == 1 { return sub }
+        return sub.step(k)
+    }
+
+    pub fn eq(self, other: Span<T>) -> Bool { return self.__eq__(other) }
+
+    pub fn __eq__(self, other: Span<T>) -> Bool {
+        if self.length != other.length { return false }
+        var i = 0
+        while i < self.length {
+            if !@__equal_of(self.get(i), other.get(i)) { return false }
+            i += 1
+        }
+        return true
+    }
+
+    pub fn index_of(self, value: T) -> Int? {
+        var i = 0
+        while i < self.length {
+            if @__equal_of(self.get(i), value) { return Some(i) }
+            i += 1
+        }
+        return None
+    }
+
+    pub fn contains(self, value: T) -> Bool { return self.index_of(value) != null }
+
+    pub fn count(self, value: T) -> Int {
+        var hits = 0
+        var i = 0
+        while i < self.length {
+            if @__equal_of(self.get(i), value) { hits += 1 }
+            i += 1
+        }
+        return hits
+    }
+
+    pub fn fold<Acc>(self, init: Acc, f: (Acc, T) -> Acc) -> Acc {
+        var acc = init
+        var i = 0
+        while i < self.length {
+            acc = f(acc, self.get(i))
+            i += 1
+        }
+        return acc
+    }
+
+    pub fn reduce(self, f: (T, T) -> T) -> T? {
+        if self.length == 0 { return None }
+        var acc = self.get(0)
+        var i = 1
+        while i < self.length {
+            acc = f(acc, self.get(i))
+            i += 1
+        }
+        return Some(acc)
+    }
+
+    pub fn sum(self) -> T {
+        comptime if @type_info(T).kind == Kind.Int {
+            var acc: T = 0
+            var i = 0
+            while i < self.length {
+                acc = acc + self.get(i)
+                i += 1
+            }
+            return acc
+        } else comptime if @type_info(T).kind == Kind.Float {
+            var acc: T = 0.0
+            var i = 0
+            while i < self.length {
+                acc = acc + self.get(i)
+                i += 1
+            }
+            return acc
+        } else {
+            @compile_error("`Span.sum` expects numeric elements")
+            return fault("`Span.sum` expects numeric elements")
+        }
+    }
+
+    pub fn mean(self) -> Float {
+        comptime if @type_info(T).kind == Kind.Int || @type_info(T).kind == Kind.Float {
+            if self.length == 0 { return 0.0 }
+            var acc = 0.0
+            var i = 0
+            while i < self.length {
+                acc = acc + (self.get(i) as Float)
+                i += 1
+            }
+            return acc / (self.length as Float)
+        } else {
+            @compile_error("`Span.mean` expects numeric elements")
+            return 0.0
+        }
+    }
+
+    pub fn min(self) -> T? {
+        comptime if @type_info(T).kind == Kind.Int || @type_info(T).kind == Kind.Float || @type_info(T).kind == Kind.String {
+            if self.length == 0 { return None }
+            var best = self.get(0)
+            var i = 1
+            while i < self.length {
+                let item = self.get(i)
+                if item < best { best = item }
+                i += 1
+            }
+            return Some(best)
+        } else {
+            @compile_error("`Span.min` expects numeric or String elements")
+            return None
+        }
+    }
+
+    pub fn max(self) -> T? {
+        comptime if @type_info(T).kind == Kind.Int || @type_info(T).kind == Kind.Float || @type_info(T).kind == Kind.String {
+            if self.length == 0 { return None }
+            var best = self.get(0)
+            var i = 1
+            while i < self.length {
+                let item = self.get(i)
+                if item > best { best = item }
+                i += 1
+            }
+            return Some(best)
+        } else {
+            @compile_error("`Span.max` expects numeric or String elements")
+            return None
+        }
+    }
+
+    pub fn to_array(self) -> [T] {
+        if self.length == 0 { return [] }
+        var out = [self.get(0); self.length]
+        var i = 1
+        while i < self.length {
+            @__array_set(out, i, self.get(i))
+            i += 1
+        }
+        return out
+    }
+
+    pub fn to_list(self) -> List<T> {
+        var out: List<T> = []
+        var i = 0
+        while i < self.length {
+            @__list_push(out, self.get(i))
+            i += 1
+        }
+        return out
+    }
+
+    pub fn to_string(self) -> String { return show(self.to_array()) }
+
+    pub fn stream(self) -> Stream<T> {
+        var i = 0
+        while i < self.length {
+            yield self.get(i)
+            i += 1
+        }
+    }
+}
+
+/// A mutable zero-copy strided view over `var [T]`, `var List<T>`, `var Bytes`, or `var Buffer<T>`.
+pub class MutSpan<T> {
+    var backing: MutSpanBacking<T>
+    offset: Int
+    length: Int
+    step_size: Int
+
+    pub fn from_array(var xs: [T]) -> MutSpan<T> {
+        return MutSpan<T> { backing: MutSpanBacking.Arr(xs), offset: 0, length: @__array_len(xs), step_size: 1 }
+    }
+
+    pub fn from_list(var xs: List<T>) -> MutSpan<T> {
+        return MutSpan<T> { backing: MutSpanBacking.Lst(xs), offset: 0, length: @__list_len(xs), step_size: 1 }
+    }
+
+    pub fn from_buffer(var buf: Buffer<T>) -> MutSpan<T> {
+        comptime if !@is_flat(T) {
+            @compile_error("MutSpan.from_buffer requires a flat element type")
+        }
+        if buf.is_closed() {
+            @fault("Buffer is closed")
+        }
+        return MutSpan<T> { backing: MutSpanBacking.Buf(buf), offset: 0, length: buf.len(), step_size: 1 }
+    }
+
+    pub fn as_span(self) -> Span<T> {
+        return Span<T> { backing: mut_to_span_backing(self.backing), offset: self.offset, length: self.length, step_size: self.step_size }
+    }
+
+    pub fn len(self) -> Int { return self.length }
+    pub fn is_empty(self) -> Bool { return self.length == 0 }
+    pub fn stride(self) -> Int { return self.step_size }
+
+    pub fn get(self, index: Int) -> T { return self.as_span().get(index) }
+    pub fn get_or(self, index: Int, fallback: T) -> T { return self.as_span().get_or(index, fallback) }
+    pub fn first(self) -> T? { return self.as_span().first() }
+    pub fn last(self) -> T? { return self.as_span().last() }
+    pub fn __getitem__(self, index: Int) -> T { return self.get(index) }
+
+    pub fn set(var self, index: Int, value: T) {
+        let raw = view_raw_index(self.offset, self.length, self.step_size, index, mut_backing_len(self.backing))
+        match self.backing {
+            MutSpanBacking.Arr(xs) => {
+                var arr = xs
+                @__array_set(arr, raw, value)
+            }
+            MutSpanBacking.Lst(xs) => {
+                var lst = xs
+                @__list_set(lst, raw, value)
+            }
+            MutSpanBacking.Buf(b) => {
+                var buf = b
+                view_write_buf<T>(buf, raw, value)
+            }
+        }
+    }
+
+    pub fn __setitem__(var self, index: Int, value: T) { self.set(index, value) }
+
+    pub fn fill(var self, value: T) {
+        var i = 0
+        while i < self.length {
+            self.set(i, value)
+            i += 1
+        }
+    }
+
+    pub fn swap(var self, i: Int, j: Int) {
+        let a = self.get(i)
+        let b = self.get(j)
+        self.set(i, b)
+        self.set(j, a)
+    }
+
+    pub fn reverse_in_place(var self) {
+        var i = 0
+        var j = self.length - 1
+        while i < j {
+            self.swap(i, j)
+            i += 1
+            j -= 1
+        }
+    }
+
+    pub fn copy_from(var self, src: Span<T>) {
+        if src.len() != self.length {
+            @fault("copy_from: span lengths differ")
+        }
+        var i = 0
+        while i < self.length {
+            self.set(i, src.get(i))
+            i += 1
+        }
+    }
+
+    pub fn slice(self, start: Int, end: Int) -> MutSpan<T> {
+        let (off, len, st) = view_slice_geom(self.offset, self.length, self.step_size, start, end)
+        return MutSpan<T> { backing: self.backing, offset: off, length: len, step_size: st }
+    }
+
+    pub fn subspan(self, start: Int, count: Int) -> MutSpan<T> {
+        if count < 0 || start < 0 || start + count > self.length {
+            @__index_out_of_range()
+        }
+        return self.slice(start, start + count)
+    }
+
+    pub fn take(self, n: Int) -> MutSpan<T> {
+        return self.slice(0, view_clamp_count(n, self.length))
+    }
+
+    pub fn drop(self, n: Int) -> MutSpan<T> {
+        return self.slice(view_clamp_count(n, self.length), self.length)
+    }
+
+    pub fn split_at(self, mid: Int) -> (MutSpan<T>, MutSpan<T>) {
+        if mid < 0 || mid > self.length {
+            @__index_out_of_range()
+        }
+        return (self.slice(0, mid), self.slice(mid, self.length))
+    }
+
+    pub fn step(self, step: Int) -> MutSpan<T> {
+        let (off, len, st) = view_step_geom(self.offset, self.length, self.step_size, step)
+        return MutSpan<T> { backing: self.backing, offset: off, length: len, step_size: st }
+    }
+
+    pub fn reversed(self) -> MutSpan<T> { return self.step(-1) }
+
+    pub fn __slice__(self, start: Int?, end: Int?, inclusive: Bool, step: Int?) -> MutSpan<T> {
+        let (s, e, k) = view_slice_bounds(self.length, start, end, inclusive, step)
+        let sub = self.slice(s, e)
+        if k == 1 { return sub }
+        return sub.step(k)
+    }
+
+    pub fn eq(self, other: MutSpan<T>) -> Bool { return self.__eq__(other) }
+    pub fn __eq__(self, other: MutSpan<T>) -> Bool { return self.as_span().__eq__(other.as_span()) }
+    pub fn contains(self, value: T) -> Bool { return self.as_span().contains(value) }
+    pub fn index_of(self, value: T) -> Int? { return self.as_span().index_of(value) }
+    pub fn count(self, value: T) -> Int { return self.as_span().count(value) }
+    pub fn fold<Acc>(self, init: Acc, f: (Acc, T) -> Acc) -> Acc { return self.as_span().fold(init, f) }
+    pub fn reduce(self, f: (T, T) -> T) -> T? { return self.as_span().reduce(f) }
+    pub fn sum(self) -> T { return self.as_span().sum() }
+    pub fn mean(self) -> Float { return self.as_span().mean() }
+    pub fn min(self) -> T? { return self.as_span().min() }
+    pub fn max(self) -> T? { return self.as_span().max() }
+    pub fn to_array(self) -> [T] { return self.as_span().to_array() }
+    pub fn to_list(self) -> List<T> { return self.as_span().to_list() }
+    pub fn to_string(self) -> String { return self.as_span().to_string() }
+    pub fn stream(self) -> Stream<T> { return self.as_span().stream() }
+}
+
+extend<T> Buffer<T> {
+    pub fn span(self) -> Span<T> { return Span<T>.from_buffer(self) }
+    pub fn mut_span(var self) -> MutSpan<T> { return MutSpan<T>.from_buffer(self) }
+    pub fn slice(self, start: Int, end: Int) -> Span<T> { return self.span().slice(start, end) }
+    pub fn __slice__(self, start: Int?, end: Int?, inclusive: Bool, step: Int?) -> Span<T> { return self.span().__slice__(start, end, inclusive, step) }
+    pub fn copy_from_span(var self, src: Span<T>) {
+        var mv = self.mut_span()
+        mv.copy_from(src)
+    }
+}

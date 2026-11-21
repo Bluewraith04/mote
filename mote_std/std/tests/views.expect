@@ -1,0 +1,13 @@
+start
+test "Span over array and List reflects backing changes without copying"
+passed
+test "MutSpan mutates backing storage in place through views and subviews"
+passed
+test "StrView provides zero-alloc UTF-8 slices, search, split, lines, and Bytes bridge"
+passed
+test "view bounds and UTF-8 boundary violations fault cleanly"
+passed
+test "slicing String, array, List, and Buffer returns zero-copy views"
+passed
+test "owner values implicitly coerce zero-copy to Span, MutSpan, and StrView"
+passed

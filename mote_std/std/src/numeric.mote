@@ -1,0 +1,33 @@
+// The operations every number type shares; each is generic so the compiler picks the width.
+
+pub fn to_string<T>(n: T) -> String { return @__num_to_string(n) }
+
+pub fn wrapping_add<T>(a: T, b: T) -> T { return @__num_wrapping_add(a, b) }
+pub fn wrapping_sub<T>(a: T, b: T) -> T { return @__num_wrapping_sub(a, b) }
+pub fn wrapping_mul<T>(a: T, b: T) -> T { return @__num_wrapping_mul(a, b) }
+pub fn wrapping_neg<T>(a: T) -> T { return @__num_wrapping_neg(a) }
+pub fn wrapping_shl<T>(a: T, n: Int) -> T { return @__num_wrapping_shl(a, n) }
+pub fn wrapping_shr<T>(a: T, n: Int) -> T { return @__num_wrapping_shr(a, n) }
+
+pub fn checked_add<T>(a: T, b: T) -> T? { return @__num_checked_add(a, b) }
+pub fn checked_sub<T>(a: T, b: T) -> T? { return @__num_checked_sub(a, b) }
+pub fn checked_mul<T>(a: T, b: T) -> T? { return @__num_checked_mul(a, b) }
+pub fn checked_neg<T>(a: T) -> T? { return @__num_checked_neg(a) }
+pub fn checked_shl<T>(a: T, n: Int) -> T? { return @__num_checked_shl(a, n) }
+pub fn checked_shr<T>(a: T, n: Int) -> T? { return @__num_checked_shr(a, n) }
+
+pub fn saturating_add<T>(a: T, b: T) -> T { return @__num_saturating_add(a, b) }
+pub fn saturating_sub<T>(a: T, b: T) -> T { return @__num_saturating_sub(a, b) }
+pub fn saturating_mul<T>(a: T, b: T) -> T { return @__num_saturating_mul(a, b) }
+pub fn saturating_neg<T>(a: T) -> T { return @__num_saturating_neg(a) }
+pub fn saturating_shl<T>(a: T, n: Int) -> T { return @__num_saturating_shl(a, n) }
+pub fn saturating_shr<T>(a: T, n: Int) -> T { return @__num_saturating_shr(a, n) }
+
+pub fn overflowing_add<T>(a: T, b: T) -> (T, Bool) { return @__num_overflowing_add(a, b) }
+pub fn overflowing_sub<T>(a: T, b: T) -> (T, Bool) { return @__num_overflowing_sub(a, b) }
+pub fn overflowing_mul<T>(a: T, b: T) -> (T, Bool) { return @__num_overflowing_mul(a, b) }
+pub fn overflowing_neg<T>(a: T) -> (T, Bool) { return @__num_overflowing_neg(a) }
+pub fn overflowing_shl<T>(a: T, n: Int) -> (T, Bool) { return @__num_overflowing_shl(a, n) }
+pub fn overflowing_shr<T>(a: T, n: Int) -> (T, Bool) { return @__num_overflowing_shr(a, n) }
+
+pub fn float_to_int(x: Float) -> Int { return @__float_to_int(x) }

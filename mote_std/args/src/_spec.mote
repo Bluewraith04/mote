@@ -1,0 +1,159 @@
+// What one field is, for parsing and for the usage text.
+import { Kind, Shape } from std.reflect
+import parse_float from std.string
+import { Flag, flag } from .flag
+
+pub enum ScalarKind {
+    Bool
+    Int
+    Float
+    String
+    Enum
+}
+
+pub class Spec {
+    pub index: Int
+    pub field_name: String
+    pub long: String
+    pub short_name: String
+    pub help: String
+    pub default_text: String?
+    pub positional: Bool
+    pub scalar: ScalarKind
+    pub enum_names: List<String>
+    pub is_switch: Bool
+    pub is_list: Bool
+    pub is_optional: Bool
+}
+
+// The words given for a field.
+pub class Slot {
+    pub var values: List<String>
+
+    pub fn add(var self, text: String) { self.values.push(text) }
+}
+
+// A field or variant name as a flag writes it: `max_depth` and `MaxDepth` are `max-depth`.
+pub fn kebab(name: String) -> String {
+    var out: List<UInt8> = []
+    let codes = name.bytes()
+    for at in 0..codes.len() {
+        let code = codes[at] as Int
+        if code == 95 {
+            out.push(45)
+        } else if code >= 65 && code <= 90 {
+            if at > 0 { out.push(45) }
+            out.push((code + 32) as UInt8)
+        } else {
+            out.push(codes[at])
+        }
+    }
+    return String.from_bytes(out.to_array())!
+}
+
+fn scalar_info<S>() -> ScalarKind? {
+    const info = @type_info(S)
+    comptime if info.kind == Kind.Bool { return ScalarKind.Bool }
+    comptime if info.kind == Kind.Int { return ScalarKind.Int }
+    comptime if info.kind == Kind.Float { return ScalarKind.Float }
+    comptime if info.kind == Kind.String { return ScalarKind.String }
+    comptime if info.kind == Kind.Enum {
+        comptime for v in @variants(S) {
+            comptime if v.shape != Shape.Unit { return null }
+        }
+        return ScalarKind.Enum
+    }
+    return null
+}
+
+fn enum_names_of<S>() -> List<String> {
+    var names: List<String> = []
+    comptime if @type_info(S).kind == Kind.Enum {
+        comptime for v in @variants(S) { names.push(kebab(v.name)) }
+    }
+    return names
+}
+
+fn build_spec<Inner>(
+    index: Int,
+    field_name: String,
+    field_doc: String,
+    type_name: String,
+    field_type_name: String,
+    flags: List<Flag>,
+    is_switch: Bool,
+    is_list: Bool,
+    is_optional: Bool
+) -> Result<Spec, Error> {
+    var details = flag(field_name)
+    for each in flags {
+        if each.name == field_name { details = each }
+    }
+    let sk = scalar_info<Inner>()
+    if sk == null {
+        return Err(Error.new(ErrorKind.InvalidData, "args: ${type_name}.${field_name} is a ${field_type_name}, which a flag cannot hold"))
+    }
+    return Ok(Spec {
+        index: index,
+        field_name: field_name,
+        long: kebab(field_name),
+        short_name: details.short_name,
+        help: if details.help_text != "" { details.help_text } else { field_doc },
+        default_text: details.default_text,
+        positional: details.is_positional,
+        scalar: sk,
+        enum_names: enum_names_of<Inner>(),
+        is_switch: is_switch,
+        is_list: is_list,
+        is_optional: is_optional
+    })
+}
+
+pub fn specs_of<T>(flags: List<Flag>) -> Result<List<Spec>, Error> {
+    const info = @type_info(T)
+    var specs: List<Spec> = []
+    comptime if info.kind == Kind.Struct || info.kind == Kind.Class {
+        comptime for f in @fields(T) {
+            const f_info = @type_info(@FieldType(T, f.name))
+            comptime if f_info.kind == Kind.Optional {
+                specs.push(build_spec<@TypeArg(@FieldType(T, f.name), 0)>(
+                    f.index, f.name, f.doc, info.name, f_info.name, flags,
+                    false, false, true
+                )?)
+            } else comptime if f_info.kind == Kind.List {
+                specs.push(build_spec<@TypeArg(@FieldType(T, f.name), 0)>(
+                    f.index, f.name, f.doc, info.name, f_info.name, flags,
+                    false, true, false
+                )?)
+            } else {
+                specs.push(build_spec<@FieldType(T, f.name)>(
+                    f.index, f.name, f.doc, info.name, f_info.name, flags,
+                    f_info.kind == Kind.Bool, false, false
+                )?)
+            }
+        }
+    }
+    return Ok(specs)
+}
+
+pub fn is_number(word: String) -> Bool {
+    return parse_float(word).is_ok()
+}
+
+pub fn by_long(specs: List<Spec>, name: String) -> Spec? {
+    for spec in specs {
+        if spec.long == name && !spec.positional { return spec }
+    }
+    return null
+}
+
+pub fn by_short(specs: List<Spec>, letter: String) -> Spec? {
+    for spec in specs {
+        if spec.short_name == letter && !spec.positional { return spec }
+    }
+    return null
+}
+
+pub fn label(spec: Spec) -> String {
+    return if spec.positional { spec.long } else { "--" + spec.long }
+}

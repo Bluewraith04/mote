@@ -2,7 +2,7 @@
   "fn" @context
   name: (identifier) @name) @item
 
-(native_function_item
+(extern_fn
   "fn" @context
   name: (identifier) @name) @item
 
@@ -33,3 +33,18 @@
 (test_item
   (test_keyword) @context
   name: (string_literal) @name) @item
+
+(const_decl
+  "const" @context
+  name: (identifier) @name) @item
+
+(extend_item
+  "extend" @context
+  target: (_) @name) @item
+
+(extern_block
+  "extern" @context
+  library: (string_literal) @name) @item
+
+(variant
+  name: (identifier) @name) @item

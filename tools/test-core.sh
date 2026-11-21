@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Builds the native of a core library when it has one, then runs `mote test` on it; $MOTE names the command.
+# Builds the external library of a core package when it has one, then runs `mote test` on it; $MOTE names the command.
 # Usage: test-core.sh NAME [--core DIR] [-- FILTER]
 set -eu
 root=$(cd "$(dirname "$0")/.." && pwd)
-core="$root/core"
+core="$root/mote_std"
 name=""
 filter=""
 while [ $# -gt 0 ]; do
@@ -39,7 +39,7 @@ while [ -n "$pending" ]; do
 done
 
 for library in $seen; do
-  "$root/tools/build-core-natives.sh" --core "$core" "$library"
+  "$root/tools/build-std-libs.sh" --core "$core" "$library"
 done
 if [ -n "$filter" ]; then
   "${MOTE:-mote}" test --core "$core" --filter "$filter" "$core/$name"

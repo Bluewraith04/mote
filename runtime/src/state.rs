@@ -4,6 +4,7 @@ use std::any::Any;
 use std::io::Write;
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
+use std::time::Instant;
 
 use mote_abi::{FaultTable, HandleKind, Kind, Region, TaskContext, TypeId, TypeTable, ELEMENTS_OFFSET, TASK_FAULTED};
 use mote_heap::{Config, Full, Heap, Object, World};
@@ -58,6 +59,8 @@ pub struct Runtime {
     args: Mutex<Vec<String>>,
     /// The code `exit` asked for, or the entry returned; 0 otherwise.
     exit_code: AtomicI32,
+    /// When the runtime was constructed, for single-threaded `now()` clocks.
+    started: Instant,
 }
 
 impl Runtime {
@@ -89,8 +92,14 @@ impl Runtime {
                 data: OnceLock::new(),
                 args: Mutex::new(Vec::new()),
                 exit_code: AtomicI32::new(0),
+                started: Instant::now(),
             }
         })
+    }
+
+    /// Elapsed nanoseconds since this runtime started, for single-threaded clocks.
+    pub fn monotonic_now(&self) -> u64 {
+        self.started.elapsed().as_nanos().min(u64::MAX as u128) as u64
     }
 
     /// Frees what the runtime keeps for a handle object the collector found dead.

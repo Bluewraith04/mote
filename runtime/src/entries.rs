@@ -14,6 +14,7 @@ use crate::state::Runtime;
 use crate::tasks::{ScopeEnd, TaskBody};
 
 /// Defines a symbol that moves the frame pointer and return address into the two registers after the entry's parameters and jumps to `inner`.
+#[cfg(target_os = "linux")]
 macro_rules! stub {
     ($entry:literal => $inner:literal, $fp:literal, $pc:literal) => {
         global_asm!(
@@ -29,6 +30,7 @@ macro_rules! stub {
 }
 
 /// Like `stub!` for an entry whose parameters leave one register: the frame pointer goes there and the return address is the seventh argument, on the stack.
+#[cfg(target_os = "linux")]
 macro_rules! stub_stacked {
     ($entry:literal => $inner:literal, $fp:literal) => {
         global_asm!(
@@ -45,6 +47,7 @@ macro_rules! stub_stacked {
     };
 }
 
+#[cfg(target_os = "linux")]
 mod stubs {
     use super::*;
     stub!("mote_fault" => "mote_entry_fault", "rdx", "rcx");
@@ -84,6 +87,141 @@ mod stubs {
     stub!("mote_undefer" => "mote_entry_undefer", "rsi", "rdx");
     stub!("mote_scope_end_error" => "mote_entry_scope_end_error", "rdx", "rcx");
     stub!("mote_native_blocking" => "mote_entry_native_blocking", "r8", "r9");
+}
+
+#[cfg(target_os = "windows")]
+macro_rules! stub_w64_1 {
+    ($entry:literal => $inner:literal) => {
+        global_asm!(
+            ".text",
+            ".p2align 4",
+            concat!(".global ", $entry),
+            concat!($entry, ":"),
+            "mov rdx, rbp",
+            "mov r8, [rsp]",
+            concat!("jmp ", $inner),
+        );
+    };
+}
+
+#[cfg(target_os = "windows")]
+macro_rules! stub_w64_2 {
+    ($entry:literal => $inner:literal) => {
+        global_asm!(
+            ".text",
+            ".p2align 4",
+            concat!(".global ", $entry),
+            concat!($entry, ":"),
+            "mov r8, rbp",
+            "mov r9, [rsp]",
+            concat!("jmp ", $inner),
+        );
+    };
+}
+
+#[cfg(target_os = "windows")]
+macro_rules! stub_w64_3 {
+    ($entry:literal => $inner:literal) => {
+        global_asm!(
+            ".text",
+            ".p2align 4",
+            concat!(".global ", $entry),
+            concat!($entry, ":"),
+            "mov rax, [rsp]",
+            "sub rsp, 40",
+            "mov r9, rbp",
+            "mov [rsp + 32], rax",
+            concat!("call ", $inner),
+            "add rsp, 40",
+            "ret",
+        );
+    };
+}
+
+#[cfg(target_os = "windows")]
+macro_rules! stub_w64_4 {
+    ($entry:literal => $inner:literal) => {
+        global_asm!(
+            ".text",
+            ".p2align 4",
+            concat!(".global ", $entry),
+            concat!($entry, ":"),
+            "mov rax, [rsp]",
+            "sub rsp, 56",
+            "mov [rsp + 32], rbp",
+            "mov [rsp + 40], rax",
+            concat!("call ", $inner),
+            "add rsp, 56",
+            "ret",
+        );
+    };
+}
+
+#[cfg(target_os = "windows")]
+macro_rules! stub_w64_5 {
+    ($entry:literal => $inner:literal) => {
+        global_asm!(
+            ".text",
+            ".p2align 4",
+            concat!(".global ", $entry),
+            concat!($entry, ":"),
+            "sub rsp, 56",
+            "mov rax, [rsp + 96]",
+            "mov [rsp + 32], rax",
+            "mov [rsp + 40], rbp",
+            "mov rax, [rsp + 56]",
+            "mov [rsp + 48], rax",
+            concat!("call ", $inner),
+            "add rsp, 56",
+            "ret",
+        );
+    };
+}
+
+#[cfg(target_os = "windows")]
+mod stubs {
+    use super::*;
+    stub_w64_1!("mote_poll" => "mote_entry_poll");
+    stub_w64_1!("mote_scope_begin" => "mote_entry_scope_begin");
+    stub_w64_1!("mote_undefer" => "mote_entry_undefer");
+
+    stub_w64_2!("mote_fault" => "mote_entry_fault");
+    stub_w64_2!("mote_alloc" => "mote_entry_alloc");
+    stub_w64_2!("mote_fault_message" => "mote_entry_fault_message");
+    stub_w64_2!("mote_task_await" => "mote_entry_task_await");
+    stub_w64_2!("mote_task_cancel" => "mote_entry_task_cancel");
+    stub_w64_2!("mote_task_ready" => "mote_entry_task_ready");
+    stub_w64_2!("mote_task_message" => "mote_entry_task_message");
+    stub_w64_2!("mote_scope_end" => "mote_entry_scope_end");
+    stub_w64_2!("mote_sender_close" => "mote_entry_sender_close");
+    stub_w64_2!("mote_sender_clone" => "mote_entry_sender_clone");
+    stub_w64_2!("mote_receiver_close" => "mote_entry_receiver_close");
+    stub_w64_2!("mote_receiver_clone" => "mote_entry_receiver_clone");
+    stub_w64_2!("mote_receiver_closed" => "mote_entry_receiver_closed");
+    stub_w64_2!("mote_mutex_new" => "mote_entry_mutex_new");
+    stub_w64_2!("mote_once_new" => "mote_entry_once_new");
+    stub_w64_2!("mote_once_begin" => "mote_entry_once_begin");
+    stub_w64_2!("mote_sleep" => "mote_entry_sleep");
+    stub_w64_2!("mote_port_ref" => "mote_entry_port_ref");
+    stub_w64_2!("mote_scope_end_error" => "mote_entry_scope_end_error");
+
+    stub_w64_3!("mote_alloc_array" => "mote_entry_alloc_array");
+    stub_w64_3!("mote_channel_new" => "mote_entry_channel_new");
+    stub_w64_3!("mote_channel_end" => "mote_entry_channel_end");
+    stub_w64_3!("mote_mutex_take" => "mote_entry_mutex_take");
+    stub_w64_3!("mote_mutex_put" => "mote_entry_mutex_put");
+    stub_w64_3!("mote_once_finish" => "mote_entry_once_finish");
+    stub_w64_3!("mote_once_value" => "mote_entry_once_value");
+    stub_w64_3!("mote_task_await_timeout" => "mote_entry_task_await_timeout");
+    stub_w64_3!("mote_defer" => "mote_entry_defer");
+
+    stub_w64_4!("mote_channel_send" => "mote_entry_channel_send");
+    stub_w64_4!("mote_channel_recv" => "mote_entry_channel_recv");
+    stub_w64_4!("mote_channel_recv_timeout" => "mote_entry_channel_recv_timeout");
+    stub_w64_4!("mote_port_new" => "mote_entry_port_new");
+    stub_w64_4!("mote_native_blocking" => "mote_entry_native_blocking");
+
+    stub_w64_5!("mote_task_spawn" => "mote_entry_task_spawn");
 }
 
 /// The symbols as compiled code sees them.

@@ -1,0 +1,270 @@
+// String views and functions over strings.
+import Span from std.collections
+import { Clone, Debug, Display, Eq, Ord } from std.traits
+
+fn str_is_ascii_space(b: UInt8) -> Bool {
+    return b == 32 || (b >= 9 && b <= 13)
+}
+
+fn str_match_at(haystack: String, at: Int, needle: StrView) -> Bool {
+    var j = 0
+    while j < needle.length {
+        if @__string_byte_at(haystack, at + j) != @__string_byte_at(needle.source, needle.start + j) {
+            return false
+        }
+        j += 1
+    }
+    return true
+}
+
+/// A zero-allocation UTF-8 boundary-checked view over a `String`.
+pub struct StrView: (Display, Debug, Eq, Ord, Clone) {
+    source: String
+    start: Int
+    length: Int
+
+    pub fn of(s: String) -> StrView {
+        return StrView { source: s, start: 0, length: @__string_len(s) }
+    }
+
+    pub fn slice_of(s: String, start: Int, end: Int) -> StrView {
+        let total = @__string_len(s)
+        if start < 0 || end < start || end > total {
+            @__index_out_of_range()
+        }
+        if !@__string_is_boundary(s, start) || !@__string_is_boundary(s, end) {
+            @__index_out_of_range()
+        }
+        return StrView { source: s, start: start, length: end - start }
+    }
+
+    pub fn len(self) -> Int { return self.length }
+    pub fn is_empty(self) -> Bool { return self.length == 0 }
+
+    pub fn byte_at(self, index: Int) -> UInt8 {
+        if index < 0 || index >= self.length {
+            @__index_out_of_range()
+        }
+        return @__string_byte_at(self.source, self.start + index)
+    }
+
+    pub fn as_bytes(self) -> Span<UInt8> {
+        return Span<UInt8>.from_string_bytes(self.source, self.start, self.length)
+    }
+
+    pub fn slice(self, start: Int, end: Int) -> StrView {
+        if start < 0 || end < start || end > self.length {
+            @__index_out_of_range()
+        }
+        let abs_start = self.start + start
+        let abs_end = self.start + end
+        if !@__string_is_boundary(self.source, abs_start) || !@__string_is_boundary(self.source, abs_end) {
+            @__index_out_of_range()
+        }
+        return StrView { source: self.source, start: abs_start, length: end - start }
+    }
+
+    pub fn __slice__(self, start: Int?, end: Int?, inclusive: Bool, step: Int?) -> StrView {
+        if step != null {
+            @__index_out_of_range()
+        }
+        let s = start ?? 0
+        let e = match end {
+            Some(raw_end) => if inclusive { raw_end + 1 } else { raw_end }
+            None => self.length
+        }
+        return self.slice(s, e)
+    }
+
+    pub fn trim_start(self) -> StrView {
+        var i = 0
+        while i < self.length && str_is_ascii_space(@__string_byte_at(self.source, self.start + i)) {
+            i += 1
+        }
+        return StrView { source: self.source, start: self.start + i, length: self.length - i }
+    }
+
+    pub fn trim_end(self) -> StrView {
+        var end = self.length
+        while end > 0 && str_is_ascii_space(@__string_byte_at(self.source, self.start + end - 1)) {
+            end -= 1
+        }
+        return StrView { source: self.source, start: self.start, length: end }
+    }
+
+    pub fn trim(self) -> StrView { return self.trim_start().trim_end() }
+
+    pub fn starts_with(self, prefix: StrView) -> Bool {
+        if prefix.length > self.length { return false }
+        return str_match_at(self.source, self.start, prefix)
+    }
+
+    pub fn ends_with(self, suffix: StrView) -> Bool {
+        if suffix.length > self.length { return false }
+        return str_match_at(self.source, self.start + self.length - suffix.length, suffix)
+    }
+
+    pub fn strip_prefix(self, prefix: StrView) -> StrView? {
+        if !self.starts_with(prefix) { return None }
+        return Some(self.slice(prefix.length, self.length))
+    }
+
+    pub fn strip_suffix(self, suffix: StrView) -> StrView? {
+        if !self.ends_with(suffix) { return None }
+        return Some(self.slice(0, self.length - suffix.length))
+    }
+
+    pub fn find(self, needle: StrView) -> Int? {
+        let nlen = needle.length
+        if nlen == 0 { return Some(0) }
+        if nlen > self.length { return None }
+        let limit = self.length - nlen
+        var i = 0
+        while i <= limit {
+            if str_match_at(self.source, self.start + i, needle) {
+                return Some(i)
+            }
+            i += 1
+        }
+        return None
+    }
+
+    pub fn rfind(self, needle: StrView) -> Int? {
+        let nlen = needle.length
+        if nlen == 0 { return Some(self.length) }
+        if nlen > self.length { return None }
+        var i = self.length - nlen
+        while i >= 0 {
+            if str_match_at(self.source, self.start + i, needle) {
+                return Some(i)
+            }
+            i -= 1
+        }
+        return None
+    }
+
+    pub fn contains(self, needle: StrView) -> Bool { return self.find(needle) != null }
+
+    pub fn split(self, sep: StrView) -> Stream<StrView> {
+        let slen = sep.length
+        if slen == 0 {
+            var i = 0
+            while i < self.length {
+                var j = i + 1
+                while j < self.length && !@__string_is_boundary(self.source, self.start + j) {
+                    j += 1
+                }
+                yield StrView { source: self.source, start: self.start + i, length: j - i }
+                i = j
+            }
+            return
+        }
+        var pos = 0
+        let limit = self.length - slen
+        while pos <= limit {
+            var at = pos
+            var found = false
+            while at <= limit {
+                if str_match_at(self.source, self.start + at, sep) {
+                    found = true
+                    break
+                }
+                at += 1
+            }
+            if !found { break }
+            yield StrView { source: self.source, start: self.start + pos, length: at - pos }
+            pos = at + slen
+        }
+        yield StrView { source: self.source, start: self.start + pos, length: self.length - pos }
+    }
+
+    pub fn lines(self) -> Stream<StrView> {
+        for part in self.split("\n") {
+            match part.strip_suffix("\r") {
+                Some(clean) => yield clean
+                None => yield part
+            }
+        }
+    }
+
+    pub fn eq(self, other: StrView) -> Bool {
+        if self.length != other.length { return false }
+        var i = 0
+        while i < self.length {
+            if @__string_byte_at(self.source, self.start + i) != @__string_byte_at(other.source, other.start + i) {
+                return false
+            }
+            i += 1
+        }
+        return true
+    }
+
+    pub fn __eq__(self, other: StrView) -> Bool { return self.eq(other) }
+
+    pub fn eq_str(self, other: String) -> Bool {
+        if self.length != @__string_len(other) { return false }
+        return str_match_at(self.source, self.start, StrView.of(other))
+    }
+
+    pub fn compare(self, other: StrView) -> Int {
+        let n = if self.length < other.length { self.length } else { other.length }
+        var i = 0
+        while i < n {
+            let a = @__string_byte_at(self.source, self.start + i)
+            let b = @__string_byte_at(other.source, other.start + i)
+            if a < b { return -1 }
+            if a > b { return 1 }
+            i += 1
+        }
+        if self.length < other.length { return -1 }
+        if self.length > other.length { return 1 }
+        return 0
+    }
+
+    pub fn clone(self) -> StrView { return self }
+    pub fn to_string(self) -> String { return @__string_slice(self.source, self.start, self.start + self.length) }
+    pub fn debug(self) -> String { return self.to_string() }
+}
+
+pub fn join(parts: Span<String>, separator: StrView) -> String {
+    let sep = separator.to_string()
+    var out = ""
+    var first = true
+    for part in parts {
+        if !first { out = out + sep }
+        out = out + part
+        first = false
+    }
+    return out
+}
+
+pub fn lines(s: StrView) -> List<String> {
+    var out: List<String> = []
+    for line in s.lines() {
+        out.push(line.to_string())
+    }
+    return out
+}
+
+pub fn is_blank(s: StrView) -> Bool { return s.trim().is_empty() }
+
+pub fn pad_start(s: StrView, width: Int, pad: StrView) -> String {
+    var out = s.to_string()
+    let p = pad.to_string()
+    while out.len() < width { out = p + out }
+    return out
+}
+
+pub fn parse_int(s: StrView) -> Result<Int, Error> {
+    let text = s.to_string()
+    let value = @__parse_int(text)
+    if value == null { return Err(Error.new(InvalidData, "not an integer: ${text}")) }
+    return Ok(value)
+}
+
+pub fn parse_float(s: StrView) -> Result<Float, Error> {
+    let text = s.to_string()
+    let value = @__parse_float(text)
+    if value == null { return Err(Error.new(InvalidData, "not a number: ${text}")) }
+    return Ok(value)
+}

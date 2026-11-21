@@ -95,7 +95,7 @@ let m = Map<String, Int>()
 ```
 
 ```mote
-let bad = Map() // error: cannot infer the type argument `K`
+let bad = Map() // error: cannot infer the generic argument `K`
 ```
 
 * A bare generic name in a type is an error: write its arguments. <!-- block -->
@@ -208,8 +208,6 @@ let ys: List<Int | String> = xs // error
 ```
 
 ```mote
-import { Stream } from std.collections
-
 fn main() {
     let xs: List<Int> = [1, 2]
     let s: Stream<Int | String> = xs.stream()
@@ -218,7 +216,7 @@ fn main() {
 ```
 
 ```output
-std.collections.Stream<String | Int>
+Stream<String | Int>
 ```
 
 `Pointer<T>` is described in [modules.md](modules.md#pointers).
@@ -444,6 +442,29 @@ let n = u.x // error: A | B has no fields
 ```mote
 let a: Int | String = 1
 let b = a + 1 // error
+```
+
+## Any
+
+* `Any` is an open dynamic box that holds a value of any type together with its runtime type identity. Narrow with `is`, `match` (with a `_` arm), or `.to<T>() -> T?`. <!-- block -->
+
+```mote
+fn main() {
+    let items: List<Any> = [42, "hi", true]
+    println(items[0].to<Int>()!)
+    println(items[1].to<Int>() == null)
+    if items[2] is Bool {
+        println(items[2])
+    }
+    println(items[1])
+}
+```
+
+```output
+42
+true
+true
+hi
 ```
 
 ## Tuples
@@ -685,7 +706,7 @@ let f: (Int) -> Int = two // error
 * `T` is opaque: assignable to itself, comparable to `null`, and nothing else. Every other operation comes from a bound: `.to_string()` needs `T: Display`, and `+` is an error. <!-- block -->
 
 ```mote
-import { Display } from std.traits
+import Display from std.traits
 
 fn show<T: Display>(x: T) -> String { return x.to_string() }
 
@@ -745,12 +766,9 @@ t.len() // error
 
 ## Sendable types
 
-* A value may enter `spawn` only if Sendable: numbers, `Bool`, `Null`, `String`; value structs of Sendable fields; classes with no `var` field and Sendable field types; tuples, enums and `Result` of Sendable parts; `Sender Receiver Task Mutex Once atomic.Int64 atomic.Bool PortEnd`; a nullable of a Sendable; a named function or a lambda capturing no `var`. <!-- block -->
+* A value may enter `spawn` only if Sendable: numbers, `Bool`, `Null`, `String`; value structs of Sendable fields; classes with no `var` field and Sendable field types; tuples, enums and `Result` of Sendable parts; `Sender Receiver Task Mutex Once AtomicInt AtomicBool PortEnd`; a nullable of a Sendable; a named function or a lambda capturing no `var`. <!-- block -->
 
 ```mote
-import { Channel, Mutex } from std.sync
-import std.atomic as atomic
-
 struct P {
     x: Int
 }
@@ -768,7 +786,7 @@ fn main() {
     let t = spawn (1, "a")
     let m = Mutex(0)
     let d = spawn m.lock(|v| v)
-    let n = atomic.Int64(0)
+    let n = AtomicInt(0)
     let e = spawn n.load()
     let o: Int? = 4
     let f = spawn o

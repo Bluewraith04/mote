@@ -3,10 +3,11 @@ use std::collections::HashMap;
 use mote_base::{Id, Span, Symbol};
 use mote_syntax as ast;
 
-use crate::types::TyId;
+use crate::types::{BuiltinTy, FloatTy, IntTy, TyId, TyKind, Types};
 
 pub type DefId = Id<Def>;
 pub type ModuleId = Id<Module>;
+pub type ExtendId = Id<ExtendDef>;
 
 /// One source file, its syntax tree and the names it can see.
 pub struct Module {
@@ -41,164 +42,6 @@ pub enum Resolved {
     Module(ModuleId),
 }
 
-/// A declaration the standard library marks so the compiler can find it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum LangItem {
-    Bool,
-    String,
-    Int8,
-    Int16,
-    Int32,
-    Int,
-    UInt8,
-    UInt16,
-    UInt32,
-    UInt64,
-    Float32,
-    Float,
-    Option,
-    Result,
-    List,
-    Array,
-    Map,
-    Set,
-    Range,
-    Stream,
-    Task,
-    Sender,
-    Receiver,
-    Mutex,
-    Once,
-    AtomicInt,
-    AtomicBool,
-    PortEnd,
-    Pointer,
-    Display,
-    Debug,
-    Eq,
-    Ord,
-    Clone,
-    Closeable,
-    Key,
-    Error,
-    ErrorKind,
-}
-
-impl LangItem {
-    pub const ALL: [LangItem; 38] = [
-        LangItem::Bool,
-        LangItem::String,
-        LangItem::Int8,
-        LangItem::Int16,
-        LangItem::Int32,
-        LangItem::Int,
-        LangItem::UInt8,
-        LangItem::UInt16,
-        LangItem::UInt32,
-        LangItem::UInt64,
-        LangItem::Float32,
-        LangItem::Float,
-        LangItem::Option,
-        LangItem::Result,
-        LangItem::List,
-        LangItem::Array,
-        LangItem::Map,
-        LangItem::Set,
-        LangItem::Range,
-        LangItem::Stream,
-        LangItem::Task,
-        LangItem::Sender,
-        LangItem::Receiver,
-        LangItem::Mutex,
-        LangItem::Once,
-        LangItem::AtomicInt,
-        LangItem::AtomicBool,
-        LangItem::PortEnd,
-        LangItem::Pointer,
-        LangItem::Display,
-        LangItem::Debug,
-        LangItem::Eq,
-        LangItem::Ord,
-        LangItem::Clone,
-        LangItem::Closeable,
-        LangItem::Key,
-        LangItem::Error,
-        LangItem::ErrorKind,
-    ];
-
-    /// The name a `@lang` attribute gives it.
-    pub fn name(self) -> &'static str {
-        match self {
-            LangItem::Bool => "bool",
-            LangItem::String => "string",
-            LangItem::Int8 => "int8",
-            LangItem::Int16 => "int16",
-            LangItem::Int32 => "int32",
-            LangItem::Int => "int",
-            LangItem::UInt8 => "uint8",
-            LangItem::UInt16 => "uint16",
-            LangItem::UInt32 => "uint32",
-            LangItem::UInt64 => "uint64",
-            LangItem::Float32 => "float32",
-            LangItem::Float => "float",
-            LangItem::Option => "option",
-            LangItem::Result => "result",
-            LangItem::List => "list",
-            LangItem::Array => "array",
-            LangItem::Map => "map",
-            LangItem::Set => "set",
-            LangItem::Range => "range",
-            LangItem::Stream => "stream",
-            LangItem::Task => "task",
-            LangItem::Sender => "sender",
-            LangItem::Receiver => "receiver",
-            LangItem::Mutex => "mutex",
-            LangItem::Once => "once",
-            LangItem::AtomicInt => "atomic_int",
-            LangItem::AtomicBool => "atomic_bool",
-            LangItem::PortEnd => "port_end",
-            LangItem::Pointer => "pointer",
-            LangItem::Display => "display",
-            LangItem::Debug => "debug",
-            LangItem::Eq => "eq",
-            LangItem::Ord => "ord",
-            LangItem::Clone => "clone",
-            LangItem::Closeable => "closeable",
-            LangItem::Key => "key",
-            LangItem::Error => "error",
-            LangItem::ErrorKind => "error_kind",
-        }
-    }
-
-    /// Whether values are handles that tasks share and that never change by a write through the holder.
-    pub fn is_handle(self) -> bool {
-        matches!(self, LangItem::Task | LangItem::Sender | LangItem::Receiver | LangItem::Mutex | LangItem::Once | LangItem::AtomicInt | LangItem::AtomicBool | LangItem::PortEnd)
-    }
-
-    /// The built-in type a declaration with this item stands for.
-    pub fn primitive(self) -> Option<TyId> {
-        Some(match self {
-            LangItem::Bool => TyId::BOOL,
-            LangItem::String => TyId::STRING,
-            LangItem::Int8 => TyId::INT8,
-            LangItem::Int16 => TyId::INT16,
-            LangItem::Int32 => TyId::INT32,
-            LangItem::Int => TyId::INT,
-            LangItem::UInt8 => TyId::UINT8,
-            LangItem::UInt16 => TyId::UINT16,
-            LangItem::UInt32 => TyId::UINT32,
-            LangItem::UInt64 => TyId::UINT64,
-            LangItem::Float32 => TyId::FLOAT32,
-            LangItem::Float => TyId::FLOAT,
-            _ => return None,
-        })
-    }
-
-    pub fn from_name(name: &str) -> Option<LangItem> {
-        LangItem::ALL.into_iter().find(|item| item.name() == name)
-    }
-}
-
 /// Where a definition sits in its module's syntax tree.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Origin {
@@ -213,11 +56,13 @@ pub struct Def {
     pub module: ModuleId,
     pub span: Span,
     pub is_pub: bool,
-    pub lang: Option<LangItem>,
     /// The type or trait a method belongs to.
     pub owner: Option<DefId>,
+    /// The `extend` block a method belongs to, if any.
+    pub extend: Option<ExtendId>,
     /// `None` for a definition the compiler makes.
     pub origin: Option<Origin>,
+    pub doc: Option<Span>,
     pub kind: DefKind,
 }
 
@@ -228,14 +73,40 @@ pub enum DefKind {
     Trait(Trait),
     Alias(Alias),
     Global(Global),
+    Const(ConstDef),
     Test,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct GenericParam {
-    pub name: Symbol,
-    /// The traits the argument must satisfy.
-    pub bounds: Vec<Bound>,
+pub enum GenericParam {
+    Type {
+        name: Symbol,
+        /// The traits the argument must satisfy.
+        bounds: Vec<Bound>,
+    },
+    Const {
+        name: Symbol,
+        ty: TyId,
+    },
+}
+
+impl GenericParam {
+    pub fn name(&self) -> Symbol {
+        match self {
+            GenericParam::Type { name, .. } | GenericParam::Const { name, .. } => *name,
+        }
+    }
+
+    pub fn is_const(&self) -> bool {
+        matches!(self, GenericParam::Const { .. })
+    }
+
+    pub fn bounds(&self) -> &[Bound] {
+        match self {
+            GenericParam::Type { bounds, .. } => bounds,
+            GenericParam::Const { .. } => &[],
+        }
+    }
 }
 
 /// A trait with the type arguments it is applied to.
@@ -267,7 +138,7 @@ pub enum Receiver {
     Write,
 }
 
-/// The library and symbol a `native fn` binds, from `@link`.
+/// The library and symbol a declaration in `extern "lib" { ... }` binds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Link {
     pub library: Symbol,
@@ -277,19 +148,16 @@ pub struct Link {
 }
 
 pub struct Function {
-    /// Its own type parameters; an owner's come first in the numbering.
+    /// Its own generic parameters; an owner's come first in the numbering.
     pub generics: Vec<GenericParam>,
     /// Without the receiver.
     pub params: Vec<Param>,
     pub receiver: Receiver,
     pub ret: TyId,
-    /// `false` for a `native fn` and a trait method that has no default.
+    /// `false` for an `extern` declaration and a trait method that has no default.
     pub has_body: bool,
-    pub native: bool,
-    /// Set by `@link`; a `native fn` needs this or `intrinsic`.
+    /// Set for functions inside `extern "lib" { ... }`.
     pub link: Option<Link>,
-    /// Set by `@intrinsic`: the name of an operation the compiler or runtime provides.
-    pub intrinsic: Option<Symbol>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -299,6 +167,7 @@ pub struct Field {
     pub is_pub: bool,
     pub is_var: bool,
     pub default: Option<Id<ast::Expr>>,
+    pub doc: Option<Span>,
     pub span: Span,
 }
 
@@ -327,7 +196,7 @@ pub struct Variant {
     pub span: Span,
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct Enum {
     pub generics: Vec<GenericParam>,
     pub variants: Vec<Variant>,
@@ -349,6 +218,58 @@ pub struct Alias {
 pub struct Global {
     pub ty: TyId,
     pub is_var: bool,
+}
+
+pub struct ConstDef {
+    pub ty: TyId,
+    pub ast_ty: Option<Id<ast::Type>>,
+    pub expr: Id<ast::Expr>,
+}
+
+/// Key under which `extend` blocks are indexed for fast lookup.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum TyHead {
+    Unit,
+    Bool,
+    String,
+    Int(IntTy),
+    Float(FloatTy),
+    Builtin(BuiltinTy),
+    Adt(DefId),
+    Array,
+    FixedArray,
+    Optional,
+    Tuple(usize),
+}
+
+impl TyHead {
+    pub fn of(types: &Types, ty: TyId) -> Option<Self> {
+        match types.kind(ty) {
+            TyKind::Unit => Some(TyHead::Unit),
+            TyKind::Bool => Some(TyHead::Bool),
+            TyKind::String => Some(TyHead::String),
+            TyKind::Int(int) => Some(TyHead::Int(*int)),
+            TyKind::Float(float) => Some(TyHead::Float(*float)),
+            TyKind::Builtin { kind, .. } => Some(TyHead::Builtin(*kind)),
+            TyKind::Adt { def, .. } => Some(TyHead::Adt(*def)),
+            TyKind::Array(_) => Some(TyHead::Array),
+            TyKind::FixedArray(_, _) => Some(TyHead::FixedArray),
+            TyKind::Optional(_) => Some(TyHead::Optional),
+            TyKind::Tuple(els) => Some(TyHead::Tuple(els.len())),
+            _ => None,
+        }
+    }
+}
+
+/// An `extend [<generics>] Type [: (Traits)] { methods... }` declaration.
+pub struct ExtendDef {
+    pub generics: Vec<GenericParam>,
+    pub target: TyId,
+    pub traits: Vec<Bound>,
+    pub methods: Vec<DefId>,
+    pub module: ModuleId,
+    pub origin: Origin,
+    pub span: Span,
 }
 
 impl Def {
@@ -414,7 +335,7 @@ pub(crate) mod test_support {
 
         pub fn add(&mut self, name: &str, kind: DefKind) -> DefId {
             let name = self.interner.intern(name);
-            self.program.defs.alloc(Def { name, module: self.module, span: Span::new(0, 0), is_pub: true, lang: None, owner: None, origin: None, kind })
+            self.program.defs.alloc(Def { name, module: self.module, span: Span::new(0, 0), is_pub: true, owner: None, extend: None, origin: None, doc: None, kind })
         }
 
         pub fn def_name(&self, def: DefId) -> String {
@@ -429,15 +350,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn lang_names_are_unique_and_round_trip() {
-        for item in LangItem::ALL {
-            assert_eq!(LangItem::from_name(item.name()), Some(item));
+    fn builtin_type_names_are_unique_and_round_trip() {
+        for item in BuiltinTy::ALL {
+            assert_eq!(BuiltinTy::from_name(item.name()), Some(item));
         }
-        assert_eq!(LangItem::from_name("nothing"), None);
-        let mut names: Vec<_> = LangItem::ALL.iter().map(|item| item.name()).collect();
+        assert_eq!(BuiltinTy::from_name("nothing"), None);
+        let mut names: Vec<_> = BuiltinTy::ALL.iter().map(|item| item.name()).collect();
         names.sort();
         names.dedup();
-        assert_eq!(names.len(), LangItem::ALL.len());
+        assert_eq!(names.len(), BuiltinTy::ALL.len());
     }
 
     #[test]

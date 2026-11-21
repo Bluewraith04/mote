@@ -7,7 +7,6 @@ pub mod args;
 mod capi;
 mod channels;
 mod collect;
-pub mod dynamic;
 mod entries;
 #[cfg(feature = "executable")]
 mod exe;

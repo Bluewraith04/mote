@@ -231,7 +231,7 @@ fn a_named_function_as_a_value_is_a_closure_without_captures() {
 #[test]
 fn a_native_as_a_value_goes_through_a_function_that_calls_it() {
     expect(
-        "import { sqrt } from std.math\nimport { sleep } from std.task\nfn f() -> Float {\n let s: (Int) -> Null = sleep\n let g: (Float) -> Float = sqrt\n let h: (Float) -> Float = sqrt\n return g(4.0)\n}",
+        "extern \"c\" {\n fn c_tick(n: Int)\n fn c_sqrt(x: Float) -> Float\n}\nfn f() -> Float {\n let s: (Int) -> Null = c_tick\n let g: (Float) -> Float = c_sqrt\n let h: (Float) -> Float = c_sqrt\n return g(4.0)\n}",
         &[
             "f0:",
             "fn instance f() -> Float",
@@ -245,14 +245,14 @@ fn a_native_as_a_value_goes_through_a_function_that_calls_it() {
             "    r6 = call value r3(4.0)",
             "    return r6",
             "f1:",
-            "fn native sleep(r0) -> Null",
+            "fn native c_tick(r0) -> Null",
             "  b0:",
-            "    call intrinsic sleep(r0)",
+            "    call native c_tick(r0)",
             "    return _",
             "f2:",
-            "fn native sqrt(r0) -> Float",
+            "fn native c_sqrt(r0) -> Float",
             "  b0:",
-            "    r1 = call intrinsic math_sqrt(r0)",
+            "    r1 = call native c_sqrt(r0)",
             "    return r1",
         ],
     );

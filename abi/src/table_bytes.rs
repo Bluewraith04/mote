@@ -1,7 +1,6 @@
 use crate::bytes::{BytesError, Reader, Writer};
 use crate::handle::HandleKind;
 use crate::kind::{Kind, TypeId};
-use crate::reflect::Reflection;
 use crate::scalar::Scalar;
 use crate::table::TypeTable;
 
@@ -29,19 +28,18 @@ const LIST: u8 = 11;
 const CLOSURE: u8 = 12;
 const HANDLE: u8 = 13;
 
-/// A type table and the reflection data that travel with it.
+/// A type table serialized to bytes.
 #[derive(Debug, PartialEq)]
 pub struct TypeImage {
     pub table: TypeTable,
-    pub reflection: Reflection,
 }
 
 impl TypeImage {
     pub fn new(table: TypeTable) -> Self {
-        Self { table, reflection: Reflection::default() }
+        Self { table }
     }
 
-    /// The magic, the version, the types after `NONE` in id order, then the reflection section.
+    /// The magic, the version and the types after `NONE` in id order.
     pub fn to_bytes(&self) -> Result<Vec<u8>, BytesError> {
         let mut writer = Writer::new();
         writer.raw(MAGIC);
@@ -51,7 +49,6 @@ impl TypeImage {
             writer.text(&info.name);
             write_kind(&mut writer, &info.kind).map_err(|()| BytesError::Invalid("a type is reserved and not defined"))?;
         }
-        self.reflection.write(&mut writer);
         Ok(writer.finish())
     }
 
@@ -68,9 +65,8 @@ impl TypeImage {
             let name = reader.text()?;
             records.push((name, read_kind(&mut reader)?));
         }
-        let reflection = Reflection::read(&mut reader)?;
         reader.end()?;
-        Ok(Self { table: build(records)?, reflection })
+        Ok(Self { table: build(records)? })
     }
 }
 
@@ -232,7 +228,7 @@ mod tests {
         assert_eq!(&bytes[..8], b"MOTETYPE");
         assert_eq!(bytes[8..12], [1, 0, 0, 0]);
         assert_eq!(bytes[12..16], [0, 0, 0, 0]);
-        assert_eq!(bytes.len(), 16 + 8);
+        assert_eq!(bytes.len(), 16);
     }
 
     #[test]
@@ -241,7 +237,7 @@ mod tests {
         table.add("Int", Kind::Scalar(Scalar::I64));
         let bytes = TypeImage::new(table).to_bytes().unwrap();
         assert_eq!(bytes[12..16], [1, 0, 0, 0]);
-        assert_eq!(bytes[16..], [3, 0, 0, 0, b'I', b'n', b't', 1, 3, 0, 0, 0, 0, 0, 0, 0, 0]);
+        assert_eq!(bytes[16..], [3, 0, 0, 0, b'I', b'n', b't', 1, 3]);
     }
 
     #[test]
@@ -272,13 +268,6 @@ mod tests {
         assert_eq!(everything().to_bytes().unwrap(), first);
         let read = TypeImage::from_bytes(&first).unwrap();
         assert_eq!(read.to_bytes().unwrap(), first);
-    }
-
-    #[test]
-    fn table_bytes_the_reflection_section_travels_with_the_types() {
-        let image = everything();
-        let read = TypeImage::from_bytes(&image.to_bytes().unwrap()).unwrap();
-        assert_eq!(read.reflection, image.reflection);
     }
 
     #[test]
@@ -320,8 +309,6 @@ mod tests {
         missing.u8(STRUCT);
         missing.count(1);
         missing.type_id(TypeId::from_raw(9));
-        missing.count(0);
-        missing.count(0);
         assert!(TypeImage::from_bytes(&missing.finish()).is_err());
 
         let mut later = Writer::new();
@@ -333,8 +320,6 @@ mod tests {
         later.type_id(TypeId::from_raw(2));
         later.text("B");
         later.u8(UNIT);
-        later.count(0);
-        later.count(0);
         assert_eq!(TypeImage::from_bytes(&later.finish()), Err(BytesError::Invalid("a value type names one that follows it")));
     }
 
@@ -348,14 +333,11 @@ mod tests {
         handle.u8(HANDLE);
         handle.u8(4);
         handle.count(0);
-        handle.count(0);
-        handle.count(0);
         assert_eq!(TypeImage::from_bytes(&handle.finish()), Err(BytesError::Invalid("a handle lists the wrong number of payloads")));
 
         let mut table = TypeTable::new();
         let int = table.add("Int", Kind::Scalar(Scalar::I64));
         let mut bytes = TypeImage::new(table).to_bytes().unwrap();
-        let tail = bytes.split_off(bytes.len() - 8);
         bytes[12] = 2;
         let mut writer = Writer::new();
         writer.text("Big");
@@ -363,7 +345,6 @@ mod tests {
         writer.type_id(int);
         writer.u32(u32::MAX);
         bytes.extend(writer.finish());
-        bytes.extend(tail);
         assert_eq!(TypeImage::from_bytes(&bytes), Err(BytesError::Invalid("a type is larger than the format allows")));
     }
 }

@@ -1,0 +1,102 @@
+// Addresses: percent escapes and the parts of a URL.
+import parse_int from std.string
+import { hex_value, invalid } from ._basic
+
+fn unreserved(code: Int) -> Bool {
+    return (code >= 48 && code <= 57) || (code >= 65 && code <= 90) || (code >= 97 && code <= 122) || code == 45 || code == 46 || code == 95 || code == 126
+}
+
+/// The text with `%XX` escapes replaced by their bytes; an escape that is not valid, or bytes that are not UTF-8, leave the text as it is.
+pub fn url_decode(text: String) -> String {
+    let bytes = text.bytes()
+    var out: List<UInt8> = []
+    var at = 0
+    while at < bytes.len() {
+        if bytes[at] == 37 && at + 2 < bytes.len() {
+            let high = hex_value(bytes[at + 1] as Int)
+            let low = hex_value(bytes[at + 2] as Int)
+            if high >= 0 && low >= 0 {
+                out.push((high * 16 + low) as UInt8)
+                at += 3
+                continue
+            }
+        }
+        out.push(bytes[at])
+        at += 1
+    }
+    let decoded = String.from_bytes(out.to_array())
+    return if decoded == null { text } else { decoded }
+}
+
+/// The text with every byte but letters, digits and `-._~` as a `%XX` escape.
+pub fn url_encode(text: String) -> String {
+    let digits = "0123456789ABCDEF".bytes()
+    var out: List<UInt8> = []
+    for byte in text.bytes() {
+        let code = byte as Int
+        if unreserved(code) {
+            out.push(byte)
+        } else {
+            out.push(37)
+            out.push(digits[code / 16])
+            out.push(digits[code % 16])
+        }
+    }
+    return String.from_bytes(out.to_array())!
+}
+
+
+/// An address split into its parts; `target` is the path and query.
+pub struct Url {
+    pub secure: Bool
+    pub host: String
+    pub port: Int
+    pub target: String
+}
+
+/// Splits `http://`, `https://`, `ws://` and `wss://` addresses; the port defaults to 80 or 443.
+pub fn parse_url(text: String) -> Result<Url, Error> {
+    let scheme_end = text.find("://")
+    if scheme_end == null { return Err(invalid("${text}: no scheme")) }
+    let scheme = text.slice(0, scheme_end).to_string().to_lower()
+    if scheme != "http" && scheme != "https" && scheme != "ws" && scheme != "wss" { return Err(invalid("${text}: the scheme is not http, https, ws or wss")) }
+    let secure = scheme == "https" || scheme == "wss"
+    let rest = text.slice(scheme_end + 3, text.len())
+    var cut = rest.len()
+    for mark in ["/", "?", "#"] {
+        let at = rest.find(mark)
+        if at != null && at < cut { cut = at }
+    }
+    let authority = rest.slice(0, cut).to_string()
+    var target = rest.slice(cut, rest.len()).to_string()
+    let hash = target.find("#")
+    if hash != null { target = target.slice(0, hash).to_string() }
+    if target.is_empty() || target.starts_with("?") { target = "/" + target }
+    var host = authority
+    var port = if secure { 443 } else { 80 }
+    var port_text = ""
+    if authority.starts_with("[") {
+        let close = authority.find("]")
+        if close == null { return Err(invalid("${text}: unclosed [")) }
+        host = authority.slice(1, close).to_string()
+        port_text = authority.slice(close + 1, authority.len()).to_string()
+        if port_text.starts_with(":") { port_text = port_text.slice(1, port_text.len()).to_string() } else if !port_text.is_empty() { return Err(invalid("${text}: bad port")) }
+    } else {
+        let colon = authority.rfind(":")
+        if colon != null {
+            host = authority.slice(0, colon).to_string()
+            port_text = authority.slice(colon + 1, authority.len()).to_string()
+        }
+    }
+    if host.is_empty() { return Err(invalid("${text}: no host")) }
+    if !port_text.is_empty() {
+        let number = match parse_int(port_text) {
+            Ok(value) => value
+            Err(_) => -1
+        }
+        if number < 1 || number > 65535 { return Err(invalid("${text}: bad port")) }
+        port = number
+    }
+    return Ok(Url { secure: secure, host: host, port: port, target: target })
+}
+

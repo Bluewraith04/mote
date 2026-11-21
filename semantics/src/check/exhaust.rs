@@ -113,7 +113,7 @@ impl Cx<'_> {
                         .collect(),
                     None => vec![(Con::Record, item.record()?.fields.iter().map(|field| field.ty).collect())],
                 };
-                Some(shapes.into_iter().map(|(con, parts)| (con, parts.into_iter().map(|part| self.program.types.subst(part, &args)).collect())).collect())
+                Some(shapes.into_iter().map(|(con, parts)| (con, parts.into_iter().map(|part| self.program.types.subst_generic(part, &args)).collect())).collect())
             }
             _ => None,
         }

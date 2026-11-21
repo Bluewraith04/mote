@@ -215,7 +215,14 @@ impl Dump<'_> {
                         let def = &self.run.program.defs[function.def];
                         let name = self.name(def.name).to_string();
                         if def.function().is_some_and(|item| !item.generics.is_empty()) {
-                            let shown: Vec<String> = function.args.iter().map(|&arg| self.run.program.render(arg, &self.run.interner)).collect();
+                            let shown: Vec<String> = function
+                                .args
+                                .iter()
+                                .map(|arg| match arg {
+                                    crate::GenericArg::Type(ty) => self.run.program.render(*ty, &self.run.interner),
+                                    crate::GenericArg::Const(arg) => self.run.program.render_const(arg, &self.run.interner),
+                                })
+                                .collect();
                             format!("{name}<{}>", shown.join(","))
                         } else {
                             name
@@ -223,6 +230,7 @@ impl Dump<'_> {
                     }
                     Callee::Value(value) => format!("({})", self.expr(*value)),
                     Callee::TraitMethod { method, self_ty, .. } => format!("{}@{}", self.name(self.run.program.defs[*method].name), self.run.program.render(*self_ty, &self.run.interner)),
+                    Callee::Builtin { name, .. } => format!("@{}", self.name(*name)),
                 };
                 format!("(call {callee} {})", self.list(args)).replace(" )", ")")
             }
@@ -243,6 +251,7 @@ impl Dump<'_> {
                     Conversion::WidenUnion => "widen-union",
                     Conversion::Narrow => "narrow",
                     Conversion::Adapt => "adapt",
+                    Conversion::ToView => "to-view",
                 };
                 format!("({name} {})", self.expr(*inner))
             }
@@ -527,8 +536,8 @@ fn interpolation_joins_text_and_shows_scalars() {
 
 #[test]
 fn tuples_unions_and_functions_write_themselves() {
-    let run = with_collections("class Opaque {}\nfn f(t: (Int, String), u: Int | String, g: (Int) -> Int) -> String {\n let a = t.to_string()\n let b = u.to_string()\n let c = g.to_string()\n return \"${t} ${u} ${g}\"\n}\nfn bad(t: (Int, Opaque), l: List<Int>) -> String {\n let a = t.to_string()\n return \"${t}${l}\"\n}");
-    assert_eq!(run.errors, ["(Int, Opaque) has no methods", "(Int, Opaque) cannot be written in a string", "List has no method `to_string`"]);
+    let run = with_collections("class Opaque {}\nfn f(t: (Int, String), u: Int | String, g: (Int) -> Int, xs: [Int], fx: [Float; 3]) -> String {\n let a = t.to_string()\n let b = u.to_string()\n let c = g.to_string()\n let d = xs.to_string()\n let e = fx.to_string()\n return \"${t} ${u} ${g} ${xs} ${fx}\"\n}\nfn bad(t: (Int, Opaque), l: List<Int>, oa: [Opaque], ofx: [Opaque; 2]) -> String {\n let a = t.to_string()\n return \"${t}${l}${oa}${ofx}\"\n}");
+    assert_eq!(run.errors, ["(Int, Opaque) has no methods", "(Int, Opaque) cannot be written in a string", "List<Int> has no methods", "[Opaque] cannot be written in a string", "[Opaque; 2] cannot be written in a string"]);
     assert_eq!(dump(&run, "f").split("; ").next(), Some("(let a (show t))"));
 }
 
@@ -573,7 +582,7 @@ fn globals_that_depend_on_each_other_are_an_error_and_functions_do_not_assign_th
 
 #[test]
 fn functions_and_lambdas_do_not_write_into_a_var_global() {
-    let source = "class Cell {\n var n: Int\n pub fn bump(var self) { self.n += 1 }\n}\nvar items: List<Int> = [1]\nvar cell = Cell { n: 0 }\nfn fill(var xs: List<Int>) { xs.push(2) }\nfn a() { items.push(3) }\nfn b() { items[0] = 4 }\nfn c() { cell.bump() }\nfn d() { cell.n = 5 }\nfn e() { fill(items) }\nfn f() { let g = || items.push(6) }\nitems.push(7)\ncell.bump()\nfill(items)";
+    let source = "extend <T> List<T> {\n pub fn push(var self, x: T) {}\n}\nclass Cell {\n var n: Int\n pub fn bump(var self) { self.n += 1 }\n}\nvar items: List<Int> = [1]\nvar cell = Cell { n: 0 }\nfn fill(var xs: List<Int>) { xs.push(2) }\nfn a() { items.push(3) }\nfn b() { items[0] = 4 }\nfn c() { cell.bump() }\nfn d() { cell.n = 5 }\nfn e() { fill(items) }\nfn f() { let g = || items.push(6) }\nitems.push(7)\ncell.bump()\nfill(items)";
     let run = main(source);
     assert_eq!(run.errors.len(), 6, "{:?}", run.errors);
 }
@@ -688,14 +697,14 @@ fn a_generic_struct_takes_its_arguments_from_the_context() {
 #[test]
 fn a_literal_finds_its_type_arguments_from_its_fields() {
     let run = main("struct Pair<A, B> {\n a: A\n b: B\n}\nenum Either<L, R> {\n Left(L)\n Right(R)\n}\nfn f() {\n let p = Pair { a: 1, b: \"x\" }\n let q = Pair { a: 2.5, b: true }\n let e: Either<Int, String> = Either.Left(1)\n}\nfn g() {\n let e = Either.Left(1)\n let p = Pair { a: 1 }\n}");
-    assert_eq!(run.errors, ["cannot infer the type arguments of `Either`", "missing field `b`"]);
+    assert_eq!(run.errors, ["cannot infer the generic arguments of `Either`", "missing field `b`"]);
     assert_eq!(dump(&run, "f"), "(let p (record Pair<Int, String> a=1:Int b=\"x\")); (let q (record Pair<Float, Bool> a=2.5:Float b=true)); (let e (variant Left 1:Int))");
 }
 
 #[test]
 fn a_struct_holds_only_values_that_cannot_change_under_it() {
-    let run = main("class Cell { var n: Int }\nclass Frozen { n: Int }\nstruct A { items: [Int] }\nstruct B { c: Cell }\nstruct C { f: Frozen }\nstruct D { next: D? }\nstruct E { d: D }\nclass N { next: N? }\nstruct T { a: (Int, [Int]) }");
-    assert_eq!(run.errors, ["a struct cannot hold [Int]", "a struct cannot hold Cell", "struct `D` contains itself", "a struct cannot hold (Int, [Int])"]);
+    let run = main("class Cell { var n: Int }\nclass Frozen { n: Int }\nstruct A { items: [Int] }\nstruct B { c: Cell }\nstruct C { f: Frozen }\nstruct D { next: D? }\nstruct E { d: D }\nclass N { next: N? }\nstruct T { a: (Int, [Int]) }\nstruct Vec3 { data: [Float; 3] }\nstruct BadFixed { cells: [Cell; 2] }\nstruct BadSelfFixed { arr: [BadSelfFixed; 2] }\nfn rep() -> [Vec3] { return [Vec3 { data: [1.0, 2.0, 3.0] }; 2] }");
+    assert_eq!(run.errors, ["a struct cannot hold [Int]", "a struct cannot hold Cell", "struct `D` contains itself", "a struct cannot hold (Int, [Int])", "a struct cannot hold [Cell; 2]", "struct `BadSelfFixed` contains itself"]);
 }
 
 #[test]
@@ -802,7 +811,7 @@ fn a_value_match_joins_its_arms() {
 #[test]
 fn a_generic_enum_takes_its_arguments_from_the_context() {
     let run = main("enum Either<L, R> {\n Left(L)\n Right(R)\n}\nfn f() -> Int {\n let e: Either<Int, String> = Either.Left(1)\n let g = Either<Int, String>.Right(\"a\")\n match e {\n Left(n) => return n\n Right(s) => return 0\n }\n}\nfn h() {\n let x = Either.Left(1)\n}");
-    assert_eq!(run.errors, ["cannot infer the type arguments of `Either`"]);
+    assert_eq!(run.errors, ["cannot infer the generic arguments of `Either`"]);
 }
 
 #[test]
@@ -887,12 +896,12 @@ fn an_optional_member_is_none_when_the_object_is() {
 
 #[test]
 fn propagate_and_unwrap_need_a_matching_function() {
-    let result = ("std.result", "@lang(\"result\")\npub enum Result<T, E> {\n Ok(T)\n Err(E)\n}");
+    let result = ("std.result", "pub enum Result<T, E> {\n Ok(T)\n Err(E)\n}");
     let run = run(&[
         result,
         (
             "main",
-            "import { Result } from .std.result\nfn half(n: Int) -> Int? { return null }\nfn quarter(n: Int) -> Int? {\n let h = half(n)?\n return half(h)\n}\nfn unwrapped(n: Int) -> Int { return half(n)! }\nfn parse(s: String) -> Result<Int, String> { return Err(\"x\") }\nfn both(s: String) -> Result<Int, String> {\n let n = parse(s)?\n return Ok(n)\n}\nfn plain(s: String) -> Int { return parse(s)! }",
+            "import Result from .std.result\nfn half(n: Int) -> Int? { return null }\nfn quarter(n: Int) -> Int? {\n let h = half(n)?\n return half(h)\n}\nfn unwrapped(n: Int) -> Int { return half(n)! }\nfn parse(s: String) -> Result<Int, String> { return Err(\"x\") }\nfn both(s: String) -> Result<Int, String> {\n let n = parse(s)?\n return Ok(n)\n}\nfn plain(s: String) -> Int { return parse(s)! }",
         ),
     ]);
     assert_eq!(run.errors, Vec::<String>::new());
@@ -907,8 +916,8 @@ fn propagate_and_unwrap_need_a_matching_function() {
 }
 
 fn run_result(text: &str) -> Run {
-    let source = format!("import {{ Result }} from .std.result\n{text}");
-    run(&[("std.result", "@lang(\"result\")\npub enum Result<T, E> {\n Ok(T)\n Err(E)\n}"), ("main", &source)])
+    let source = format!("import Result from .std.result\n{text}");
+    run(&[("std.result", "pub enum Result<T, E> {\n Ok(T)\n Err(E)\n}"), ("main", &source)])
 }
 
 #[test]
@@ -934,8 +943,8 @@ fn coalesce_assignment_needs_an_optional_var_place() {
 
 #[test]
 fn built_in_types_get_their_methods_from_std() {
-    let std = "@lang(\"option\")\npub enum Option<T> {\n Some(T)\n None\n pub fn is_some(self) -> Bool {\n return match self {\n Some(_) => true\n None => false\n }\n }\n}\n@lang(\"int\")\npub struct Int {\n pub fn double(self) -> Int { return self * 2 }\n pub fn parse(s: String) -> Int { return 0 }\n}";
-    let run = run(&[("std.types", std), ("main", "import { Int } from .std.types\nfn f(x: Int?, n: Int) -> Bool {\n let a = n.double()\n let b = Int.parse(\"1\")\n return x.is_some()\n}")]);
+    let std = "extend <T> Option<T> {\n pub fn is_some(self) -> Bool {\n return match self {\n Some(_) => true\n None => false\n }\n }\n}\nextend Int {\n pub fn double(self) -> Int { return self * 2 }\n pub fn parse(s: String) -> Int { return 0 }\n}";
+    let run = run(&[("std.types", std), ("main", "fn f(x: Int?, n: Int) -> Bool {\n let a = n.double()\n let b = Int.parse(\"1\")\n return x.is_some()\n}")]);
     assert_eq!(run.errors, Vec::<String>::new());
     assert_eq!(dump(&run, "f"), "(let a (call double n)); (let b (call parse \"1\")); (return (call is_some x))");
 }
@@ -960,7 +969,7 @@ fn a_lambda_without_a_value_fixes_a_result_variable_to_null() {
 #[test]
 fn an_expected_type_fixes_what_the_arguments_leave_open() {
     let run = main("fn make<T>() -> T? { return null }\nfn f() {\n let a: Int? = make()\n let b = make()\n}");
-    assert_eq!(run.errors, ["cannot infer the type argument `T`"]);
+    assert_eq!(run.errors, ["cannot infer the generic argument `T`"]);
     assert_eq!(dump(&run, "f").split("; ").next().unwrap(), "(let a (call make<Int>))");
 }
 
@@ -1044,8 +1053,8 @@ fn a_type_parameter_has_only_the_methods_of_its_bounds() {
 #[test]
 fn a_type_parameter_is_comparable_to_null_and_to_itself_only_with_eq() {
     let run = run(&[
-        ("std.traits", "@lang(\"eq\")\npub trait Eq { fn eq(self, other: Self) -> Bool }"),
-        ("main", "import { Eq } from .std.traits\nfn none<T>(x: T) -> Bool { return x == null }\nfn good<T: Eq>(a: T, b: T) -> Bool { return a == b }\nfn bad<T>(a: T, b: T) -> Bool { return a == b }"),
+        ("std.traits", "pub trait Eq { fn eq(self, other: Self) -> Bool }"),
+        ("main", "import Eq from .std.traits\nfn none<T>(x: T) -> Bool { return x == null }\nfn good<T: Eq>(a: T, b: T) -> Bool { return a == b }\nfn bad<T>(a: T, b: T) -> Bool { return a == b }"),
     ]);
     assert_eq!(run.errors, ["`==` does not work on T"]);
 }
@@ -1061,20 +1070,66 @@ fn a_method_takes_its_types_arguments_and_its_own() {
 }
 
 #[test]
+fn a_method_call_accepts_explicit_type_arguments() {
+    let run = main(
+        "class Box<T> {\n v: T\n pub fn new(v: T) -> Self { return Box { v: v } }\n pub fn pair<U>(self, other: U) -> (T, U) { return (self.v, other) }\n}\nfn f() {\n let b = Box(1)\n let p = b.pair<String>(\"x\")\n let opt: Box<Int>? = b\n let q = opt?.pair<String>(\"y\")\n}",
+    );
+    assert_eq!(run.errors, Vec::<String>::new());
+    assert_eq!(let_type(&run, "f", 1), "(Int, String)");
+    assert_eq!(let_type(&run, "f", 3), "(Int, String)?");
+}
+
+#[test]
+fn a_struct_method_accepts_explicit_type_arguments() {
+    let run = main(
+        "struct Pair<A> {\n a: A\n pub fn map<B>(self, b: B) -> (A, B) { return (self.a, b) }\n}\nfn f() {\n let p = Pair { a: 42 }\n let r = p.map<String>(\"hello\")\n}",
+    );
+    assert_eq!(run.errors, Vec::<String>::new());
+    assert_eq!(let_type(&run, "f", 1), "(Int, String)");
+}
+
+#[test]
+fn a_static_method_accepts_explicit_type_arguments() {
+    let run = main(
+        "class Factory {\n pub fn create<T>(val: T) -> T { return val }\n}\nfn f() {\n let x = Factory.create<Int>(10)\n}",
+    );
+    assert_eq!(run.errors, Vec::<String>::new());
+    assert_eq!(let_type(&run, "f", 0), "Int");
+}
+
+#[test]
+fn method_type_argument_count_mismatch_is_reported() {
+    let run = main(
+        "class Box<T> {\n v: T\n pub fn new(v: T) -> Self { return Box { v: v } }\n pub fn pair<U>(self, other: U) -> (T, U) { return (self.v, other) }\n}\nfn f() {\n let b = Box(1)\n b.pair<String, Int>(\"x\")\n}",
+    );
+    assert_eq!(run.errors, ["`pair` takes 1 type argument"]);
+}
+
+#[test]
+fn cast_test() {
+    let run = main("class T<V> {\n val: V\n pub fn new(val: V) -> T<V> { return T { val: val } }\n pub fn cast<U>(self) -> Int { return 10 }\n}\nfn main() {\n let obj = T(\"String\")\n let v = obj.cast<String>()\n}");
+    assert_eq!(run.errors, Vec::<String>::new());
+}
+
+#[test]
+fn trait_methods_cannot_have_type_parameters() {
+    let run = main(
+        "trait Transform {\n fn transform<T>(self, val: T) -> T\n}",
+    );
+    assert_eq!(run.errors, ["trait methods cannot have type parameters"]);
+}
+
+#[test]
 fn trailing_arguments_of_a_variadic_call_make_a_list() {
-    let std = "@lang(\"list\")\npub class List<T> {}";
-    let run = run(&[
-        ("std.types", std),
-        ("main", "import { List } from .std.types\nfn sum(...xs: Int) -> Int {\n let n: List<Int> = xs\n return 0\n}\nfn count<T>(...xs: T) -> Int { return 0 }\nfn f() {\n sum()\n sum(1, 2, 3)\n count(\"a\", \"b\")\n count()\n sum(1, \"x\")\n sum(xs=1)\n}"),
-    ]);
-    assert_eq!(run.errors, ["cannot infer the type argument `T`", "expected Int, found String", "a variadic function takes no named arguments"]);
+    let run = main("fn sum(...xs: Int) -> Int {\n let n: List<Int> = xs\n return 0\n}\nfn count<T>(...xs: T) -> Int { return 0 }\nfn f() {\n sum()\n sum(1, 2, 3)\n count(\"a\", \"b\")\n count()\n sum(1, \"x\")\n sum(xs=1)\n}");
+    assert_eq!(run.errors, ["cannot infer the generic argument `T`", "expected Int, found String", "a variadic function takes no named arguments"]);
     assert_eq!(dump(&run, "f").split("; ").nth(1).unwrap(), "(call sum (list 1:Int 2:Int 3:Int))");
 }
 
 #[test]
 fn a_generic_function_is_a_value_when_its_type_arguments_are_known() {
     let run = main("fn id<T>(x: T) -> T { return x }\nfn f() {\n let a: (Int) -> Int = id\n let c = id\n}");
-    assert_eq!(run.errors, ["cannot infer the type argument `T`"]);
+    assert_eq!(run.errors, ["cannot infer the generic argument `T`"]);
     assert_eq!(let_type(&run, "f", 0), "(Int) -> Int");
 }
 
@@ -1098,11 +1153,11 @@ fn from_is_picked_by_the_argument_type() {
     assert_ne!(callee(0), callee(1));
 }
 
-const COLLECTIONS: &str = "@lang(\"list\")\npub class List<T> {}\n@lang(\"map\")\npub class Map<K, V> {}\n@lang(\"range\")\npub struct Range<T> {}\n@lang(\"receiver\")\npub class Receiver<T> {}\n@lang(\"stream\")\npub class Stream<T> {}";
+const COLLECTIONS: &str = "pub class Map<K, V> {}\npub class Set<T> {}\npub struct Range<T> {}";
 
 /// Runs `text` as `main` with std's collections imported.
 fn with_collections(text: &str) -> Run {
-    run(&[("std.types", COLLECTIONS), ("main", &format!("import {{ List, Map, Receiver, Stream }} from .std.types\n{text}"))])
+    run(&[("std.collections", COLLECTIONS), ("main", &format!("import Map from .std.collections\n{text}"))])
 }
 
 #[test]
@@ -1274,14 +1329,12 @@ fn an_attribute_the_compiler_does_not_define_is_unknown_on_an_item_and_on_a_vari
 
 #[test]
 fn the_attributes_the_compiler_defines_are_these_and_no_others() {
-    assert_eq!(crate::resolve::KNOWN, ["link", "blocking", "intrinsic", "lang", "stable", "ignore"]);
+    assert_eq!(crate::resolve::KNOWN, ["blocking", "stable", "ignore"]);
 }
 
-const SYNC: &str = "@lang(\"list\")\npub class List<T> {}\n@lang(\"stream\")\npub class Stream<T> {}\n@lang(\"task\")\npub class Task<T> {}\n@lang(\"sender\")\npub class Sender<T> {}\n@lang(\"receiver\")\npub class Receiver<T> {}\n@lang(\"mutex\")\npub class Mutex<T> {}\n@lang(\"once\")\npub class Once<T> {}";
-
-/// Runs `text` as `main` with std's tasks and channels imported.
+/// Runs `text` as `main` with universal concurrency types available.
 fn with_sync(text: &str) -> Run {
-    run(&[("std.sync", SYNC), ("main", &format!("import {{ List, Stream, Task, Sender, Receiver, Mutex, Once }} from .std.sync\n{text}"))])
+    main(text)
 }
 
 #[test]
@@ -1388,9 +1441,8 @@ fn a_mutex_and_a_once_are_sendable_handles() {
 
 #[test]
 fn a_port_end_is_a_sendable_handle_a_struct_may_hold_and_a_native_may_take() {
-    let std = "@lang(\"task\")\npub class Task<T> {}\n@lang(\"port_end\")\npub class PortEnd {}";
-    let main = "import { Task, PortEnd } from .std.sync\n@link(\"pane\")\nnative fn start(p: PortEnd)\nstruct Holder {\n p: PortEnd\n}\nfn f(p: PortEnd, h: Holder) {\n spawn { start(p) }\n spawn { start(h.p) }\n}";
-    let run = run(&[("std.sync", std), ("main", main)]);
+    let main_src = "extern \"pane\" {\n fn start(p: PortEnd)\n}\nstruct Holder {\n p: PortEnd\n}\nfn f(p: PortEnd, h: Holder) {\n spawn { start(p) }\n spawn { start(h.p) }\n}";
+    let run = main(main_src);
     assert!(run.errors.is_empty(), "{:?}", run.errors);
 }
 
@@ -1462,3 +1514,169 @@ fn a_listed_trait_is_checked_and_gives_its_defaults() {
     assert_eq!(dump(&run, "f"), "(return (call describe s))");
     assert_eq!(dump_method(&run, "Square", "describe"), "(return \"shape\")");
 }
+
+#[test]
+fn unary_and_binary_dunder_operators() {
+    let run = main(
+        "struct Vec2 {\n x: Int\n y: Int\n pub fn __neg__(self) -> Vec2 { return Vec2 { x: -self.x, y: -self.y } }\n pub fn __add__(self, other: Vec2) -> Vec2 { return Vec2 { x: self.x + other.x, y: self.y + other.y } }\n pub fn __mul__(self, s: Int) -> Vec2 { return Vec2 { x: self.x * s, y: self.y * s } }\n pub fn __rmul__(self, s: Int) -> Vec2 { return Vec2 { x: self.x * s, y: self.y * s } }\n pub fn __eq__(self, other: Vec2) -> Bool { return self.x == other.x && self.y == other.y }\n pub fn __lt__(self, other: Vec2) -> Bool { return self.x < other.x }\n pub fn __gt__(self, other: Int) -> Bool { return self.x > other }\n}\nfn f(a: Vec2, b: Vec2, opt: Vec2?) {\n let neg = -a\n let sum = a + b\n let fwd = a * 2\n let rev = 2 * a\n let eq = a == b\n let neq = a != b\n let cmp = a < b\n let rcmp = 5 < a\n let opt_cmp = a == opt\n let null_cmp = opt == null\n}\nfn bad(a: Vec2, b: Vec2) {\n let x = a - b\n let y = !a\n}",
+    );
+    assert_eq!(run.errors, ["`-` does not work on Vec2", "`!` does not work on Vec2"]);
+    assert_eq!(
+        dump(&run, "f"),
+        "(let neg (call __neg__ a)); (let sum (call __add__ a b)); (let fwd (call __mul__ a 2:Int)); (let rev (call __rmul__ a 2:Int)); (let eq (call __eq__ a b)); (let neq (not (call __eq__ a b))); (let cmp (call __lt__ a b)); (let rcmp (call __gt__ a 5:Int)); (let opt_cmp (eq (to-optional a) opt)); (let null_cmp (eq opt null))",
+    );
+    let orders: Vec<&Vec<u32>> = run.program.checked[&run.def("f")].arg_order.values().collect();
+    assert_eq!(orders, [&vec![1, 0], &vec![1, 0]]);
+}
+
+#[test]
+fn compound_assignment_ladder() {
+    let run = main(
+        "struct Vec2 {\n var x: Int\n var y: Int\n pub fn __iadd__(var self, other: Vec2) {\n  self.x += other.x\n  self.y += other.y\n }\n pub fn __isub__(self, other: Vec2) {}\n pub fn __mul__(self, s: Int) -> Vec2 {\n  return Vec2 { x: self.x * s, y: self.y * s }\n }\n}\nfn ok(var a: Vec2, b: Vec2) {\n a += b\n a *= 2\n}\nfn bad(var a: Vec2, let_v: Vec2, b: Vec2) {\n a -= b\n a /= 2\n let_v += b\n}",
+    );
+    assert_eq!(
+        run.errors,
+        ["`__isub__` must take `var self`", "`/` needs one type on both sides, found Vec2 and Int", "cannot assign: no `var` path to this place"],
+    );
+    assert_eq!(dump(&run, "ok"), "(call __iadd__ a b); (= a (call __mul__ a 2:Int))");
+}
+
+#[test]
+fn index_dunder_operators() {
+    let run = main(
+        "struct Grid {\n var data: Int\n pub fn __getitem__(self, idx: Int) -> Int { return self.data + idx }\n pub fn __setitem__(var self, idx: Int, val: Int) { self.data = idx + val }\n}\nstruct ReadOnly {\n pub fn __setitem__(self, idx: Int, val: Int) {}\n}\nstruct Plain {\n x: Int\n}\nfn ok(var g: Grid) -> Int {\n g[1] = 10\n return g[2]\n}\nfn bad(var g: Grid, let_g: Grid, var ro: ReadOnly, p: Plain) {\n g[0] += 1\n let_g[0] = 1\n ro[0] = 1\n p[0] = 1\n}",
+    );
+    assert_eq!(
+        run.errors,
+        [
+            "custom index assignment only supports `=`",
+            "this place has no `var` path to write through",
+            "`__setitem__` must take `var self`",
+            "Plain cannot be indexed",
+        ],
+    );
+    assert_eq!(dump(&run, "ok"), "(call __setitem__ g 1:Int 10:Int); (return (call __getitem__ g 2:Int))");
+}
+
+#[test]
+fn sized_array_elementwise_broadcast_and_mask_ops() {
+    let run = main(
+        "fn ok(var a: [Int; 3], b: [Int; 3], c: [Float; 2], u: [Int8; 2], m1: [Bool; 3], m2: [Bool; 3]) {\n let neg = -a\n let inv = ~a\n let not_m = !m1\n let add = a + b\n let bc_r = c + 2.0\n let bc_l = 3.0 * c\n let bc_i8 = u + 2\n let lt = a < b\n let eq = a == b\n let bc_cmp = 2 <= a\n let mask = (a > 0) & m2\n a += b\n a *= 2\n}\nfn bad(a: [Int; 2], b: [Int; 3], f: [Float; 2]) {\n let x = a + b\n let y = a + true\n let z = f << 1\n}",
+    );
+    assert_eq!(
+        run.errors,
+        [
+            "`+` needs one type on both sides, found [Int; 2] and [Int; 3]",
+            "`+` needs one type on both sides, found [Int; 2] and Bool",
+            "`<<` needs one type on both sides, found [Float; 2] and Int",
+        ],
+    );
+    let types: Vec<String> = (0..11).map(|n| let_type(&run, "ok", n)).collect();
+    assert_eq!(
+        types,
+        ["[Int; 3]", "[Int; 3]", "[Bool; 3]", "[Int; 3]", "[Float; 2]", "[Float; 2]", "[Int8; 2]", "[Bool; 3]", "[Bool; 3]", "[Bool; 3]", "[Bool; 3]"],
+    );
+}
+
+#[test]
+fn const_generics_and_const_expressions_evaluate_and_monomorphize() {
+    let run = main(
+        "const WIDTH = 3\nstruct Vec<T, const N: Int> {\n data: [T; N]\n}\nfn pad<T, const N: Int>(xs: [T; N]) -> [T; N + 1] {\n return xs\n}\nfn f(a: Vec<Int, WIDTH>, b: [Int; 4]) -> [Int; 3] {\n return a.data\n}\nfn bad_mismatch(a: Vec<Int, 3>, b: Vec<Int, 4>) {\n let x: Vec<Int, 4> = a\n}",
+    );
+    assert_eq!(run.errors, ["expected [T; <const>], found [T; N]", "expected Vec<Int, 4>, found Vec<Int, 3>"]);
+}
+
+#[test]
+fn comptime_if_for_and_builtins_lower_at_monomorphization() {
+    let reflect = "pub enum Kind { Struct\n Class\n Enum\n Primitive\n List\n Array\n FixedArray\n Option\n Tuple\n Union\n Function\n Pointer\n Other }\npub struct FieldInfo {\n pub name: String\n pub index: Int\n pub is_var: Bool\n}\npub struct VariantInfo {\n pub name: String\n pub index: Int\n pub arity: Int\n}\npub enum Shape {\n Fields([FieldInfo])\n Variants([VariantInfo])\n None\n}\npub struct TypeInfo {\n pub name: String\n pub kind: Kind\n pub size: Int\n pub align: Int\n pub shape: Shape\n}";
+    let main_src = "import TypeInfo from .std.reflect\nstruct Pair {\n a: Int\n var b: Int\n}\nfn inspect<T>(var p: T) -> Int {\n comptime if @has_field(T, \"b\") {\n  @set_field(p, \"b\", 42)\n  return @field(p, \"b\")\n } else {\n  @compile_error(\"missing field b\")\n }\n}\nfn sum_fields(p: Pair) -> Int {\n var total = 0\n comptime for f in @fields(Pair) {\n  total += @field(p, f.name)\n }\n return total\n}\nfn sizes() -> Int {\n let s = @size_of(Int)\n let a = @align_of(Int)\n let n = @type_name(Pair)\n let info: TypeInfo = @type_info(Pair)\n let x: @typeof(s) = 10\n @compile_assert(s == 8, \"64-bit Int\")\n return s + a + x\n}\nfn main_ok(var p: Pair) -> Int {\n return inspect(p) + sum_fields(p) + sizes()\n}";
+    let run = run(&[("std.reflect", reflect), ("main", main_src)]);
+    assert!(run.errors.is_empty(), "{:?}", run.errors);
+}
+
+#[test]
+fn extend_blocks_work_on_user_and_universal_types_with_traits() {
+    let run = main(
+        "trait Show {\n fn show(self) -> String\n}\nextend Int: (Show) {\n pub fn show(self) -> String { return \"int\" }\n pub fn twice(self) -> Int { return self * 2 }\n}\nextend <const N: Int, T> [T; N] {\n pub fn first_elem(self) -> T { return self[0] }\n}\nfn print_any<T: Show>(x: T) -> String { return x.show() }\nfn f(arr: [Int; 3]) -> String {\n let n = 5.twice()\n let first = arr.first_elem()\n return print_any(n) + print_any(first)\n}",
+    );
+    assert!(run.errors.is_empty(), "{:?}", run.errors);
+}
+
+#[test]
+fn bound_static_call_works_with_comptime_monomorphization() {
+    let run = main(
+        "trait Make {\n fn make(x: Int) -> Self\n}\nstruct Item: (Make) {\n value: Int\n pub fn make(x: Int) -> Item { return Item { value: x } }\n}\nfn build<T: Make>(x: Int) -> (String, T) {\n let name = @type_name(T)\n return (name, T.make(x))\n}\nfn entry() -> (String, Item) {\n return build<Item>(7)\n}",
+    );
+    assert!(run.errors.is_empty(), "{:?}", run.errors);
+}
+
+#[test]
+fn any_type_boxing_narrowing_match_and_constraints() {
+    let run = main(
+        "struct Pair {\n x: Int\n}\nfn accept(v: Any) -> String {\n let n: Int? = v.to<Int>()\n if v is Int {\n  return \"${v + 1}\"\n }\n return match v {\n  s: String => s\n  p: Pair => \"${p.x}\"\n  _ => \"other:${v}\"\n }\n}\nfn callers(u: Int | String) {\n let list: List<Any> = [1, \"hi\", Pair { x: 2 }, u, null]\n let _ = accept(list[0])\n}\nfn bad(a: Any, b: Any) -> Bool {\n let missing = match a {\n  n: Int => n\n }\n return a == b\n}",
+    );
+    assert_eq!(
+        run.errors,
+        [
+            "match does not cover `_`",
+            "`==` does not work on Any",
+        ],
+    );
+}
+
+#[test]
+fn any_is_not_sendable() {
+    let run = main(
+        "fn send_it<T: Send>(x: T) {}\nfn bad(a: Any) {\n send_it(a)\n}",
+    );
+    assert!(
+        run.errors.iter().any(|e| e.contains("Send")),
+        "expected Send bound error, got {:?}",
+        run.errors
+    );
+}
+
+#[test]
+fn typeof_works_in_type_positions_and_rejects_value_use() {
+    let ok_run = main(
+        "fn ok(a: Int) -> String {\n let x: @typeof(a) = a\n const t = @typeof(a)\n return @type_name(@typeof(a)) + @type_name(t)\n}",
+    );
+    assert!(ok_run.errors.is_empty(), "{:?}", ok_run.errors);
+
+    let bad_run = main(
+        "fn bad(a: Int) {\n let v = @typeof(a)\n}",
+    );
+    assert!(
+        bad_run.errors.iter().any(|e| e.contains("is a type, not a value")),
+        "expected type-not-value error, got {:?}",
+        bad_run.errors
+    );
+}
+
+#[test]
+fn array_repeat_assigns_to_typeof_and_const_type_aliases() {
+    let ok = with_collections(
+        "fn fill_val<T>(x: T, n: Int) -> [T] {\n let res: [@typeof(x)] = [x; n]\n return res\n}\nfn ok(n: Int) {\n let i: Int32 = 5\n let a: [@typeof(i)] = [i; n]\n let b: [@typeof(i); 4] = [i; 4]\n const Elem = @typeof(i)\n let c: [Elem] = [0; n]\n let d: [@typeof(i)] = [0; n]\n let e = fill_val(i, 3)\n}",
+    );
+    assert!(ok.errors.is_empty(), "{:?}", ok.errors);
+    assert_eq!(let_type(&ok, "ok", 1), "[Int32]");
+    assert_eq!(let_type(&ok, "ok", 2), "[Int32; 4]");
+    assert_eq!(let_type(&ok, "ok", 3), "[Int32]");
+    assert_eq!(let_type(&ok, "ok", 4), "[Int32]");
+    assert_eq!(let_type(&ok, "ok", 5), "[Int32]");
+}
+
+#[test]
+fn custom_slice_and_stream_for_loop_dispatch() {
+    let ok = with_collections(
+        "class BoxView {\n pub fn __slice__(self, start: Int?, end: Int?, inclusive: Bool, step: Int?) -> BoxView {\n  return self\n }\n pub fn stream(self) -> Stream<Int> {\n  yield 1\n }\n}\nfn f(v: BoxView) -> Int {\n let a = v[1..3]\n let b = a[..=2]\n let c = b[0..4..2]\n var total = 0\n for x in c {\n  total += x\n }\n return total\n}",
+    );
+    assert!(ok.errors.is_empty(), "{:?}", ok.errors);
+    assert_eq!(let_type(&ok, "f", 0), "BoxView");
+    assert_eq!(let_type(&ok, "f", 1), "BoxView");
+    assert_eq!(let_type(&ok, "f", 2), "BoxView");
+}
+
+
+
+

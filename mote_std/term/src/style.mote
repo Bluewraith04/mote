@@ -1,0 +1,127 @@
+// Colours and text attributes as escape sequences.
+import { Display, Eq } from std.traits
+import ESC from ._support
+
+/// A colour of the text or the background.
+pub enum Color {
+    Default
+    Black
+    Red
+    Green
+    Yellow
+    Blue
+    Magenta
+    Cyan
+    White
+    Indexed(Int)
+    Rgb(Int, Int, Int)
+}
+
+fn color_code(color: Color, base: Int) -> String {
+    return match color {
+        Default => "${base + 9}"
+        Black => "${base}"
+        Red => "${base + 1}"
+        Green => "${base + 2}"
+        Yellow => "${base + 3}"
+        Blue => "${base + 4}"
+        Magenta => "${base + 5}"
+        Cyan => "${base + 6}"
+        White => "${base + 7}"
+        Indexed(n) => "${base + 8};5;${n}"
+        Rgb(r, g, b) => "${base + 8};2;${r};${g};${b}"
+    }
+}
+
+/// The text that sets the colour of the text that follows.
+pub fn fg(color: Color) -> String { return "${ESC}[${color_code(color, 30)}m" }
+
+/// The text that sets the background colour of the text that follows.
+pub fn bg(color: Color) -> String { return "${ESC}[${color_code(color, 40)}m" }
+
+pub fn bold() -> String { return ESC + "[1m" }
+pub fn dim() -> String { return ESC + "[2m" }
+pub fn italic() -> String { return ESC + "[3m" }
+pub fn underline() -> String { return ESC + "[4m" }
+pub fn reverse() -> String { return ESC + "[7m" }
+
+/// The text that returns colours and attributes to the terminal's own.
+pub fn reset_style() -> String { return ESC + "[0m" }
+
+/// The colours and attributes of text.
+pub struct Style: (Eq) {
+    pub fg: Color = Color.Default
+    pub bg: Color = Color.Default
+    pub bold: Bool = false
+    pub dim: Bool = false
+    pub italic: Bool = false
+    pub underline: Bool = false
+    pub reverse: Bool = false
+
+    /// The text that sets this style from the terminal's own.
+    pub fn codes(self) -> String {
+        var text = reset_style() + fg(self.fg) + bg(self.bg)
+        if self.bold { text = text + ESC + "[1m" }
+        if self.dim { text = text + ESC + "[2m" }
+        if self.italic { text = text + ESC + "[3m" }
+        if self.underline { text = text + ESC + "[4m" }
+        if self.reverse { text = text + ESC + "[7m" }
+        return text
+    }
+
+    pub fn eq(self, other: Style) -> Bool {
+        return self.fg == other.fg && self.bg == other.bg && self.bold == other.bold && self.dim == other.dim && self.italic == other.italic && self.underline == other.underline && self.reverse == other.reverse
+    }
+
+    pub fn __eq__(self, other: Style) -> Bool { return self.eq(other) }
+
+    /// Overlays `overlay` onto `self`: non-default colours replace and attribute flags combine.
+    pub fn __add__(self, overlay: Style) -> Style {
+        let next_fg = match overlay.fg {
+            Color.Default => self.fg
+            _ => overlay.fg
+        }
+        let next_bg = match overlay.bg {
+            Color.Default => self.bg
+            _ => overlay.bg
+        }
+        return Style {
+            fg: next_fg,
+            bg: next_bg,
+            bold: self.bold || overlay.bold,
+            dim: self.dim || overlay.dim,
+            italic: self.italic || overlay.italic,
+            underline: self.underline || overlay.underline,
+            reverse: self.reverse || overlay.reverse
+        }
+    }
+}
+
+/// Text with a style. Each modifier answers a changed copy, and in a string the span is the text between the codes that set the style and the code that resets it: `"${paint("full").fg(Color.Red).bold()}"`.
+pub struct Span: (Display) {
+    pub text: String
+    pub look: Style
+
+    pub fn fg(self, color: Color) -> Span {
+        return Span { text: self.text, look: Style { fg: color, bg: self.look.bg, bold: self.look.bold, dim: self.look.dim, italic: self.look.italic, underline: self.look.underline, reverse: self.look.reverse } }
+    }
+
+    pub fn bg(self, color: Color) -> Span {
+        return Span { text: self.text, look: Style { fg: self.look.fg, bg: color, bold: self.look.bold, dim: self.look.dim, italic: self.look.italic, underline: self.look.underline, reverse: self.look.reverse } }
+    }
+
+    pub fn bold(self) -> Span { return Span { text: self.text, look: self.look + Style { bold: true } } }
+    pub fn dim(self) -> Span { return Span { text: self.text, look: self.look + Style { dim: true } } }
+    pub fn italic(self) -> Span { return Span { text: self.text, look: self.look + Style { italic: true } } }
+    pub fn underline(self) -> Span { return Span { text: self.text, look: self.look + Style { underline: true } } }
+    pub fn reverse(self) -> Span { return Span { text: self.text, look: self.look + Style { reverse: true } } }
+
+    pub fn to_string(self) -> String {
+        return self.look.codes() + self.text + reset_style()
+    }
+}
+
+/// Text with no style yet; chain `fg`, `bg`, `bold` and the rest.
+pub fn paint(text: String) -> Span {
+    return Span { text: text, look: Style {} }
+}

@@ -1,0 +1,221 @@
+// A view tree as the flat records the layout engine reads.
+import { Node, NodeKind } from doc
+import parse_int from std.string
+import OP_WIDTH from ._lib
+
+// What a text node takes from the elements around it.
+pub struct Style {
+    pub color: Int
+    pub size: Int
+    pub font: Int
+}
+
+// The flat records and strings the layout engine reads.
+pub class Encoder {
+    pub var ops: List<Int>
+    pub var strings: List<UInt8>
+    pub var ids: List<String>
+
+    // Adds a string and returns its offset.
+    pub fn put(var self, text: String) -> Int {
+        let at = self.strings.len()
+        for byte in text.bytes() { self.strings.push(byte) }
+        return at
+    }
+
+    pub fn record(var self, fields: [Int]) {
+        for field in fields { self.ops.push(field) }
+        for _ in fields.len()..OP_WIDTH { self.ops.push(0) }
+    }
+}
+
+fn bad(element: String, what: String, expected: String, text: String) -> Error {
+    return Error.new(ErrorKind.InvalidData, "pane: <${element}> ${what}: expected ${expected}, not ${text}")
+}
+
+fn hex(code: Int) -> Int {
+    if code >= 48 && code <= 57 { return code - 48 }
+    if code >= 97 && code <= 102 { return code - 87 }
+    if code >= 65 && code <= 70 { return code - 55 }
+    return -1
+}
+
+// A colour as 0xRRGGBBAA from `#rgb`, `#rrggbb`, `#rrggbbaa` or a name.
+fn parse_color(element: String, what: String, text: String) -> Result<Int, Error> {
+    if text == "black" { return Ok(0x000000ff) }
+    if text == "white" { return Ok(0xffffffff) }
+    if text == "red" { return Ok(0xff0000ff) }
+    if text == "green" { return Ok(0x008000ff) }
+    if text == "blue" { return Ok(0x0000ffff) }
+    if text == "gray" { return Ok(0x808080ff) }
+    if text == "transparent" { return Ok(0x00000000) }
+    let codes = text.bytes()
+    if codes.len() == 0 || codes[0] as Int != 35 { return Err(bad(element, what, "a colour such as #rrggbb", text)) }
+    var digits: List<Int> = []
+    for at in 1..codes.len() {
+        let value = hex(codes[at] as Int)
+        if value < 0 { return Err(bad(element, what, "a colour such as #rrggbb", text)) }
+        digits.push(value)
+    }
+    if digits.len() == 3 {
+        return Ok(((digits[0] * 17) * 16777216) + ((digits[1] * 17) * 65536) + ((digits[2] * 17) * 256) + 255)
+    }
+    if digits.len() != 6 && digits.len() != 8 { return Err(bad(element, what, "a colour such as #rrggbb", text)) }
+    var packed = 0
+    for at in 0..6 { packed = packed * 16 + digits[at] }
+    packed = packed * 256
+    packed = packed + (if digits.len() == 8 { digits[6] * 16 + digits[7] } else { 255 })
+    return Ok(packed)
+}
+
+fn parse_number(element: String, what: String, text: String) -> Result<Int, Error> {
+    let value = parse_int(text)
+    if value.is_err() || value.unwrap() < 0 { return Err(bad(element, what, "a whole number of pixels", text)) }
+    return Ok(value.unwrap())
+}
+
+// The type (0 fit, 1 grow, 2 fixed, 3 percent) and value of a size.
+fn parse_axis(element: String, what: String, text: String, fallback: Int) -> Result<(Int, Int), Error> {
+    if text == "" { return Ok((fallback, 0)) }
+    if text == "fit" { return Ok((0, 0)) }
+    if text == "grow" { return Ok((1, 0)) }
+    if text.ends_with("%") {
+        let percent = parse_int(text.slice(0, text.len() - 1))
+        if percent.is_err() || percent.unwrap() < 0 || percent.unwrap() > 100 { return Err(bad(element, what, "grow, fit, pixels or a percent up to 100%", text)) }
+        return Ok((3, percent.unwrap() * 10))
+    }
+    return Ok((2, parse_number(element, what, text)?))
+}
+
+fn words(text: String) -> List<String> {
+    var found: List<String> = []
+    for part in text.split(" ") {
+        if part != "" { found.push(part) }
+    }
+    return found
+}
+
+// Left, top, right and bottom from one, two (across and down) or four numbers.
+fn parse_padding(element: String, text: String) -> Result<[Int; 4], Error> {
+    if text == "" { return Ok([0, 0, 0, 0]) }
+    var numbers: List<Int> = []
+    for part in words(text) { numbers.push(parse_number(element, "padding", part)?) }
+    if numbers.len() == 1 { return Ok([numbers[0], numbers[0], numbers[0], numbers[0]]) }
+    if numbers.len() == 2 { return Ok([numbers[0], numbers[1], numbers[0], numbers[1]]) }
+    if numbers.len() == 4 { return Ok([numbers[0], numbers[1], numbers[2], numbers[3]]) }
+    return Err(bad(element, "padding", "one, two or four numbers", text))
+}
+
+fn parse_align(element: String, what: String, text: String, low: String, middle: String, high: String) -> Result<Int, Error> {
+    if text == "" || text == low { return Ok(0) }
+    if text == middle { return Ok(1) }
+    if text == high { return Ok(2) }
+    return Err(bad(element, what, "${low}, ${middle} or ${high}", text))
+}
+
+fn attr_or(node: Node, name: String) -> String {
+    let found = node.attr(name)
+    return if found == null { "" } else { found }
+}
+
+// The colour, size and font that the text under an element inherits.
+fn inherit(element: String, node: Node, style: Style) -> Result<Style, Error> {
+    var color = style.color
+    var size = style.size
+    var font = style.font
+    let given_color = node.attr("color")
+    if given_color != null { color = parse_color(element, "color", given_color)? }
+    let given_size = node.attr("size")
+    if given_size != null {
+        size = parse_number(element, "size", given_size)?
+        if size == 0 { return Err(bad(element, "size", "a size above 0", given_size)) }
+    }
+    let given_font = node.attr("font")
+    if given_font != null {
+        let lower = given_font.to_lower()
+        if lower == "sans" { font = 0 }
+        else if lower == "bold" { font = 1 }
+        else if lower == "serif" { font = 2 }
+        else if lower == "mono" { font = 3 }
+        else { return Err(bad(element, "font", "sans, bold, serif or mono", given_font)) }
+    }
+    return Ok(Style { color: color, size: size, font: font })
+}
+
+fn id_of(var enc: Encoder, element: String, node: Node) -> Result<(Int, Int), Error> {
+    let id = attr_or(node, "id")
+    if id == "" { return Ok((0, 0)) }
+    for seen in enc.ids {
+        if seen == id { return Err(Error.new(ErrorKind.InvalidData, "pane: the id ${id} is used twice")) }
+    }
+    enc.ids.push(id)
+    return Ok((enc.put(id), id.len()))
+}
+
+fn put_text(var enc: Encoder, element: String, node: Node, text: String, style: Style) -> Result<Null, Error> {
+    let wrap = attr_or(node, "wrap")
+    if wrap != "" && wrap != "words" && wrap != "none" { return Err(bad(element, "wrap", "words or none", wrap)) }
+    let align = parse_align(element, "align", attr_or(node, "align"), "left", "center", "right")?
+    let height = attr_or(node, "line-height")
+    let line = if height == "" { 0 } else { parse_number(element, "line-height", height)? }
+    let at = enc.put(text)
+    enc.record([2, at, text.len(), style.size, style.color, if wrap == "none" { 1 } else { 0 }, line, align, style.font])
+    return Ok(null)
+}
+
+pub fn put_element(var enc: Encoder, node: Node, style: Style, is_root: Bool) -> Result<Null, Error> {
+    let element = node.name()
+    if element == "text" {
+        let own = inherit(element, node, style)?
+        let id = id_of(enc, element, node)?
+        if id.1 > 0 {
+            enc.record([1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 - 1, 0, 0, 0, id.0, id.1, 0])
+        }
+        put_text(enc, element, node, node.text_content(), own)?
+        if id.1 > 0 { enc.record([3]) }
+        return Ok(null)
+    }
+    if element != "row" && element != "column" && element != "box" && element != "spacer" {
+        return Err(Error.new(ErrorKind.InvalidData, "pane: unknown element <${element}>"))
+    }
+    let own = inherit(element, node, style)?
+    let fallback = if is_root || element == "spacer" { 1 } else { 0 }
+    let width = parse_axis(element, "width", attr_or(node, "width"), fallback)?
+    let height = parse_axis(element, "height", attr_or(node, "height"), fallback)?
+    let pad = parse_padding(element, attr_or(node, "padding"))?
+    let gap_text = attr_or(node, "gap")
+    let gap = if gap_text == "" { 0 } else { parse_number(element, "gap", gap_text)? }
+    let across = parse_align(element, "align-x", attr_or(node, "align-x"), "left", "center", "right")?
+    let down = parse_align(element, "align-y", attr_or(node, "align-y"), "top", "middle", "bottom")?
+    let background_text = attr_or(node, "background")
+    let background = if background_text == "" { 0 - 1 } else { parse_color(element, "background", background_text)? }
+    let radius_text = attr_or(node, "radius")
+    let radius = if radius_text == "" { 0 } else { parse_number(element, "radius", radius_text)? }
+    var border_width = 0
+    var border_color = 0
+    let border_text = attr_or(node, "border")
+    if border_text != "" {
+        let parts = words(border_text)
+        if parts.len() != 2 { return Err(bad(element, "border", "a width and a colour", border_text)) }
+        border_width = parse_number(element, "border", parts[0])?
+        border_color = parse_color(element, "border", parts[1])?
+    }
+    let clip_text = attr_or(node, "clip")
+    if clip_text != "" && clip_text != "true" && clip_text != "false" { return Err(bad(element, "clip", "true or false", clip_text)) }
+    let id = id_of(enc, element, node)?
+    let direction = if element == "row" { 0 } else { 1 }
+    enc.record([1, direction, width.0, width.1, height.0, height.1, pad[0], pad[1], pad[2], pad[3], gap, across, down, background, radius, border_width, border_color, id.0, id.1, if clip_text == "true" { 1 } else { 0 }])
+    for child in node.children() {
+        let kind = child.kind()
+        if kind == NodeKind.Element {
+            put_element(enc, child, own, false)?
+        } else if kind == NodeKind.Text {
+            let text = child.text()
+            if text.trim() != "" { put_text(enc, element, node, text, own)? }
+        } else if kind == NodeKind.Raw {
+            return Err(Error.new(ErrorKind.InvalidData, "pane: raw HTML is not a view"))
+        }
+    }
+    enc.record([3])
+    return Ok(null)
+}

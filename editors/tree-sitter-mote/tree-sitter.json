@@ -11,7 +11,7 @@
     }
   ],
   "metadata": {
-    "version": "0.2.0",
+    "version": "0.2.1",
     "license": "MIT",
     "description": "Tree-sitter grammar for the Mote language",
     "authors": [{ "name": "Warith Ogunwoolu" }]

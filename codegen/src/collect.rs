@@ -1,4 +1,4 @@
-//! Lowers the element, copy and equality intrinsics of lists and arrays, `fault` and `typeof`.
+//! Lowers the element, copy and equality intrinsics of lists and arrays, `fault` and `type_tag`.
 
 use cranelift_codegen::ir::condcodes::IntCC;
 use cranelift_codegen::ir::{types, InstBuilder, Value};
@@ -61,8 +61,14 @@ impl Lowering<'_, '_, '_> {
             ("list_contains" | "array_contains", [sequence, item]) => {
                 let container = self.operand_ty(&[sequence]);
                 let id = self.env.types.id(container);
-                let (Kind::List(element) | Kind::Array(element)) = self.env.types.table.get(id).kind else { return Err(CompileError::internal("contains of this value")) };
-                let object = self.num_operand(sequence, Num::Ref)?;
+                let (element, object) = match self.env.types.table.get(id).kind {
+                    Kind::List(element) | Kind::Array(element) => (element, self.num_operand(sequence, Num::Ref)?),
+                    Kind::FixedArray(element, _) => {
+                        let addr = self.spill_as(sequence, id)?;
+                        (element, self.address(addr))
+                    }
+                    _ => return Err(CompileError::internal("contains of this value")),
+                };
                 let at = self.spill_as(item, element)?;
                 let at = self.address(at);
                 let found = self.value_call(value::CONTAINS, id.raw(), object, at);
@@ -87,14 +93,14 @@ impl Lowering<'_, '_, '_> {
                 self.set(inst.dest, Some(hash));
             }
             ("deep_clone", [original]) => self.deep_clone(inst, original)?,
-            ("typeof", [value]) => {
+            ("type_tag", [value]) => {
                 let ty = self.ty_of(value);
-                if matches!(self.env.program.types.kind(ty), TyKind::Union(_)) {
+                if matches!(self.env.program.types.kind(ty), TyKind::Union(_) | TyKind::Any) {
                     let name = self.union_type_name(value)?;
                     self.set(inst.dest, Some(name));
                     return Ok(());
                 }
-                let data = *self.env.type_names.get(&ty).ok_or_else(|| internal("a typeof with no name"))?;
+                let data = *self.env.type_names.get(&ty).ok_or_else(|| internal("a type_tag with no name"))?;
                 let global = self.env.clif.declare_data_in_func(data, self.b.func);
                 let name = self.b.ins().symbol_value(types::I64, global);
                 self.set(inst.dest, Some(name));
@@ -107,6 +113,10 @@ impl Lowering<'_, '_, '_> {
                 let after = self.b.create_block();
                 self.b.switch_to_block(after);
             }
+            ("index_out_of_range", []) => {
+                let always = self.b.ins().iconst(types::I8, 1);
+                self.fault_if(always, mote_abi::FaultKind::IndexOutOfRange, inst.span);
+            }
             _ => return Err(CompileError::internal(format!("the intrinsic `{name}` with these arguments"))),
         }
         Ok(())
@@ -115,8 +125,7 @@ impl Lowering<'_, '_, '_> {
     /// The object of a `var` argument, which the call leaves as it was, for the register that receives its final value.
     fn keep(&mut self, object: &Operand, outs: &[RegId]) -> Result<(), CompileError> {
         for &out in outs {
-            let object = self.num_operand(object, Num::Ref)?;
-            self.set(Some(out), Some(object));
+            self.copy_into(out, object)?;
         }
         Ok(())
     }

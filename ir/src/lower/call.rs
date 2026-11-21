@@ -1,20 +1,37 @@
 use mote_base::{Id, Span};
-use mote_semantics::{Callee as TreeCallee, DefId, Expr, FnRef, Receiver, TyId, TyKind};
+use mote_semantics::{Callee as TreeCallee, Conversion, DefId, Expr, FnRef, GenericArg, Receiver, TyId, TyKind};
 
 use super::place::Place;
 use super::Lowering;
 use crate::intrinsics;
-use crate::ir::{Callee, Const, Op, Operand};
+use crate::ir::{Callee, Const, Op, Operand, Terminator};
 
 impl Lowering<'_> {
     pub(super) fn call(&mut self, id: Id<Expr>, callee: &TreeCallee, args: &[Id<Expr>], ty: TyId, span: Span) -> Operand {
         let (target, vars) = match callee {
             TreeCallee::Function(function) => {
-                if let Some(number) = self.type_number(function) {
-                    return Operand::Const(Const::Int(number));
-                }
                 let Some(target) = self.function_callee(function) else { return self.unsupported(span, "call without a body") };
                 (target, self.var_positions(function.def))
+            }
+            TreeCallee::Builtin { name, generic_args } => {
+                let raw = self.interner.resolve(*name).to_string();
+                let rt_name = raw.strip_prefix("__").unwrap_or(&raw).to_string();
+                if rt_name == "any_to" {
+                    return self.lower_any_to(args, generic_args, ty, span);
+                }
+                if let Some(out) = self.lower_array_builtin(&rt_name, args, ty, span) {
+                    return out;
+                }
+                let Some(_) = intrinsics::lookup(&rt_name) else {
+                    return self.unsupported(span, "compiler builtin without IR lowering");
+                };
+                let sym = self.interner.intern(&rt_name);
+                let vars = if mote_semantics::builtins::first_arg_writes(&raw) {
+                    vec![true]
+                } else {
+                    Vec::new()
+                };
+                (Callee::Intrinsic(sym), vars)
             }
             TreeCallee::Value(value) => {
                 let vars = match self.program.types.kind(self.body.exprs[*value].ty) {
@@ -66,16 +83,6 @@ impl Lowering<'_> {
         result
     }
 
-    /// The number `std.meta` knows the type by when `function` is `type_id<T>`.
-    fn type_number(&self, function: &FnRef) -> Option<i128> {
-        let name = self.program.defs[function.def].function()?.intrinsic?;
-        if self.interner.resolve(name) != "type_id" {
-            return None;
-        }
-        let ty = function.args.first()?;
-        self.program.reflect_index.get(ty).map(|&number| i128::from(number))
-    }
-
     /// A call to the std method `name` of the `Map` or `Set` type `ty` that the language itself makes; `None` when `ty` has no such method.
     pub(super) fn collection_call(&mut self, ty: TyId, name: &str, args: Vec<Operand>, ret: TyId, span: Span) -> Option<Operand> {
         let method = self.interner.get(name).and_then(|name| self.program.collection_method(ty, name))?;
@@ -90,21 +97,17 @@ impl Lowering<'_> {
         Some(self.b.value(ret, op, span))
     }
 
-    /// The IR callee of a named function: its lowered body, an intrinsic or a native.
+    /// The IR callee of a named function: its lowered body or a linked extern library function.
     pub(super) fn function_callee(&self, function: &FnRef) -> Option<Callee> {
         if let Some(&func) = self.instances.get(function) {
             return Some(Callee::Function(func));
         }
         let item = self.program.defs[function.def].function()?;
-        match item.intrinsic {
-            Some(name) => intrinsics::lookup(self.interner.resolve(name)).map(|_| Callee::Intrinsic(name)),
-            None if item.native => Some(Callee::Native(function.def)),
-            None => None,
-        }
+        item.link.is_some().then_some(Callee::Native(function.def))
     }
 
     /// Which argument positions are `var`: the receiver of a `var self` method, then each `var` parameter.
-    fn var_positions(&self, def: DefId) -> Vec<bool> {
+    pub(super) fn var_positions(&self, def: DefId) -> Vec<bool> {
         let Some(function) = self.program.defs[def].function() else { return Vec::new() };
         let mut positions = Vec::new();
         if function.receiver != Receiver::None {
@@ -112,5 +115,29 @@ impl Lowering<'_> {
         }
         positions.extend(function.params.iter().map(|param| param.is_var));
         positions
+    }
+
+    fn lower_any_to(&mut self, args: &[Id<Expr>], generic_args: &[GenericArg], ty: TyId, span: Span) -> Operand {
+        let Some(target) = generic_args.first().and_then(GenericArg::as_type) else {
+            return self.unsupported(span, "any.to requires a type argument");
+        };
+        let operand = self.expr(args[0]);
+        if target == TyId::ANY {
+            return self.b.value(ty, Op::Convert { conversion: Conversion::ToOptional, operand }, span);
+        }
+        let result = self.b.reg(ty, None);
+        let (hit, miss, join) = (self.b.block(), self.b.block(), self.b.block());
+        let is = self.b.value(TyId::BOOL, Op::IsType { operand, ty: target }, span);
+        self.b.terminate(Terminator::Branch { condition: is, then: hit, otherwise: miss });
+        self.b.switch_to(hit);
+        let payload = self.b.value(target, Op::UnionPayload { operand, ty: target }, span);
+        let some = self.b.value(ty, Op::Convert { conversion: Conversion::ToOptional, operand: payload }, span);
+        self.b.emit(Some(result), Op::Copy(some), span);
+        self.b.terminate(Terminator::Jump(join));
+        self.b.switch_to(miss);
+        self.b.emit(Some(result), Op::Copy(Operand::Const(Const::Null)), span);
+        self.b.terminate(Terminator::Jump(join));
+        self.b.switch_to(join);
+        Operand::Reg(result)
     }
 }

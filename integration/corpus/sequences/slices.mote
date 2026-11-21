@@ -1,4 +1,4 @@
-fn total(xs: [Int]) -> Int {
+fn total(xs: Span<Int>) -> Int {
     var sum = 0
     for x in xs {
         sum += x
@@ -6,7 +6,7 @@ fn total(xs: [Int]) -> Int {
     return sum
 }
 
-fn show(xs: List<Int>) {
+fn show(xs: Span<Int>) {
     var i = 0
     var line = ""
     while i < xs.len() {

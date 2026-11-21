@@ -5,7 +5,7 @@
 * Every `.mote` file under `src/` is a module. Its path without the extension names it: `util.mote` of the package `app` is `app.util`, and `sub/worker.mote` is `app.sub.worker`. <!-- test: graph_names_modules_from_their_paths -->
 * `lib.mote` is the root module of its package; `.lib` also reaches it from a sibling. <!-- test: graph_names_modules_from_their_paths, graph_lib_is_also_reachable_as_a_sibling -->
 * A file or a directory under `src/` whose name is not a module name is an error. <!-- test: graph_load_a_file_or_directory_that_is_not_a_module_name_is_an_error -->
-* A file or folder whose name starts with `_` is private to its package: `import pane._native` from another package is an error at the import, and the package's own files import it as any other. A name from such a file reaches a dependent only through a `pub import`. <!-- test: graph_a_file_or_folder_that_starts_with_an_underscore_is_private_to_its_package -->
+* A file or folder whose name starts with `_` is private to its package: `import pane._lib` from another package is an error at the import, and the package's own files import it as any other. A name from such a file reaches a dependent only through a `pub import`. <!-- test: graph_a_file_or_folder_that_starts_with_an_underscore_is_private_to_its_package -->
 * A folder's module is the file of its name beside it: `sub.mote` is `app.sub` and `sub/worker.mote` is `app.sub.worker`; there is no `mod.mote`. <!-- test: graph_a_folder_module_is_the_file_of_its_name_beside_it -->
 * A source file that is not UTF-8 is an error that names the file. <!-- test: graph_load_a_source_file_that_is_not_utf8_is_an_error_naming_the_file -->
 
@@ -21,15 +21,19 @@
 | `import pane` | a dependency package: what its `src/lib.mote` has |
 | `import pane.nav` | another file of that package that does not start with `_`, used as `nav.f()` |
 | `import .utils as u` | a local module under the name `u` |
-| `import { compute } from .helper` | one name, used bare |
-| `import { helper as ha } from .a` | one name under another name |
-| `import { * } from .helper` | every `pub` name of the module, used bare |
+| `import compute from .helper` | one name, used bare |
+| `import helper as ha from .a` | one name under another name |
+| `import { a, b } from .helper` | multiple names, used bare |
+| `import * from .helper` | every `pub` name of the module, used bare |
+| `import .helper.{ a, b }` | path-first: multiple names from `.helper`, used bare |
+| `import .a.{ helper as ha }` | path-first: one name under an alias |
+| `import .helper.*` `import .helper.{ * }` | path-first: every `pub` name of the module, used bare |
 
 * An imported standard module is used by its alias, and an imported name bare. <!-- block -->
 
 ```mote
 import std.iter as it
-import { parse_int } from std.string
+import parse_int from std.string
 
 let doubled = it.map([1, 2, 3], |n| n * 2)
 println(doubled)
@@ -72,15 +76,15 @@ fn double(n: Int) -> Int {
 ## Standard library
 
 <!-- table: std-modules -->
-* The modules are `std.atomic` `std.bytes` `std.collections` `std.error` `std.float` `std.io` `std.iter` `std.math` `std.meta` `std.numbers` `std.numeric` `std.option` `std.port` `std.signed` `std.stream` `std.string` `std.sync` `std.task` `std.test` `std.text` `std.time` `std.traits` `std.types` `std.unsigned`.
+* The modules are `std.array` `std.atomic` `std.bytes` `std.collections` `std.error` `std.float` `std.io` `std.iter` `std.math` `std.mem` `std.numbers` `std.numeric` `std.option` `std.port` `std.reflect` `std.signed` `std.stream` `std.string` `std.sync` `std.task` `std.test` `std.text` `std.time` `std.traits` `std.types` `std.unsigned`.
 <!-- /table -->
 
 * Every standard module is imported by its path under `std`, in every package. <!-- test: graph_resolves_std_imports_in_every_package, graph_names_the_modules_of_the_real_std_as_the_semantics_harness_does -->
-* The standard source is embedded in the toolchain; `--std DIR` replaces it with a directory that holds a `mote.toml` for `std`. <!-- test: std_embed_carries_the_manifest_and_every_file_of_the_std_directory, std_embed_a_directory_replaces_the_embedded_std, std_embed_a_directory_that_is_not_the_std_is_an_error, std_embed_a_directory_with_no_manifest_is_an_error, cli_check_uses_the_std_flag_in_place_of_the_embedded_std -->
+* The standard source lives in `mote_std/std` (`~/.mote/mote_std/std` when installed); `--std DIR` replaces it with a directory that holds a `mote.toml` for `std`. <!-- test: std_loads_the_manifest_and_every_file_of_mote_std_std, std_a_directory_replaces_the_default_std, std_a_custom_home_with_mote_std_overrides_workspace_default, std_a_directory_that_is_not_the_std_is_an_error, std_a_directory_with_no_manifest_is_an_error, cli_check_uses_the_std_flag_in_place_of_the_embedded_std -->
 
-## Prelude
+## Universal names
 
-* In scope with no import: the number types, `Bool`, `Float`, `String`, `Option` with `Some` and `None`, `Result` with `Ok` and `Err`, `Error`, `ErrorKind`, `List`, `Map`, `print`, `println`, `eprint`, `eprintln` and `typeof`. <!-- block --> <!-- test: the_prelude_is_visible_without_an_import_and_not_in_the_scope -->
+* In scope everywhere with no import: the number types, `Bool`, `Float`, `String`, `Option` with `Some` and `None`, `Result` with `Ok` and `Err`, `Error`, `ErrorKind`, `List`, `Array`, `Map`, `Set`, `Range`, `Stream`, `Span`, `MutSpan`, `StrView`, `Pointer`, `Task`, `Channel`, `Sender`, `Receiver`, `Mutex`, `Once`, `PortEnd`, `AtomicInt`, `AtomicBool`, `print`, `println`, `eprint`, `eprintln` and `typeof`. <!-- block --> <!-- test: the_prelude_is_visible_without_an_import_and_not_in_the_scope -->
 
 ```mote
 fn pick(a: Int64, b: UInt8, c: Float32) -> Option<String> {
@@ -103,29 +107,17 @@ List<Int>
 {"a": 1}
 ```
 
-* Every other standard name is imported by name. <!-- block -->
-
-```mote
-let seen: Set<Int> = Set() // error: unknown name `Set`
-```
+* Other standard library traits and utilities are imported by name. <!-- block -->
 
 <!-- block -->
 | Name | Module |
 |---|---|
-| `Set` `Stream` | `std.collections` |
-| `Task` | `std.task` |
-| `Channel` `Sender` `Receiver` `Mutex` `Once` | `std.sync` |
-| `Port` `PortMode` `PortEnd` | `std.port` |
+| `Port` `PortMode` | `std.port` |
 | `Display` `Debug` `Eq` `Ord` `Clone` `Closeable` `Key` | `std.traits` |
-| `Pointer` | `std.types` |
 
 ```mote
-import { Set, Stream } from std.collections
-import { Task } from std.task
-import { Channel, Sender, Receiver, Mutex, Once } from std.sync
-import { Port, PortMode, PortEnd } from std.port
+import { Port, PortMode } from std.port
 import { Display, Debug, Eq, Ord, Clone, Closeable, Key } from std.traits
-import { Pointer } from std.types
 ```
 
 ## Exporting
@@ -138,8 +130,9 @@ import { Pointer } from std.types
 | `pub fn f() { … }` | a function |
 | `pub let MAX = 100` | a global, readable elsewhere |
 | `pub struct` `pub class` `pub enum` `pub trait` `pub type` | a type |
-| `pub import { real } from .origin` | a name from another module: a facade |
-| `pub import { * } from .origin` | every `pub` name of another module |
+| `pub import real from .origin` | a name from another module: a facade |
+| `pub import { a, b } from .origin` | multiple names from another module |
+| `pub import * from .origin` | every `pub` name of another module |
 | `pub import .origin as inner` | a module under a name |
 
 ```mote
@@ -160,8 +153,9 @@ pub trait Named {
 }
 pub type Id = Int
 
-@link("c")
-pub native fn getpid() -> Int32
+extern "c" {
+    pub fn getpid() -> Int32
+}
 ```
 
 * A plain `import` does not re-export: another module importing that name from the facade gets an error. <!-- test: pub_import_re_exports_and_a_plain_import_does_not -->
@@ -223,33 +217,43 @@ fn add() {
 * Globals start in source order, except that a global which reads another one starts after it; a cycle of them is an error. <!-- test: globals_run_in_source_order_unless_one_reads_another, a_read_through_a_function_orders_the_global, a_global_that_reads_itself_through_functions_is_a_cycle, globals_that_depend_on_each_other_are_an_error_and_functions_do_not_assign_them -->
 * A task that starts at start-up reads no `var` global. <!-- test: a_task_started_at_start_up_reads_no_var_global -->
 
-## Native functions
+## Extern functions
 
-* `native fn name(params) -> Ret` declares a function of a C library and has no body. <!-- block -->
-* `@link("lib")` names the library, and the symbol is the function name; `@link("lib", symbol = "c_name")` names another symbol. <!-- block -->
+* `extern "lib" { ... }` declares functions of a C library; each declaration has no body and links the library `"lib"`. <!-- block -->
 
 ```mote
-@link("m")
-native fn pow(x: Float, y: Float) -> Float
+extern "m" {
+    fn pow(x: Float, y: Float) -> Float
+}
 
-@link("sqlite3", symbol = "sqlite3_libversion_number")
-native fn sqlite_version() -> Int32
+extern "sqlite3" {
+    fn sqlite3_libversion_number() -> Int32
+}
 ```
 
-* A native fn needs `@link`; `@link` and `@blocking` go on a native fn only. <!-- test: native_functions_record_their_link, link_and_blocking_belong_on_native_functions -->
-* In `std` only, `@intrinsic("name")` takes the place of `@link`: the function may take type parameters and any parameter types, and is not loaded from a library. <!-- test: an_intrinsic_is_a_generic_native_function_in_std -->
-* `@blocking` marks a native whose call may wait; the mark is kept in the link table. <!-- test: native_functions_record_their_link, a_signature_collects_params_blocking_and_result -->
-* A native that nothing calls is not linked and is not an error. <!-- test: native_a_native_that_is_never_called_is_not_linked_and_not_an_error, only_natives_the_program_calls_are_linked -->
-* A native a global or top-level code calls is linked too. <!-- test: a_native_a_global_or_top_level_code_calls_is_linked -->
+* `@blocking` marks an extern function whose call may wait; the mark is kept in the link table. <!-- test: extern_blocks_record_their_link, blocking_belongs_on_extern_functions, a_signature_collects_params_blocking_and_result -->
+* Compiler builtins and intrinsics use `@name(...)` directly anywhere. <!-- block -->
+
+```mote
+fn main() {
+    println(@size_of(Int))
+}
+```
+
+```output
+8
+```
+* An external function that nothing calls is not linked and is not an error. <!-- test: lib_an_extern_that_is_never_called_is_not_linked_and_not_an_error, only_natives_the_program_calls_are_linked -->
+* An external function a global or top-level code calls is linked too. <!-- test: a_native_a_global_or_top_level_code_calls_is_linked -->
 
 ### Libraries
 
-* The library name is logical: letters, digits and `_-.+`. A name with a path in it is an error at the `native fn`. <!-- test: native_a_library_name_with_a_path_is_an_error_at_the_native_fn -->
-* `native/<arch>-linux/lib<name>.so` is searched in the package that declares the function, then in the other packages from the root back to `std`, then by the system loader. `<arch>` is `x86_64`. <!-- test: native_triple_names_the_architecture_of_this_machine, native_finds_the_library_in_the_native_directory_of_the_package_that_declares_it, native_finds_the_library_of_a_dependency_in_the_dependency, native_a_library_the_declaring_package_lacks_is_found_in_another_package, native_a_library_no_package_has_is_left_to_the_system -->
-* An executable (`mote build`) links `lib<name>.a`, when it lies beside the `lib<name>.so` that was found, and fills the native addresses from the linked symbols; the archive must be position-independent. A library with no archive, and the system's, are opened when the executable starts. <!-- test: native_an_archive_beside_the_shared_library_is_the_libraries_archive, aot_static_a_program_whose_natives_ship_an_archive_runs_without_the_shared_library, aot_static_a_library_with_no_archive_is_opened_when_the_executable_starts -->
+* The library name is logical: letters, digits and `_-.+`. A name with a path in it is an error at the `extern` declaration. <!-- test: lib_a_library_name_with_a_path_is_an_error_at_the_extern_fn -->
+* `lib/<arch>-linux/lib<name>.so` is searched in the package that declares the function, then in the other packages from the root back to `std`, then by the system loader. `<arch>` is `x86_64`. <!-- test: lib_triple_names_the_architecture_of_this_machine, lib_finds_the_library_in_the_lib_directory_of_the_package_that_declares_it, lib_finds_the_library_of_a_dependency_in_the_dependency, lib_a_library_the_declaring_package_lacks_is_found_in_another_package, lib_a_library_no_package_has_is_left_to_the_system -->
+* An executable (`mote build`) links `lib<name>.a`, when it lies beside the `lib<name>.so` that was found, and fills the function slots from the linked symbols; the archive must be position-independent. A library with no archive, and the system's, are opened when the executable starts. <!-- test: lib_an_archive_beside_the_shared_library_is_the_libraries_archive, aot_static_a_program_whose_libraries_ship_an_archive_runs_without_the_shared_library, aot_static_a_library_with_no_archive_is_opened_when_the_executable_starts -->
 * The optional `void mote_init_<name>(const MoteHost *)` of a linked archive is called before `main`, with every character of `<name>` but letters and digits as `_`. <!-- test: object_tables_a_library_linked_in_has_its_symbols_in_the_slots_and_a_weak_init, aot_static_a_linked_library_gets_its_init_before_main -->
-* A library that two packages find in different files is an error at the second declaration. <!-- test: native_one_library_found_in_two_files_is_an_error_at_the_second_declaration -->
-* A program with no natives links nothing. <!-- test: native_a_program_with_no_natives_links_nothing -->
+* A library that two packages find in different files is an error at the second declaration. <!-- test: lib_one_library_found_in_two_files_is_an_error_at_the_second_declaration -->
+* A program with no external calls links nothing. <!-- test: lib_a_program_with_no_external_calls_links_nothing -->
 
 ### Types
 
@@ -269,20 +273,21 @@ native fn sqlite_version() -> Int32
 | a `var` number, `Bool` or pointer parameter | a pointer to the value |
 | `PortEnd` as a parameter | a port handle |
 
-* A `Null` parameter, a `[T]` result, a `PortEnd` result and a `var` string or array parameter are errors; so is any other type: a union, an optional of anything but a pointer, a tuple, a fixed array, a class. <!-- test: numbers_bool_and_unit_map_to_their_c_types, arrays_of_scalars_are_parameters_only, other_types_do_not_cross, a_class_that_is_not_the_pointer_lang_item_does_not_cross, a_var_string_or_array_has_no_pointer_form, native_a_signature_that_does_not_cross_to_c_is_an_error_naming_the_parameter_and_the_type -->
-* A native fn takes no type parameters, is not a method and has no variadic parameter. <!-- test: a_signature_names_the_first_thing_wrong -->
-* A called native with a bad signature is an error at the declaration. <!-- test: a_called_native_with_a_bad_signature_is_reported -->
+* A `Null` parameter, a `[T]` result, a `PortEnd` result and a `var` string or array parameter are errors; so is any other type: a union, an optional of anything but a pointer, a tuple, a fixed array, a class. <!-- test: numbers_bool_and_unit_map_to_their_c_types, arrays_of_scalars_are_parameters_only, other_types_do_not_cross, a_class_that_is_not_the_pointer_lang_item_does_not_cross, a_var_string_or_array_has_no_pointer_form, lib_a_signature_that_does_not_cross_to_c_is_an_error_naming_the_parameter_and_the_type -->
+* A `extern` fn takes no type parameters, is not a method and has no variadic parameter. <!-- test: a_signature_names_the_first_thing_wrong -->
+* A called `extern` fn with a bad signature is an error at the declaration. <!-- test: a_called_native_with_a_bad_signature_is_reported -->
 
 ## Ports
 
-* A `PortEnd` is a handle that a struct may hold and a native may take as a parameter. <!-- test: a_port_end_is_a_sendable_handle_a_struct_may_hold_and_a_native_may_take, a_port_end_crosses_as_a_parameter_only -->
+* A `PortEnd` is a handle that a struct may hold and an external function may take as a parameter. <!-- test: a_port_end_is_a_sendable_handle_a_struct_may_hold_and_a_native_may_take, a_port_end_crosses_as_a_parameter_only -->
 * `Port.open(mode)` returns a `PortEnd` to give to a library and a `Receiver` of byte arrays. `PortMode.Queue(n)` holds up to `n` messages and `PortMode.Latest` keeps the newest. <!-- block -->
 
 ```mote
-import { Port, PortMode, PortEnd } from std.port
+import { Port, PortMode } from std.port
 
-@link("sensors")
-native fn start(events: PortEnd)
+extern "sensors" {
+    fn start(events: PortEnd)
+}
 
 fn watch() {
     let (end, events) = Port.open(PortMode.Queue(64))
@@ -295,11 +300,9 @@ fn watch() {
 
 ## Pointers
 
-* `Pointer<T>` is a struct of std with one `pub` field, `address: UInt64`. `T` names what it points at, so `Pointer<Db>` and `Pointer<Stmt>` are different types. <!-- block -->
+* `Pointer<T>` is a universal builtin struct with one `pub` field, `address: UInt64`. `T` names what it points at, so `Pointer<Db>` and `Pointer<Stmt>` are different types. <!-- block -->
 
 ```mote
-import { Pointer } from std.types
-
 struct Db {}
 struct Stmt {}
 
@@ -314,18 +317,15 @@ fn wrong(stmt: Pointer<Stmt>) {
 }
 ```
 
-* A native takes `Pointer<T>?` where the library accepts NULL, and a `var` pointer parameter where it writes one. <!-- block -->
+* An external function takes `Pointer<T>?` where the library accepts NULL, and a `var` pointer parameter where it writes one. <!-- block -->
 
 ```mote
-import { Pointer } from std.types
-
 struct Db {}
 
-@link("sqlite3")
-native fn sqlite3_open(path: String, var db: Pointer<Db>?) -> Int32
-
-@link("sqlite3")
-native fn sqlite3_close(db: Pointer<Db>) -> Int32
+extern "sqlite3" {
+    fn sqlite3_open(path: String, var db: Pointer<Db>?) -> Int32
+    fn sqlite3_close(db: Pointer<Db>) -> Int32
+}
 
 fn open(path: String) -> Pointer<Db>? {
     var db: Pointer<Db>? = null
@@ -336,9 +336,26 @@ fn open(path: String) -> Pointer<Db>? {
 }
 ```
 
+* `std.mem` extends `Pointer<T>` with explicit off-heap memory operations (`alloc`, `realloc`, `free`, `offset`, `load`, `store`, indexing `[]`, `copy_from`, `zero`, `cast`, `nil`, `from_address`, `is_null`). Element-access operations require `@is_flat(T)` so GC-managed references cannot live outside the collector. <!-- block -->
+
+```mote
+import std.mem.*
+
+var p = Pointer<Int>.alloc(3)
+p[0] = 10
+p[1] = 20
+p.store(30, 2)
+println(p.offset(1).load())
+p.free()
+```
+
+```output
+20
+```
+
 ## Packages
 
-* A package is a directory with a `mote.toml` and a `src/`, and optionally a `tests/` and a `native/`. <!-- test: graph_load_reads_the_manifest_and_every_mote_file_under_src_in_path_order, graph_load_a_package_with_no_src_has_no_files, graph_load_a_directory_without_a_manifest_is_an_error_naming_the_file -->
+* A package is a directory with a `mote.toml` and a `src/`, and optionally a `tests/` and a `lib/`. <!-- test: graph_load_reads_the_manifest_and_every_mote_file_under_src_in_path_order, graph_load_a_package_with_no_src_has_no_files, graph_load_a_directory_without_a_manifest_is_an_error_naming_the_file -->
 * `std`, `prelude` and the names of the core libraries are not package names, and a package name is unique in a build. <!-- test: graph_the_names_std_and_prelude_are_reserved, graph_two_packages_with_one_name_are_an_error_at_the_second -->
 * `src/lib.mote` is the root a dependent imports. Every other file under `src/` is the module of its path. <!-- test: graph_resolves_a_dependency_name_to_its_lib_and_its_files, graph_records_each_package_range_lib_and_entry -->
 
@@ -367,15 +384,15 @@ fn open(path: String) -> Pointer<Db>? {
 * A missing zip, a missing home, a file that is not a zip and a package with another name are errors at the dependency's line. <!-- test: zip_a_missing_file_a_missing_home_a_bad_zip_and_another_name_are_errors_at_the_entry -->
 * Packing keeps the files below the package in path order with a fixed time, so the same source makes the same bytes from any directory; it leaves out the top-level `target` and `deps` and every name that starts with `.`, and refuses a symbolic link. <!-- test: archive_leaves_out_target_deps_and_dot_names, archive_the_same_files_make_the_same_bytes, archive_a_symbolic_link_cannot_be_packed, packages_the_same_source_in_two_directories_makes_the_same_zip -->
 * Unpacking refuses a path that leaves the package, a symbolic link, a zip without a `mote.toml` at its top, more than 20,000 files and more than 512 MiB. <!-- test: archive_a_path_that_leaves_the_package_is_an_error, archive_a_symbolic_link_in_a_zip_is_an_error, archive_a_zip_without_a_manifest_or_that_is_not_a_zip_is_an_error, archive_a_zip_with_too_many_files_or_bytes_is_an_error, archive_the_limits_are_the_documented_ones -->
-* A `native/` folder in the zip is the package's natives, found as they are in a directory. <!-- test: packages_a_zip_with_a_native_library_keeps_the_native_beside_the_package -->
+* A `lib/` folder in the zip holds the package's shared libraries, found as they are in a directory. <!-- test: packages_a_zip_with_a_shared_library_keeps_the_lib_beside_the_package -->
 
 ### Core libraries
 
-* The core libraries are the packages of the `core/` folder; the toolchain embeds their source as it does the std, and `--core <dir>` uses the packages in a directory instead. <!-- test: core_embed_carries_every_package_of_the_core_folder, core_embed_a_directory_holds_one_folder_for_each_library, core_embed_a_folder_named_otherwise_than_its_package_is_an_error, core_embed_a_missing_directory_is_an_error -->
+* The core libraries live alongside `std` in `mote_std/` (`~/.mote/mote_std/` when installed); `--core <dir>` uses the packages in a directory instead. <!-- test: core_loads_every_non_std_package_of_mote_std, core_embed_a_directory_holds_one_folder_for_each_library, core_embed_a_folder_named_otherwise_than_its_package_is_an_error, core_embed_a_missing_directory_is_an_error -->
 * A package imports a core library by its name with no entry in `mote.toml`, as it imports `std`; one that nothing imports is not built, and a core library imports another the same way. <!-- test: core_embed_an_import_of_a_core_name_adds_the_library_with_no_manifest_entry, core_embed_a_library_nothing_imports_is_left_out, core_embed_a_library_that_imports_another_brings_it_first, core_embed_a_dependency_package_imports_a_core_library_too, core_embed_the_tests_of_the_root_import_a_library_only_when_they_are_built, core_embed_a_library_does_not_import_itself, core_embed_an_unknown_name_is_still_an_unknown_package, core_tools_an_app_imports_a_core_library_by_name_and_runs, core_tools_a_core_name_without_the_library_is_an_unknown_package -->
 * The name of a core library is reserved: no package, dependency or `mote init` may take it, except the root that lies in the directory of that library, which stands in for it (that is how `tools/test-core.sh` tests a library). <!-- test: core_embed_a_package_named_as_a_core_library_is_reserved, core_embed_the_root_in_the_directory_of_a_library_stands_in_for_it, core_tools_an_app_named_as_a_core_library_is_reserved -->
 * Two core libraries that import each other are an error. <!-- test: core_embed_a_cycle_between_libraries_is_an_error -->
-* The natives of an embedded library are looked up in `<home>/core/<name>/native/<arch>-linux/`, where a release puts them; those of a `--core` directory are in the library's own folder. <!-- test: core_embed_the_natives_of_an_embedded_library_are_looked_up_under_the_home -->
+* The shared libraries of a core library are looked up in `<mote_std>/<name>/lib/<arch>-linux/` (or in the `--core` directory's own folder). <!-- test: core_a_custom_home_with_mote_std_provides_its_libraries_from_disk, lib_finds_the_library_in_the_lib_directory_of_the_package_that_declares_it -->
 
 ### Tests
 

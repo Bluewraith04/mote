@@ -1,5 +1,3 @@
-import { Once } from std.sync
-
 fn main() {
     let once = Once<Int>()
     let zero = 0

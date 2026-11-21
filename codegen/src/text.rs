@@ -35,6 +35,26 @@ impl Lowering<'_, '_, '_> {
                 self.set(inst.dest, Some(joined));
             }
             ("string_slice", [s, start, end]) => self.string_slice(inst, s, start, end)?,
+            ("string_byte_at", [s, index]) => {
+                let string = self.num_operand(s, Num::Ref)?;
+                let len = self.load(types::I64, Addr { base: string, offset: LENGTH_OFFSET as i32 });
+                let at = self.index_value(index)?;
+                let outside = self.b.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, at, len);
+                self.fault_if(outside, FaultKind::IndexOutOfRange, inst.span);
+                let base = self.b.ins().iadd_imm(string, i64::from(mote_abi::ELEMENTS_OFFSET));
+                let ptr = self.b.ins().iadd(base, at);
+                let byte = self.load(types::I8, Addr { base: ptr, offset: 0 });
+                self.set(inst.dest, Some(byte));
+            }
+            ("string_is_boundary", [s, index]) => {
+                let string = self.num_operand(s, Num::Ref)?;
+                let at = self.index_value(index)?;
+                let cut = self.func_ref(self.env.imports.cut);
+                let call = self.b.ins().call(cut, &[string, at, at]);
+                let whole = self.b.inst_results(call)[0];
+                let flag = self.b.ins().ireduce(types::I8, whole);
+                self.set(inst.dest, Some(flag));
+            }
             ("string_replace", [s, target, replacement]) => {
                 let call = Call { a: Some(self.num_operand(s, Num::Ref)?), b: Some(self.num_operand(target, Num::Ref)?), c: Some(self.num_operand(replacement, Num::Ref)?), types: [string, 0, 0] };
                 self.text_string(inst, text::REPLACE, call);

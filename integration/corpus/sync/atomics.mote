@@ -1,7 +1,5 @@
-import std.atomic as atomic
-
 fn main() {
-    let a = atomic.Int64(10)
+    let a = AtomicInt(10)
     println(a.load())
     a.store(3)
     println(a.swap(4))
@@ -10,17 +8,17 @@ fn main() {
     println(a.compare_exchange(9, 20))
     println(a.compare_exchange(9, 30))
     println(a.load())
-    let low = atomic.Int64(-9223372036854775807)
+    let low = AtomicInt(-9223372036854775807)
     println(low.fetch_sub(1))
     println(low.load())
-    let f = atomic.Bool(false)
+    let f = AtomicBool(false)
     println(f.load())
     f.store(true)
     println(f.swap(false))
     println(f.compare_exchange(false, true))
     println(f.compare_exchange(false, true))
     println(f.load())
-    let sum = atomic.Int64(0)
+    let sum = AtomicInt(0)
     scope {
         for i in 0..4 {
             spawn { sum.fetch_add(i + 1) }

@@ -1,0 +1,259 @@
+import { assert, assert_eq } from std.test
+import doc
+import Node from doc
+import { Draw, DrawKind, Font, layout } from pane
+
+fn rects(draws: List<Draw>) -> List<Draw> {
+    var found: List<Draw> = []
+    for each in draws {
+        if each.kind == DrawKind.Rect { found.push(each) }
+    }
+    return found
+}
+
+test "layout of a row puts fixed boxes side by side" {
+    let row = doc.el("row", [
+        doc.el("box", id="a", attrs=[("width", "100"), ("height", "40"), ("background", "#ff0000")]),
+        doc.el("box", id="b", attrs=[("width", "60"), ("height", "40"), ("background", "#00ff00")])
+    ], id="r")
+    let result = layout(row, 800, 600)!
+    let a = result.area("a")!
+    let b = result.area("b")!
+    assert_eq(a.x, 0)
+    assert_eq(a.y, 0)
+    assert_eq(a.w, 100)
+    assert_eq(a.h, 40)
+    assert_eq(b.x, 100)
+    assert_eq(b.w, 60)
+    let painted = rects(result.draws)
+    assert_eq(painted.len(), 2)
+    assert_eq(painted.get(0).color, 0xff0000ff)
+    assert_eq(painted.get(1).color, 0x00ff00ff)
+    assert_eq(painted.get(1).x, 100)
+}
+
+test "layout of the root fills the window" {
+    let root = doc.el("box", id="root", attrs=[("background", "white")])
+    let result = layout(root, 640, 480)!
+    let area = result.area("root")!
+    assert_eq(area.w, 640)
+    assert_eq(area.h, 480)
+}
+
+test "layout of grow shares what the fixed boxes leave" {
+    let row = doc.el("row", [
+        doc.el("box", id="fixed", attrs=[("width", "100")]),
+        doc.el("box", id="one", attrs=[("width", "grow"), ("height", "grow")]),
+        doc.el("box", id="two", attrs=[("width", "grow")])
+    ], attrs=[("gap", "10"), ("padding", "5")])
+    let result = layout(row, 400, 100)!
+    assert_eq(result.area("fixed")!.x, 5)
+    assert_eq(result.area("one")!.x, 115)
+    let one = result.area("one")!
+    let two = result.area("two")!
+    assert_eq(one.w, two.w)
+    assert_eq(one.w, 135)
+    assert_eq(two.x, 260)
+    assert_eq(one.h, 90)
+}
+
+test "layout of a column stacks and takes percents" {
+    let column = doc.el("column", [
+        doc.el("box", id="top", attrs=[("height", "50")]),
+        doc.el("box", id="half", attrs=[("height", "50%"), ("width", "25%")])
+    ], attrs=[("gap", "4")])
+    let result = layout(column, 200, 400)!
+    assert_eq(result.area("top")!.y, 0)
+    assert_eq(result.area("half")!.y, 54)
+    assert_eq(result.area("half")!.w, 50)
+    assert_eq(result.area("half")!.h, 198)
+}
+
+test "layout aligns children across and down" {
+    let box = doc.el("box", [
+        doc.el("box", id="inner", attrs=[("width", "40"), ("height", "20")])
+    ], attrs=[("width", "200"), ("height", "100"), ("align-x", "center"), ("align-y", "middle")])
+    let result = layout(box, 800, 600)!
+    let inner = result.area("inner")!
+    assert_eq(inner.x, 80)
+    assert_eq(inner.y, 40)
+    let end = doc.el("row", [
+        doc.el("box", id="corner", attrs=[("width", "40"), ("height", "20")])
+    ], attrs=[("width", "200"), ("align-x", "right"), ("align-y", "bottom"), ("height", "100")])
+    let corner = layout(end, 800, 600)!.area("corner")!
+    assert_eq(corner.x, 160)
+    assert_eq(corner.y, 80)
+}
+
+test "layout of text is sized from its glyphs" {
+    let label = doc.el("box", [
+        doc.el("row", [
+            doc.el("text", ["hello"], attrs=[("size", "20"), ("color", "#336699")])
+        ], id="label")
+    ])
+    let result = layout(label, 400, 100)!
+    let area = result.area("label")!
+    assert_eq(area.w, 46)
+    assert_eq(area.h, 20)
+    var seen = 0
+    for each in result.draws {
+        if each.kind == DrawKind.Text {
+            seen = seen + 1
+            assert_eq(each.text, "hello")
+            assert_eq(each.size, 20)
+            assert_eq(each.color, 0x336699ff)
+            assert(each.font == Font.Sans, "default font is Sans")
+        }
+    }
+    assert_eq(seen, 1)
+
+    // Proportional Sans narrows 'iiii' vs 'WWWW'; Mono keeps them equal.
+    let prop = doc.el("column", [
+        doc.el("row", [doc.el("text", ["iiii"], attrs=[("size", "20")])], id="narrow"),
+        doc.el("row", [doc.el("text", ["WWWW"], attrs=[("size", "20")])], id="wide"),
+        doc.el("row", [doc.el("text", ["iiii"], attrs=[("size", "20"), ("font", "mono")])], id="mono_n"),
+        doc.el("row", [doc.el("text", ["WWWW"], attrs=[("size", "20"), ("font", "mono")])], id="mono_w")
+    ])
+    let p_res = layout(prop, 400, 200)!
+    assert(p_res.area("narrow")!.w < p_res.area("wide")!.w, "Sans is proportional")
+    assert_eq(p_res.area("mono_n")!.w, p_res.area("mono_w")!.w)
+}
+
+test "layout of a bare text node takes the style of its element" {
+    let box = doc.el("box", ["abc"], attrs=[("color", "red"), ("size", "10")])
+    let result = layout(box, 100, 100)!
+    var found: Draw? = null
+    for each in result.draws {
+        if each.kind == DrawKind.Text { found = each }
+    }
+    assert_eq(found!.text, "abc")
+    assert_eq(found!.size, 10)
+    assert_eq(found!.color, 0xff0000ff)
+}
+
+test "layout wraps text that is too wide" {
+    let box = doc.el("box", [
+        doc.el("text", ["aaaa bbbb cccc"], attrs=[("size", "10")])
+    ], attrs=[("width", "60")])
+    let result = layout(box, 300, 300)!
+    var lines: List<String> = []
+    for each in result.draws {
+        if each.kind == DrawKind.Text { lines.push(each.text) }
+    }
+    assert(lines.len() > 1, "wrapped")
+    let none = doc.el("box", [
+        doc.el("text", ["aaaa bbbb cccc"], attrs=[("size", "10"), ("wrap", "none")])
+    ], attrs=[("width", "60")])
+    var single = 0
+    for each in layout(none, 300, 300)!.draws {
+        if each.kind == DrawKind.Text { single = single + 1 }
+    }
+    assert_eq(single, 1)
+}
+
+test "layout paints a background before the children and adds borders and rounding" {
+    let outer = doc.el("box", [
+        doc.el("box", attrs=[("width", "50"), ("height", "50"), ("background", "#202020")])
+    ], attrs=[("width", "100"), ("height", "100"), ("background", "#101010"), ("radius", "8"), ("border", "2 #ffffff")])
+    let draws = layout(outer, 300, 300)!.draws
+    assert(draws.get(0).kind == DrawKind.Rect, "background first")
+    assert_eq(draws.get(0).color, 0x101010ff)
+    assert_eq(draws.get(0).radius, 8)
+    assert_eq(draws.get(1).color, 0x202020ff)
+    var border: Draw? = null
+    for each in draws {
+        if each.kind == DrawKind.Border { border = each }
+    }
+    assert_eq(border!.border, 2)
+    assert_eq(border!.color, 0xffffffff)
+    assert_eq(border!.w, 100)
+}
+
+test "layout clips what an element says to clip" {
+    let box = doc.el("box", [
+        doc.el("box", attrs=[("width", "200"), ("height", "200"), ("background", "black")])
+    ], attrs=[("width", "50"), ("height", "50"), ("clip", "true"), ("background", "white")])
+    let draws = layout(box, 300, 300)!.draws
+    var kinds: List<DrawKind> = []
+    for each in draws { kinds.push(each.kind) }
+    assert(kinds.get(0) == DrawKind.Clip, "clip starts first")
+    assert(kinds.get(1) == DrawKind.Rect, "then the background")
+    assert(kinds.get(kinds.len() - 1) == DrawKind.Unclip, "clip ends")
+}
+
+test "layout of siblings at the top is a column" {
+    let top = doc.fragment([
+        doc.el("box", id="one", attrs=[("height", "30")]),
+        doc.el("box", id="two", attrs=[("height", "30")])
+    ])
+    let result = layout(top, 100, 200)!
+    assert_eq(result.area("one")!.y, 0)
+    assert_eq(result.area("two")!.y, 30)
+}
+
+test "layout answers which element is at a point" {
+    let row = doc.el("row", [
+        doc.el("box", id="left", attrs=[("width", "100"), ("height", "50")]),
+        doc.el("box", id="right", attrs=[("width", "100"), ("height", "50")])
+    ], id="row")
+    let result = layout(row, 400, 300)!
+    assert_eq(result.at(10, 10)!, "left")
+    assert_eq(result.at(150, 10)!, "right")
+    assert_eq(result.at(350, 10)!, "row")
+    assert(result.at(350, 250) == null || result.at(350, 250)! == "row", "below the boxes")
+}
+
+test "layout is the same each time" {
+    let box = doc.el("column", [
+        doc.el("text", ["one"]),
+        doc.el("text", ["two"])
+    ], attrs=[("padding", "8 4"), ("gap", "3")])
+    let first = layout(box, 300, 300)!
+    let second = layout(box, 300, 300)!
+    assert_eq(first.draws.len(), second.draws.len())
+    for at in 0..first.draws.len() {
+        assert_eq(first.draws.get(at).y, second.draws.get(at).y)
+        assert_eq(first.draws.get(at).w, second.draws.get(at).w)
+    }
+}
+
+test "layout of a view with a mistake is an error that names it" {
+    assert(layout(doc.el("blink"), 100, 100).is_err(), "unknown element")
+    assert(layout(doc.el("box", attrs=[("width", "wide")]), 100, 100).is_err(), "bad width")
+    assert(layout(doc.el("box", attrs=[("width", "120%")]), 100, 100).is_err(), "percent")
+    assert(layout(doc.el("box", attrs=[("background", "#12")]), 100, 100).is_err(), "colour")
+    assert(layout(doc.el("box", attrs=[("padding", "1 2 3")]), 100, 100).is_err(), "padding")
+    assert(layout(doc.el("box", attrs=[("align-x", "up")]), 100, 100).is_err(), "align")
+    assert(layout(doc.el("box", attrs=[("border", "2")]), 100, 100).is_err(), "border")
+    assert(layout(doc.el("box", attrs=[("font", "comic")]), 100, 100).is_err(), "font")
+    let twice = doc.el("box", [doc.el("box", id="x"), doc.el("box", id="x")])
+    assert(layout(twice, 100, 100).is_err(), "the same id")
+    let message = match layout(doc.el("box", attrs=[("width", "wide")]), 100, 100) {
+        Err(error) => error.message
+        Ok(_) => ""
+    }
+    assert(message.contains("<box> width"), "names the element and the attribute")
+}
+
+test "layout of a large view needs more room than the first buffers" {
+    var column = doc.el("column")
+    for n in 0..300 {
+        column.append(doc.el("text", ["row ${n}"], id="t${n}"))!
+    }
+    let result = layout(column, 400, 8000)!
+    assert_eq(result.areas.len(), 300)
+    assert_eq(result.area("t299")!.y, 299 * 16)
+    var texts = 0
+    for each in result.draws {
+        if each.kind == DrawKind.Text { texts = texts + 1 }
+    }
+    assert_eq(texts, 300)
+}
+
+test "layout of colours reads three, six and eight digits and names" {
+    let kinds = [("#f00", 0xff0000ff), ("#00ff0080", 0x00ff0080), ("#0a0b0c", 0x0a0b0cff), ("gray", 0x808080ff)]
+    for pair in kinds {
+        let box = doc.el("box", attrs=[("background", pair.0)])
+        assert_eq(layout(box, 10, 10)!.draws.get(0).color, pair.1)
+    }
+}

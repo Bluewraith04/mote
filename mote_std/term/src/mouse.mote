@@ -1,0 +1,39 @@
+// What the mouse did, and where.
+import Display from std.traits
+
+/// What the mouse did.
+pub enum MouseKind: (Display) {
+    Press
+    Release
+    Drag
+    Move
+    ScrollUp
+    ScrollDown
+
+    pub fn to_string(self) -> String {
+        return match self {
+            Press => "Press"
+            Release => "Release"
+            Drag => "Drag"
+            Move => "Move"
+            ScrollUp => "ScrollUp"
+            ScrollDown => "ScrollDown"
+        }
+    }
+}
+
+/// A mouse event at a cell, counted from 0 at the top left; `button` is 0 for left, 1 for middle, 2 for right.
+pub struct MouseEvent: (Display) {
+    pub kind: MouseKind
+    pub button: Int
+    pub row: Int
+    pub col: Int
+    pub ctrl: Bool
+    pub alt: Bool
+    pub shift: Bool
+
+    /// `Press(0) at 4,7` with the row first.
+    pub fn to_string(self) -> String {
+        return "${self.kind.to_string()}(${self.button}) at ${self.row},${self.col}"
+    }
+}

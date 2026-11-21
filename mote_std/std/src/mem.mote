@@ -1,0 +1,321 @@
+// Raw off-heap pointers and owned 64-byte-aligned buffers for flat types.
+
+import std.error.{Error}
+import std.traits.{Closeable}
+
+extend<T> Pointer<T> {
+    /// Returns a null `Pointer<T>` (address 0).
+    pub fn nil() -> Pointer<T> {
+        return @__ptr_null<T>()
+    }
+
+    /// Constructs a typed pointer from a raw unsigned integer address.
+    pub fn from_address(addr: UInt64) -> Pointer<T> {
+        return @__ptr_from_addr<T>(addr)
+    }
+
+    /// Returns true when the pointer holds address 0.
+    pub fn is_null(self) -> Bool {
+        return self.address == (0 as UInt64)
+    }
+
+    /// Allocates 64-byte-aligned off-heap storage for `count` flat `T` elements.
+    pub fn alloc(count: Int) -> Pointer<T> {
+        comptime if !@is_flat(T) {
+            @compile_error("Pointer<T> element operations require a flat type without GC references")
+        }
+        return @__ptr_alloc<T>(count)
+    }
+
+    /// Resizes an off-heap allocation from `Pointer.alloc` to hold `new_count` elements.
+    pub fn realloc(self, new_count: Int) -> Pointer<T> {
+        comptime if !@is_flat(T) {
+            @compile_error("Pointer<T> element operations require a flat type without GC references")
+        }
+        return @__ptr_realloc<T>(self, new_count)
+    }
+
+    /// Releases an off-heap block obtained from `Pointer.alloc` or `Pointer.realloc`.
+    pub fn free(self) {
+        @__ptr_free<T>(self)
+    }
+
+    /// Advances the pointer by `delta` elements of size and stride `T`.
+    pub fn offset(self, delta: Int) -> Pointer<T> {
+        comptime if !@is_flat(T) {
+            @compile_error("Pointer<T> element operations require a flat type without GC references")
+        }
+        return @__ptr_offset<T>(self, delta)
+    }
+
+    /// Reads the `T` element at `index` relative to `self`.
+    pub fn load(self, index: Int = 0) -> T {
+        comptime if !@is_flat(T) {
+            @compile_error("Pointer<T> element operations require a flat type without GC references")
+        }
+        return @__ptr_load<T>(self, index)
+    }
+
+    /// Writes `value` at `index` relative to `self`.
+    pub fn store(self, value: T, index: Int = 0) {
+        comptime if !@is_flat(T) {
+            @compile_error("Pointer<T> element operations require a flat type without GC references")
+        }
+        @__ptr_store<T>(self, index, value)
+    }
+
+    /// Indexes a pointer like `ptr[i]`.
+    pub fn __getitem__(self, index: Int) -> T {
+        comptime if !@is_flat(T) {
+            @compile_error("Pointer<T> element operations require a flat type without GC references")
+        }
+        return @__ptr_load<T>(self, index)
+    }
+
+    /// Assigns through a pointer like `ptr[i] = value`.
+    pub fn __setitem__(var self, index: Int, value: T) {
+        comptime if !@is_flat(T) {
+            @compile_error("Pointer<T> element operations require a flat type without GC references")
+        }
+        @__ptr_store<T>(self, index, value)
+    }
+
+    /// Copies `count` elements from `src` into `self` (overlap-safe).
+    pub fn copy_from(self, src: Pointer<T>, count: Int) {
+        comptime if !@is_flat(T) {
+            @compile_error("Pointer<T> element operations require a flat type without GC references")
+        }
+        @__ptr_copy<T>(self, src, count)
+    }
+
+    /// Zeroes `count` elements starting at `self`.
+    pub fn zero(self, count: Int) {
+        comptime if !@is_flat(T) {
+            @compile_error("Pointer<T> element operations require a flat type without GC references")
+        }
+        @__ptr_zero<T>(self, count)
+    }
+
+    /// Reinterprets this pointer address as pointing to `U`.
+    pub fn cast<U>(self) -> Pointer<U> {
+        return @__ptr_cast<T, U>(self)
+    }
+}
+
+/// Safe `Closeable` off-heap 64-byte-aligned buffer for flat `T` elements.
+pub class Buffer<T>: (Closeable) {
+    addr: AtomicInt
+    count: AtomicInt
+    closed: AtomicBool
+
+    /// Allocates uninitialized off-heap storage for `count` flat `T` elements.
+    pub fn alloc(count: Int) -> Buffer<T> {
+        comptime if !@is_flat(T) {
+            @compile_error("Buffer<T> requires a flat element type without GC references")
+        }
+        if count < 0 {
+            @fault("Buffer.alloc: negative count")
+        }
+        let ptr = Pointer<T>.alloc(count)
+        return Buffer<T> { addr: AtomicInt.new(ptr.address as Int), count: AtomicInt.new(count), closed: AtomicBool.new(false) }
+    }
+
+    /// Allocates zero-initialized off-heap storage for `count` flat `T` elements.
+    pub fn zeroed(count: Int) -> Buffer<T> {
+        comptime if !@is_flat(T) {
+            @compile_error("Buffer<T> requires a flat element type without GC references")
+        }
+        var buf = Buffer<T>.alloc(count)
+        if count > 0 {
+            buf.zero()
+        }
+        return buf
+    }
+
+    /// Copies elements from `[T]` into a newly allocated off-heap buffer.
+    pub fn from_array(xs: [T]) -> Buffer<T> {
+        comptime if !@is_flat(T) {
+            @compile_error("Buffer<T> requires a flat element type without GC references")
+        }
+        let n = @__array_len(xs)
+        let buf = Buffer<T>.alloc(n)
+        if n > 0 {
+            let p = buf.as_ptr()
+            var i = 0
+            while i < n {
+                p.store(@__array_get(xs, i), i)
+                i += 1
+            }
+        }
+        return buf
+    }
+
+    /// Returns the number of elements in the buffer (0 when closed).
+    pub fn len(self) -> Int {
+        return self.count.load()
+    }
+
+    /// Returns true when the buffer holds zero elements.
+    pub fn is_empty(self) -> Bool {
+        return self.count.load() == 0
+    }
+
+    /// Returns true after the buffer has been closed and freed.
+    pub fn is_closed(self) -> Bool {
+        return self.closed.load()
+    }
+
+    /// Releases the backing off-heap memory; safe to call more than once.
+    pub fn close(self) -> Result<Null, Error> {
+        if !self.closed.swap(true) {
+            let raw = self.addr.swap(0)
+            self.count.store(0)
+            if raw != 0 {
+                Pointer<T>.from_address(raw as UInt64).free()
+            }
+        }
+        return Ok(null)
+    }
+
+    /// Returns the underlying `Pointer<T>`; faults if the buffer is closed.
+    pub fn as_ptr(self) -> Pointer<T> {
+        comptime if !@is_flat(T) {
+            @compile_error("Buffer<T> requires a flat element type without GC references")
+        }
+        if self.closed.load() {
+            @fault("Buffer is closed")
+        }
+        return Pointer<T>.from_address(self.addr.load() as UInt64)
+    }
+
+    /// Resizes the buffer to hold `new_count` elements, preserving the common prefix.
+    pub fn realloc(var self, new_count: Int) {
+        comptime if !@is_flat(T) {
+            @compile_error("Buffer<T> requires a flat element type without GC references")
+        }
+        if self.closed.load() {
+            @fault("Buffer is closed")
+        }
+        if new_count < 0 {
+            @fault("Buffer.realloc: negative count")
+        }
+        let old = Pointer<T>.from_address(self.addr.load() as UInt64)
+        let next = old.realloc(new_count)
+        self.addr.store(next.address as Int)
+        self.count.store(new_count)
+    }
+
+    /// Reads the element at `index`, faulting if closed or out of bounds.
+    pub fn get(self, index: Int) -> T {
+        comptime if !@is_flat(T) {
+            @compile_error("Buffer<T> requires a flat element type without GC references")
+        }
+        if self.closed.load() {
+            @fault("Buffer is closed")
+        }
+        let n = self.count.load()
+        if index < 0 || index >= n {
+            @fault("Buffer index out of range")
+        }
+        return Pointer<T>.from_address(self.addr.load() as UInt64).load(index)
+    }
+
+    /// Reads the element at `index` or returns `fallback` when out of bounds; faults if closed.
+    pub fn get_or(self, index: Int, fallback: T) -> T {
+        comptime if !@is_flat(T) {
+            @compile_error("Buffer<T> requires a flat element type without GC references")
+        }
+        if self.closed.load() {
+            @fault("Buffer is closed")
+        }
+        let n = self.count.load()
+        if index < 0 || index >= n {
+            return fallback
+        }
+        return Pointer<T>.from_address(self.addr.load() as UInt64).load(index)
+    }
+
+    /// Writes `value` at `index`, faulting if closed or out of bounds.
+    pub fn set(var self, index: Int, value: T) {
+        comptime if !@is_flat(T) {
+            @compile_error("Buffer<T> requires a flat element type without GC references")
+        }
+        if self.closed.load() {
+            @fault("Buffer is closed")
+        }
+        let n = self.count.load()
+        if index < 0 || index >= n {
+            @fault("Buffer index out of range")
+        }
+        Pointer<T>.from_address(self.addr.load() as UInt64).store(value, index)
+    }
+
+    pub fn __getitem__(self, index: Int) -> T {
+        return self.get(index)
+    }
+
+    pub fn __setitem__(var self, index: Int, value: T) {
+        self.set(index, value)
+    }
+
+    /// Fills every element in the buffer with `value`.
+    pub fn fill(var self, value: T) {
+        comptime if !@is_flat(T) {
+            @compile_error("Buffer<T> requires a flat element type without GC references")
+        }
+        let p = self.as_ptr()
+        let n = self.count.load()
+        var i = 0
+        while i < n {
+            p.store(value, i)
+            i += 1
+        }
+    }
+
+    /// Zeroes all elements in the buffer.
+    pub fn zero(var self) {
+        comptime if !@is_flat(T) {
+            @compile_error("Buffer<T> requires a flat element type without GC references")
+        }
+        let p = self.as_ptr()
+        let n = self.count.load()
+        if n > 0 {
+            p.zero(n)
+        }
+    }
+
+    /// Copies all elements from `src` into `self`; lengths must match.
+    pub fn copy_from(var self, src: Buffer<T>) {
+        comptime if !@is_flat(T) {
+            @compile_error("Buffer<T> requires a flat element type without GC references")
+        }
+        let dst_p = self.as_ptr()
+        let src_p = src.as_ptr()
+        let n = self.count.load()
+        if n != src.count.load() {
+            @fault("Buffer.copy_from: lengths differ")
+        }
+        if n > 0 {
+            dst_p.copy_from(src_p, n)
+        }
+    }
+
+    /// Copies the buffer contents into a newly allocated GC `[T]` array.
+    pub fn to_array(self) -> [T] {
+        comptime if !@is_flat(T) {
+            @compile_error("Buffer<T> requires a flat element type without GC references")
+        }
+        let p = self.as_ptr()
+        let n = self.count.load()
+        if n == 0 {
+            return []
+        }
+        var out = [p.load(0); n]
+        var i = 1
+        while i < n {
+            @__array_set(out, i, p.load(i))
+            i += 1
+        }
+        return out
+    }
+}

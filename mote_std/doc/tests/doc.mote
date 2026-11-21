@@ -1,0 +1,162 @@
+import { assert, assert_eq } from std.test
+import join from std.string
+import doc
+import { Doc, Node, NodeKind } from doc
+
+fn sample() -> Node {
+    return doc.ul([
+        doc.li(["one"]),
+        doc.li(["two"])
+    ], class_name="tidy", id="a&b")
+}
+
+test "a composed tree is written as HTML without creating a Doc" {
+    let tree = sample()
+    assert_eq(tree.to_html(), "<ul class=\"tidy\" id=\"a&amp;b\"><li>one</li><li>two</li></ul>")
+}
+
+test "reflex-style tag helpers and fluent modifiers compose cleanly" {
+    let page = doc.fragment([
+        doc.h1(["Title"]),
+        doc.p(["Visit ", doc.a(["home"], href="/"), " now."]),
+        doc.el("section").with_class("card").id("s1").add(doc.span(["ok"]))
+    ])
+    assert_eq(
+        page.to_html(),
+        "<h1>Title</h1><p>Visit <a href=\"/\">home</a> now.</p><section class=\"card\" id=\"s1\"><span>ok</span></section>"
+    )
+}
+
+test "text and attribute values are escaped, comments and void elements are not" {
+    let p = doc.p([
+        "1 < 2 & \"3\"",
+        doc.br(),
+        doc.comment(" note "),
+        doc.img(alt="say \"hi\""),
+        doc.raw("<b>raw</b>")
+    ])
+    assert_eq(p.to_html(), "<p>1 &lt; 2 &amp; \"3\"<br /><!-- note --><img alt=\"say &quot;hi&quot;\" /><b>raw</b></p>")
+    assert(p.child(4)!.kind() == NodeKind.Raw, "raw kind")
+    assert_eq(p.child(4)!.text(), "<b>raw</b>")
+    assert_eq(Node.from_bytes(p.bytes())!.to_html(), p.to_html())
+    let script = doc.el("script", ["if (a < b) {}"])
+    assert_eq(script.to_html(), "<script>if (a < b) {}</script>")
+}
+
+test "nodes are found by walking the tree" {
+    let root = doc.fragment([sample()])
+    let items = root.find_all("li")
+    assert_eq(items.len(), 2)
+    assert_eq(items.get(1).text_content(), "two")
+    assert_eq(root.text_content(), "onetwo")
+    let list = root.find("ul")!
+    assert_eq(list.name(), "ul")
+    assert_eq(list.child_count(), 2)
+    assert(list.parent()!.same(root), "parent")
+    assert(list.child(0)!.next()!.same(list.child(1)!), "next")
+    assert(list.child(1)!.previous()!.same(list.child(0)!), "previous")
+    assert(list.child(1)!.next() == null, "no next")
+    assert(root.find("table") == null, "none")
+    assert_eq(root.descendants().len(), 5)
+}
+
+test "attributes keep their order and can be replaced and removed" {
+    var list = sample()
+    assert_eq(list.attr("class")!, "tidy")
+    assert(list.attr("title") == null, "missing")
+    list.set_attr("class", "loose")!
+    list.set_attr("title", "t")!
+    var names: List<String> = []
+    for pair in list.attrs() {
+        names.push(pair.0)
+    }
+    assert_eq(join(names, ","), "class,id,title")
+    assert_eq(list.attr("class")!, "loose")
+    assert(list.remove_attr("id"), "removed")
+    assert(!list.remove_attr("id"), "gone")
+    assert_eq(list.attrs().len(), 2)
+    let modified = sample().with_class("clean").with_attr("data-x", "1")
+    assert_eq(modified.attr("class")!, "clean")
+    assert_eq(modified.attr("data-x")!, "1")
+    assert_eq(sample().attr("class")!, "tidy")
+}
+
+test "a node moves between parents and cannot be put inside itself" {
+    var root = doc.fragment([sample()])
+    var list = root.find("ul")!
+    var first = list.child(0)!
+    var other = doc.el("ol")
+    root.append(other)!
+    other.append(first)!
+    assert_eq(list.child_count(), 1)
+    assert_eq(other.child_count(), 1)
+    assert(list.append(root).is_err(), "the document node is nobody's child")
+    assert(first.append(other).is_err(), "inside its own child")
+    assert(first.append(first).is_err(), "inside itself")
+    var second = list.child(0)!
+    other.insert_before(second, first)!
+    assert_eq(other.child(0)!.text_content(), "two")
+    list.detach()
+    assert(list.parent() == null, "detached")
+    assert_eq(root.to_html(), "<ol><li>two</li><li>one</li></ol>")
+}
+
+test "only an element has attributes and a name, and only text has text" {
+    var text = doc.text("hi")
+    assert(text.set_attr("a", "b").is_err(), "attr")
+    assert(text.rename("p").is_err(), "name")
+    var p = doc.el("p")
+    assert(p.set_text("x").is_err(), "text")
+    text.set_text("bye")!
+    assert_eq(text.text(), "bye")
+    p.rename("h1")!
+    assert_eq(p.name(), "h1")
+    assert(text.kind() == NodeKind.Text, "kind")
+    assert(p.kind() == NodeKind.Element, "kind")
+    assert(doc.fragment().kind() == NodeKind.Document, "kind")
+    assert(text.append(p).is_err(), "text has no children")
+}
+
+test "the byte form reads back equal" {
+    let root = doc.fragment([sample()])
+    let bytes = root.bytes()
+    let again = Node.from_bytes(bytes)!
+    assert_eq(again.to_html(), root.to_html())
+    let rewritten = again.bytes()
+    assert_eq(rewritten.len(), bytes.len())
+    for at in 0..bytes.len() {
+        assert_eq(rewritten[at], bytes[at])
+    }
+    let wrapper = Doc.from_bytes(bytes)!
+    assert_eq(wrapper.to_html(), root.to_html())
+}
+
+test "bytes that are not a document are refused" {
+    assert(Node.from_bytes([1, 2, 3]).is_err(), "short")
+    let bytes = sample().bytes()
+    assert(Node.from_bytes(bytes.slice(0, bytes.len() - 2).to_array()).is_err(), "cut")
+    var broken = bytes
+    broken[0] = 88
+    assert(Node.from_bytes(broken).is_err(), "magic")
+}
+
+test "a node is copied cleanly" {
+    var root = doc.fragment([sample()])
+    let list = root.find("ul")!
+    var copy = list.copy()
+    assert(copy.parent() == null, "outside the tree")
+    root.append(copy)!
+    assert_eq(root.find_all("li").len(), 4)
+}
+
+test "Doc wrapper remains compatible and closing twice is an error" {
+    let d = Doc.new()
+    var r = d.root()
+    var p = d.element("p")
+    p.set_attr("id", "one")!
+    p.append(d.text("hello"))!
+    r.append(p)!
+    assert_eq(d.to_html(), "<p id=\"one\">hello</p>")
+    d.close()!
+    assert(d.close().is_err(), "twice")
+}

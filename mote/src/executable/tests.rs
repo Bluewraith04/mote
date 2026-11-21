@@ -10,7 +10,7 @@ fn linked(source: &str) -> (Scratch, PathBuf) {
     let scratch = Scratch::new();
     let dir = scratch.package("app", "app", &[], &[("main.mote", source)]);
     let mut pipeline = Pipeline::build(&dir, Target::Run, &Options::default()).unwrap_or_else(|failure| panic!("{failure}"));
-    let out = scratch.dir.join("app-exe");
+    let out = scratch.dir.join(format!("app-exe{}", std::env::consts::EXE_SUFFIX));
     link(&mut pipeline, &out).unwrap_or_else(|failure| panic!("{failure}"));
     (scratch, out)
 }

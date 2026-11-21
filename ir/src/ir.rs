@@ -38,7 +38,7 @@ pub enum FunctionKind {
     Instance(Instance),
     /// The body of a lambda, a nested `fn` or a `spawn` block.
     Closure { parent: FuncId },
-    /// A native or intrinsic function used as a value: it calls the function.
+    /// An external or intrinsic function used as a value: it calls the function.
     Native(Instance),
     /// The body of a generator after `lower_generators`: it runs on the frame and returns the next element, or `null` at the end.
     Resume { generator: FuncId },
@@ -117,9 +117,9 @@ pub enum Callee {
     Function(FuncId),
     /// A function value.
     Value(Operand),
-    /// An operation the runtime provides, named by `@intrinsic`.
+    /// A compiler intrinsic operation named by `@name`.
     Intrinsic(Symbol),
-    /// A `native fn` bound by `@link`.
+    /// An `extern` function bound to a library.
     Native(DefId),
 }
 

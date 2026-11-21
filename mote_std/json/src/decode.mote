@@ -1,0 +1,19 @@
+// The Mote value a JSON value holds.
+import Json from .value
+import parse from .parse
+
+/// The `T` the value holds, for a `T` that `encode` writes: a record takes its fields from the members of an object by name, an optional field may be left out, and a union tries its members in turn (preferring exact scalar/container matches). An `Err` names the place of the first mismatch; a field with a default is not taken from it, and a map with other than `String` keys, function or handle is an `Err`.
+pub fn decode<T>(json: Json) -> Result<T, Error> {
+    return json.decode<T>()
+}
+
+/// Parses JSON text directly into a `T`.
+pub fn parse_as<T>(text: String) -> Result<T, Error> {
+    let value = parse(text)?
+    return value.decode<T>()
+}
+
+/// `T.from_json(json)` on any type that lists it.
+pub trait FromJson {
+    fn from_json(json: Json) -> Result<Self, Error> { return json.decode() }
+}

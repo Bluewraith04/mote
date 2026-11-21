@@ -594,11 +594,12 @@ mod tests {
 
     #[test]
     fn keywords_are_not_identifiers() {
-        let r = run("let var fn struct class enum trait type pub import from as native scope spawn with return if else match while for in break continue yield self Self true false null super is");
+        let r = run("let var fn struct class enum trait type pub import from as comptime const extend extern scope spawn with return if else match while for in break continue yield self Self true false null super is");
         let expected = [
-            K::Let, K::Var, K::Fn, K::Struct, K::Class, K::Enum, K::Trait, K::Type, K::Pub, K::Import, K::From, K::As, K::Native,
-            K::Scope, K::Spawn, K::With, K::Return, K::If, K::Else, K::Match, K::While, K::For, K::In, K::Break, K::Continue,
-            K::Yield, K::SelfLower, K::SelfUpper, K::True, K::False, K::Null, K::Super, K::Is,
+            K::Let, K::Var, K::Fn, K::Struct, K::Class, K::Enum, K::Trait, K::Type, K::Pub, K::Import, K::From, K::As,
+            K::Comptime, K::Const, K::Extend, K::Extern, K::Scope, K::Spawn, K::With, K::Return, K::If, K::Else, K::Match,
+            K::While, K::For, K::In, K::Break, K::Continue, K::Yield, K::SelfLower, K::SelfUpper, K::True, K::False, K::Null,
+            K::Super, K::Is,
         ];
         assert_eq!(r.kinds(), expected);
     }
@@ -607,7 +608,7 @@ mod tests {
     fn the_keyword_table_is_sorted_and_holds_the_words_above() {
         let words: Vec<&str> = crate::KEYWORDS.iter().map(|(word, _)| *word).collect();
         assert!(words.windows(2).all(|pair| pair[0] < pair[1]), "{words:?}");
-        let mut listed: Vec<&str> = "let var fn struct class enum trait type pub import from as native scope spawn with return if else match while for in break continue yield self Self true false null super is".split(' ').collect();
+        let mut listed: Vec<&str> = "let var fn struct class enum trait type pub import from as comptime const extend extern scope spawn with return if else match while for in break continue yield self Self true false null super is".split(' ').collect();
         listed.sort_unstable();
         assert_eq!(words, listed);
     }

@@ -1,0 +1,20 @@
+// The functions of the external library `pane`, and the widths of the records they fill.
+
+extern "pane" {
+    pub fn pane_layout(ops: [Int], strings: [UInt8], width: Int, height: Int, commands: [Int], texts: [UInt8], boxes: [Int], info: [Int]) -> Int
+    pub fn pane_open(width: Int, height: Int, title: String, events: PortEnd, error: [UInt8]) -> Int
+    pub fn pane_present(handle: Int, commands: [Int], texts: [UInt8], count: Int) -> Int
+    pub fn pane_close(handle: Int)
+    pub fn pane_headless(events: PortEnd) -> Int
+    pub fn pane_inject(handle: Int, bytes: [UInt8]) -> Int
+
+    @blocking
+    pub fn pane_dialog_open(title: String, filter_ext: String, out: [UInt8]) -> Int
+
+    @blocking
+    pub fn pane_dialog_save(title: String, filter_ext: String, default_name: String, out: [UInt8]) -> Int
+}
+
+pub let OP_WIDTH = 24
+pub let CMD_WIDTH = 12
+pub let BOX_WIDTH = 6

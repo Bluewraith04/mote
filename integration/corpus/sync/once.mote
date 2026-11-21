@@ -1,9 +1,7 @@
-import { Once } from std.sync
-import { Task, await_all } from std.task
-import std.atomic as atomic
+import await_all from std.task
 
 fn main() {
-    let hits = atomic.Int64(0)
+    let hits = AtomicInt(0)
     let once = Once<Int>()
     let first = once.get_or_init(|| {
         hits.fetch_add(1)
@@ -17,7 +15,7 @@ fn main() {
     println(second)
     println(hits.load())
     let shared = Once<Int>()
-    let runs = atomic.Int64(0)
+    let runs = AtomicInt(0)
     var tasks: List<Task<Int>> = []
     for i in 0..4 {
         tasks.push(spawn {

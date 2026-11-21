@@ -1,0 +1,132 @@
+// Hashes, HMAC, HKDF and the constant-time comparison.
+import { Closeable, Display, Eq } from std.traits
+import { crypto_equal, crypto_hasher_finish, crypto_hasher_free, crypto_hasher_new, crypto_hasher_update, crypto_hkdf, crypto_hmac } from ._lib
+import to_hex from .hex
+
+/// A hash or MAC digest stored inline in a fixed 64-byte buffer, with constant-time equality.
+pub struct Digest: (Eq, Display) {
+    data: [UInt8; 64]
+    size: Int
+
+    /// Digest length in bytes.
+    pub fn len(self) -> Int { return self.size }
+
+    /// Copies the digest bytes into a freshly sized array.
+    pub fn bytes(self) -> [UInt8] {
+        var out: [UInt8] = [0; self.size]
+        for at in 0..self.size {
+            out[at] = self.data[at]
+        }
+        return out
+    }
+
+    /// The digest as lowercase hex digits.
+    pub fn to_hex(self) -> String { return to_hex(self.bytes()) }
+
+    pub fn to_string(self) -> String { return self.to_hex() }
+
+    /// Constant-time comparison of two digests.
+    pub fn eq(self, other: Digest) -> Bool { return equal(self.bytes(), other.bytes()) }
+
+    pub fn __eq__(self, other: Digest) -> Bool { return self.eq(other) }
+}
+
+/// The hash function of a digest, an HMAC or an HKDF.
+pub enum Algorithm {
+    Sha256
+    Sha384
+    Sha512
+
+    /// The digest length in bytes.
+    pub fn size(self) -> Int {
+        return match self {
+            Algorithm.Sha256 => 32
+            Algorithm.Sha384 => 48
+            Algorithm.Sha512 => 64
+        }
+    }
+
+    fn code(self) -> Int {
+        return match self {
+            Algorithm.Sha256 => 0
+            Algorithm.Sha384 => 1
+            Algorithm.Sha512 => 2
+        }
+    }
+}
+
+/// A hash in progress: `update` with pieces, then `finish` for the digest. Closing it unfinished frees it.
+pub class Hasher: (Closeable) {
+    handle: AtomicInt
+    algorithm: Algorithm
+
+    pub fn new(algorithm: Algorithm) -> Hasher {
+        return Hasher { handle: AtomicInt(crypto_hasher_new(algorithm.code())), algorithm: algorithm }
+    }
+
+    fn live(self) -> Int {
+        let handle = self.handle.load()
+        if handle == 0 { @fault("the hasher is finished or closed") }
+        return handle
+    }
+
+    /// Adds bytes to the hash.
+    pub fn update(self, data: [UInt8]) {
+        crypto_hasher_update(self.live(), data)
+    }
+
+    /// Adds the UTF-8 bytes of a text to the hash.
+    pub fn update_text(self, text: String) {
+        crypto_hasher_update(self.live(), text.bytes())
+    }
+
+    /// The digest of everything added; the hasher is finished after it.
+    pub fn finish(self) -> Digest {
+        self.live()
+        let handle = self.handle.swap(0)
+        var out: [UInt8; 64] = [0; 64]
+        let size = crypto_hasher_finish(handle, out)
+        return Digest { data: out, size: size }
+    }
+
+    pub fn close(self) -> Result<Null, Error> {
+        let handle = self.handle.swap(0)
+        if handle == 0 { return Err(Error.new(ErrorKind.Other, "hasher: already finished or closed")) }
+        crypto_hasher_free(handle)
+        return Ok(null)
+    }
+}
+
+/// The digest of the bytes.
+pub fn hash(algorithm: Algorithm, data: [UInt8]) -> Digest {
+    let hasher = Hasher.new(algorithm)
+    hasher.update(data)
+    return hasher.finish()
+}
+
+/// The digest of the UTF-8 bytes of a text.
+pub fn hash_text(algorithm: Algorithm, text: String) -> Digest {
+    return hash(algorithm, text.bytes())
+}
+
+/// The HMAC of the data under the key, `algorithm.size()` bytes.
+pub fn hmac(algorithm: Algorithm, key: [UInt8], data: [UInt8]) -> Digest {
+    var out: [UInt8; 64] = [0; 64]
+    let size = crypto_hmac(algorithm.code(), key, data, out)
+    return Digest { data: out, size: size }
+}
+
+/// HKDF (RFC 5869) of `length` bytes from a secret; an empty salt is a zero salt. An `Err` when `length` is above 255 digests.
+pub fn hkdf(algorithm: Algorithm, secret: [UInt8], salt: [UInt8], info: [UInt8], length: Int) -> Result<[UInt8], Error> {
+    if length < 0 || length > 255 * algorithm.size() {
+        return Err(Error.new(ErrorKind.InvalidData, "crypto: hkdf length ${length} is above ${255 * algorithm.size()}"))
+    }
+    var out: [UInt8] = [0; length]
+    crypto_hkdf(algorithm.code(), salt, secret, info, length, out)
+    return Ok(out)
+}
+
+/// Whether the two byte strings are equal; the time depends on the lengths and not on where they differ.
+pub fn equal(a: [UInt8], b: [UInt8]) -> Bool {
+    return crypto_equal(a, b) == 1
+}

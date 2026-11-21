@@ -4,6 +4,7 @@ mod calls;
 mod channels;
 mod collect;
 mod debug;
+#[cfg(not(target_os = "windows"))]
 mod dwarf;
 mod closures;
 mod emit;
@@ -12,11 +13,11 @@ mod function;
 mod host;
 mod jit;
 mod locks;
+mod mem;
 mod meta;
 mod native;
 mod numeric;
 mod objects;
-mod reflect;
 #[cfg(test)]
 mod refusals;
 mod rows;

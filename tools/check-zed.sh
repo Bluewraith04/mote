@@ -6,7 +6,7 @@ root=$(cd "$(dirname "$0")/.." && pwd)
 zed="$root/editors/zed"
 grammar="$root/editors/tree-sitter-mote"
 language="$zed/languages/mote"
-sample="$root/core/pane/src/element.mote"
+sample="$root/mote_std/pane/src/element.mote"
 failed=0
 
 fail() {

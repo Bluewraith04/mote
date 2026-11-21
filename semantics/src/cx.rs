@@ -28,6 +28,8 @@ pub(crate) struct Cx<'a> {
     /// Imports left out because they close a cycle, by module index.
     pub cut: HashSet<(usize, Id<ast::Item>)>,
     pub aliases: HashMap<DefId, Progress>,
+    /// Const items whose initializer is being or has been evaluated.
+    pub const_progress: HashMap<DefId, Progress>,
     /// Globals whose initializer is being or has been checked.
     pub globals: HashMap<DefId, Progress>,
     pub from: Symbol,
@@ -52,6 +54,7 @@ impl<'a> Cx<'a> {
             sink,
             cut: HashSet::new(),
             aliases: HashMap::new(),
+            const_progress: HashMap::new(),
             globals: HashMap::new(),
             from,
             self_name,

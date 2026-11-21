@@ -1,6 +1,6 @@
 id = "mote"
 name = "Mote"
-version = "0.2.0"
+version = "0.2.1"
 schema_version = 1
 authors = ["Warith Ogunwoolu"]
 description = "Mote language support: syntax highlighting, outline, brackets and indents."

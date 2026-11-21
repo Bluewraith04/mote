@@ -1,0 +1,45 @@
+import assert from std.test
+import join from std.string
+import { Extensions, github, parse_with, render_with, to_markdown } from markdown
+import examples from .spec_examples
+
+// Newlines between tags and at the ends do not count.
+fn normalize(html: String) -> String {
+    return html.replace(">\n", ">").replace("\n<", "<").trim()
+}
+
+// Text read, written as Markdown and read again; the two readings, or a note of where they differ.
+fn again(text: String, extensions: Extensions) -> String? {
+    let first = parse_with(text, extensions)!
+    let written = to_markdown(first)
+    let second = parse_with(written, extensions)!
+    let before = normalize(first.to_html())
+    let after = normalize(second.to_html())
+    if before == after { return null }
+    return "${text}\nwritten as\n${written}\nwanted ${before}\ngot ${after}"
+}
+
+test "every example of the specification reads the same after it is written as Markdown" {
+    var failures: List<String> = []
+    var number = 0
+    for example in examples() {
+        number = number + 1
+        let note = again(example.0, github())
+        if note != null { failures.push("example ${number}\n${note}") }
+    }
+    let shown = if failures.len() < 3 { failures.len() } else { 3 }
+    assert(failures.is_empty(), "${failures.len()} examples differ:\n" + join(failures.slice(0, shown), "\n---\n"))
+}
+
+test "extensions survive being written as Markdown" {
+    let samples = [
+        "| a | b |\n|:--|--:|\n| 1 | 2 |\n| x \\| y | `z` |\n",
+        "~~gone~~ and kept\n",
+        "- [ ] open\n- [x] done\n",
+        "1. [x] first\n2. second\n",
+    ]
+    for sample in samples {
+        let note = again(sample, github())
+        assert(note == null, if note == null { "" } else { note })
+    }
+}

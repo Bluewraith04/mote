@@ -20,7 +20,7 @@ mkdir "$work/blocks"
 count=0
 skipped=0
 while IFS= read -r doc; do
-  case "$doc" in ./tools/fixtures/*) continue ;; esac
+  case "$doc" in ./tools/fixtures/*|./demo/*) continue ;; esac
   starts=$(grep -n '^```mote$' "$doc" | cut -d: -f1 || true)
   for start in $starts; do
     count=$((count + 1))

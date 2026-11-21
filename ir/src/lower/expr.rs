@@ -1,5 +1,5 @@
 use mote_base::Id;
-use mote_semantics::{BinaryOp, Expr, ExprKind, TyId, UnaryOp};
+use mote_semantics::{BinaryOp, ConstArg, ConstVal, Expr, ExprKind, TyId, TyKind};
 
 use super::Lowering;
 use crate::ir::{Const, Op, Operand};
@@ -24,29 +24,46 @@ impl Lowering<'_> {
                 self.b.value(TyId::STRING, Op::Show(operand), span)
             }
             ExprKind::Local(local) => self.local(*local, span),
+            ExprKind::Const(_) => self.unsupported(span, "unevaluated const item"),
+            ExprKind::ConstArg(arg) => match arg {
+                ConstArg::Val(ConstVal::Int(n, _)) => Operand::Const(Const::Int(*n)),
+                ConstArg::Val(ConstVal::Bool(b)) => Operand::Const(Const::Bool(*b)),
+                ConstArg::Val(ConstVal::String(s)) => Operand::Const(Const::String(*s)),
+                ConstArg::Val(ConstVal::Null) => Operand::Const(Const::Null),
+                _ => self.unsupported(span, "unresolved const generic argument"),
+            },
+            ExprKind::SetField { object, index, value } => {
+                let object = *object;
+                let index = *index;
+                let value = *value;
+                let base = self.base(object);
+                let val = self.expr(value);
+                self.write_through(&base, span, |target| Op::SetField { object: target, index, value: val });
+                Operand::Const(Const::Null)
+            }
             ExprKind::Global(_) | ExprKind::Field { .. } | ExprKind::TupleField { .. } | ExprKind::Index { .. } => match self.place(id) {
                 Some(place) => self.read(&place, span),
                 None => Operand::Const(Const::Null),
             },
             ExprKind::Unary { op, operand } => {
+                let operand_ty = body.exprs[*operand].ty;
                 let operand = self.expr(*operand);
-                self.b.value(ty, Op::Unary { op: *op, operand }, span)
-            }
-            ExprKind::Binary { op: BinaryOp::And | BinaryOp::Or, .. } => self.logic_value(id),
-            ExprKind::Binary { op: op @ (BinaryOp::Eq | BinaryOp::NotEq), left, right } if body.exprs[*left].ty == body.exprs[*right].ty && self.is_collection(body.exprs[*left].ty) => {
-                let operand_ty = body.exprs[*left].ty;
-                let (left, right) = (self.expr(*left), self.expr(*right));
-                let same = self.collection_call(operand_ty, "equals", vec![left, right], TyId::BOOL, span);
-                match (same, op) {
-                    (Some(same), BinaryOp::NotEq) => self.b.value(TyId::BOOL, Op::Unary { op: UnaryOp::Not, operand: same }, span),
-                    (Some(same), _) => same,
-                    (None, _) => self.unsupported(span, "== on a collection"),
+                if matches!(self.program.types.kind(ty), TyKind::FixedArray(..)) {
+                    self.fixed_array_unary(ty, *op, operand, operand_ty, span)
+                } else {
+                    self.b.value(ty, Op::Unary { op: *op, operand }, span)
                 }
             }
+            ExprKind::Binary { op: BinaryOp::And | BinaryOp::Or, .. } => self.logic_value(id),
             ExprKind::Binary { op, left, right } => {
+                let (lt, rt) = (body.exprs[*left].ty, body.exprs[*right].ty);
                 let left = self.expr(*left);
                 let right = self.expr(*right);
-                self.b.value(ty, Op::Binary { op: *op, left, right }, span)
+                if matches!(self.program.types.kind(ty), TyKind::FixedArray(..)) {
+                    self.fixed_array_binary(ty, *op, left, lt, right, rt, span)
+                } else {
+                    self.b.value(ty, Op::Binary { op: *op, left, right }, span)
+                }
             }
             ExprKind::Cast(inner) => {
                 let operand = self.expr(*inner);
@@ -70,6 +87,7 @@ impl Lowering<'_> {
             ExprKind::Closure(closure) => self.closure(closure, ty, span),
             ExprKind::Spawn { task, scoped } => self.spawn(task, *scoped, ty, span),
             ExprKind::If { condition, then, otherwise } => self.if_value(condition, *then, *otherwise, ty, span),
+            ExprKind::Comptime(_) | ExprKind::ComptimeIf { .. } => self.unsupported(span, "unlowered comptime expression"),
             ExprKind::Match(item) => self.match_arms(item, ty, span),
             ExprKind::Error => Operand::Const(Const::Null),
         }

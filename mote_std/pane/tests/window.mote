@@ -1,0 +1,132 @@
+import { assert, assert_eq } from std.test
+import doc
+import Node from doc
+import { DrawKind, Event, KEY_ENTER, KEY_ESCAPE, Layout, Next, Window } from pane
+
+// A column with a button of `inc` and a label of the count.
+fn counter(count: Int) -> Node {
+    return doc.el("column", [
+        doc.el("box", id="inc", attrs=[("width", "100"), ("height", "40")]),
+        doc.el("text", ["count ${count}"])
+    ])
+}
+
+fn step(count: Int, event: Event) -> Next<Int> {
+    return match event {
+        Click(target, _, _, _) => if target == "inc" { Next.Continue(count + 1) } else { Next.Continue(count) }
+        Key(code) => if code == KEY_ESCAPE { Next.Quit(count) } else { Next.Continue(count + 10) }
+        _ => Next.Continue(count)
+    }
+}
+
+fn texts(shown: Layout) -> List<String> {
+    var found: List<String> = []
+    for each in shown.draws {
+        if each.kind == DrawKind.Text { found.push(each.text) }
+    }
+    return found
+}
+
+fn show(event: Event?) -> String {
+    if event == null { return "none" }
+    return match event {
+        Click(_, x, y, button) => "click ${x} ${y} ${button}"
+        Key(code) => "key ${code}"
+        Text(code) => "text ${code}"
+        Wheel(x, y, dx, dy) => "wheel ${x} ${y} ${dx} ${dy}"
+        Resized(w, h) => "resized ${w} ${h}"
+        Close => "close"
+    }
+}
+
+test "window run shows the view and applies each click" {
+    var window = Window.headless(400, 300)
+    assert(window.inject(Event.Click(null, 10, 10, 0)), "queued")
+    assert(window.inject(Event.Click(null, 20, 20, 0)), "queued")
+    assert(window.inject(Event.Click(null, 30, 30, 0)), "queued")
+    let last = window.run(0, counter, step)!
+    assert_eq(last, 3)
+    assert_eq(window.frames.len(), 4)
+    assert_eq(texts(window.frames.get(0)).get(0), "count 0")
+    assert_eq(texts(window.frames.get(3)).get(0), "count 3")
+}
+
+test "window click names the element under the point" {
+    var window = Window.headless(400, 300)
+    window.inject(Event.Click(null, 350, 250, 0))
+    window.inject(Event.Click(null, 99, 39, 0))
+    window.inject(Event.Click(null, 100, 39, 0))
+    assert_eq(window.run(0, counter, step)!, 1)
+}
+
+test "window run ends when a step quits" {
+    var window = Window.headless(400, 300)
+    window.inject(Event.Click(null, 1, 1, 0))
+    window.inject(Event.Key(KEY_ESCAPE))
+    window.inject(Event.Click(null, 1, 1, 0))
+    assert_eq(window.run(5, counter, step)!, 6)
+    assert_eq(window.frames.len(), 2)
+}
+
+test "window run with no events shows one frame and returns the state" {
+    var window = Window.headless(400, 300)
+    assert_eq(window.run(7, counter, step)!, 7)
+    assert_eq(window.frames.len(), 1)
+    assert(window.last != null, "the last layout is kept")
+}
+
+test "window events cross the port as they were sent" {
+    var window = Window.headless(400, 300)
+    window.inject(Event.Click(null, 12, 34, 2))
+    window.inject(Event.Key(KEY_ENTER))
+    window.inject(Event.Text(233))
+    window.inject(Event.Wheel(5, 6, 0 - 150, 100))
+    window.inject(Event.Resized(800, 600))
+    window.inject(Event.Close)
+    assert_eq(show(window.next()), "click 12 34 2")
+    assert_eq(show(window.next()), "key 257")
+    assert_eq(show(window.next()), "text 233")
+    assert_eq(show(window.next()), "wheel 5 6 -150 100")
+    assert_eq(show(window.next()), "resized 800 600")
+    assert_eq(show(window.next()), "close")
+    assert_eq(show(window.next()), "none")
+}
+
+test "window a resize changes the size the next view is laid out in" {
+    var window = Window.headless(400, 300)
+    window.inject(Event.Resized(250, 120))
+    window.run(0, counter, step)!
+    assert_eq(window.frames.get(0).width, 400)
+    assert_eq(window.frames.get(1).width, 250)
+    assert_eq(window.frames.get(1).height, 120)
+    assert_eq(window.width, 250)
+}
+
+test "window keys reach the step as they were typed" {
+    var window = Window.headless(400, 300)
+    window.inject(Event.Key(KEY_ENTER))
+    window.inject(Event.Key(KEY_ENTER))
+    assert_eq(window.run(0, counter, step)!, 20)
+}
+
+test "window run with a view that is wrong is an error" {
+    var window = Window.headless(400, 300)
+    let broken = |count: Int| -> Node { return doc.el("blink") }
+    let result = window.run(0, broken, step)
+    assert(result.is_err(), "the layout error comes out")
+    assert_eq(window.frames.len(), 0)
+}
+
+test "window frames are kept apart from each other" {
+    var window = Window.headless(400, 300)
+    window.inject(Event.Click(null, 1, 1, 0))
+    window.run(0, counter, step)!
+    assert(texts(window.frames.get(0)).get(0) != texts(window.frames.get(1)).get(0), "each frame has its own count")
+}
+
+test "window close of a headless window is harmless" {
+    var window = Window.headless(10, 10)
+    window.close()
+    window.close()
+    assert_eq(window.frames.len(), 0)
+}

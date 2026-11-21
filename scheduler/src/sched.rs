@@ -1,5 +1,6 @@
 //! The scheduler: workers with their queues, the task state machine, parking, timers, descriptors, preemption, seeded schedules and the deadlock report.
 
+use std::any::Any;
 use std::cell::{Cell, UnsafeCell};
 use std::collections::{HashMap, VecDeque};
 use std::fmt;
@@ -363,7 +364,7 @@ impl Shared {
         let _ = task.stack_limit_word().compare_exchange(0, limit as u64, Ordering::SeqCst, Ordering::SeqCst);
         // SAFETY: the stack is a fresh slot with a 16-aligned top, `task_entry` never returns, and the task is on no queue or worker but this one.
         unsafe {
-            *task.sp.get() = switch::prepare(stack.top(), task_entry, Arc::as_ptr(task) as usize);
+            *task.sp.get() = switch::prepare_range(stack.base(), stack.top(), task_entry, Arc::as_ptr(task) as usize);
             *task.stack.get() = Some(stack);
         }
         true
@@ -754,7 +755,13 @@ impl Worker {
         // SAFETY: as above; the snapshot is the bytes the compactor took from the stack at the saved pointer, which is mapped and empty now.
         unsafe {
             let _guard = lock(&shared.stack_guard);
-            if let Some(bytes) = (*task.snapshot.get()).take() {
+            let snapshot = (*task.snapshot.get()).take();
+            if (snapshot.is_some() || task.cold.load(Ordering::SeqCst))
+                && let Some(stack) = (*task.stack.get()).as_ref()
+            {
+                crate::sys::prepare_stack_window(stack.base(), *task.sp.get(), stack.top());
+            }
+            if let Some(bytes) = snapshot {
                 ptr::copy_nonoverlapping(bytes.as_ptr(), *task.sp.get() as *mut u8, bytes.len());
             }
         }
@@ -860,8 +867,102 @@ extern "C" fn task_entry(arg: usize) -> ! {
 
 /// Ends the calling task here: its frames are abandoned and no destructor above this call runs.
 pub fn exit() -> ! {
-    block(Action::Done);
+    if current_worker().is_some() {
+        block(Action::Done);
+    } else if !DIRECT.with(Cell::get).is_null() {
+        direct_return();
+    } else {
+        panic!("a task runs on a worker");
+    }
     unreachable!("a finished task is never resumed");
+}
+
+struct DirectState {
+    return_sp: usize,
+    limit: usize,
+}
+
+thread_local! {
+    static DIRECT: Cell<*mut DirectState> = const { Cell::new(ptr::null_mut()) };
+}
+
+struct DirectFrame<F> {
+    func: Option<F>,
+    panic: Option<Box<dyn Any + Send>>,
+}
+
+extern "C" fn direct_entry<F: FnOnce()>(arg: usize) -> ! {
+    // SAFETY: `arg` points to `DirectFrame<F>` live in `run_single`'s suspended stack frame.
+    let frame = unsafe { &mut *(arg as *mut DirectFrame<F>) };
+    let func = frame.func.take().expect("a single task starts once");
+    if let Err(payload) = catch_unwind(AssertUnwindSafe(func)) {
+        frame.panic = Some(payload);
+    }
+    direct_return();
+}
+
+fn direct_return() -> ! {
+    let direct = DIRECT.with(Cell::get);
+    assert!(!direct.is_null(), "exit called outside a task");
+    let mut dummy_sp = 0usize;
+    // SAFETY: `direct.return_sp` holds the OS stack pointer saved by `run_single`; `dummy_sp` discards the abandoned task stack.
+    unsafe { switch::switch(&raw mut dummy_sp, (*direct).return_sp) };
+    unreachable!("a finished task is never resumed");
+}
+
+/// The stack limit of the active single-threaded run, when running inside `run_single`.
+pub fn direct_stack_limit() -> Option<usize> {
+    let direct = DIRECT.with(Cell::get);
+    if direct.is_null() {
+        None
+    } else {
+        // SAFETY: `direct` points to `DirectState` live on `run_single`'s suspended stack.
+        Some(unsafe { (*direct).limit })
+    }
+}
+
+fn direct_entry_for<F: FnOnce()>(_frame: &DirectFrame<F>) -> extern "C" fn(usize) -> ! {
+    direct_entry::<F>
+}
+
+/// Runs `main` directly on one mapped stack without worker threads, ticker, scavenger, or poller; returns `None` when `main` ends via `exit`.
+pub fn run_single<R>(main_stack_bytes: usize, main: impl FnOnce() -> R) -> Result<Option<R>, SysError> {
+    assert!(current_worker().is_none() && DIRECT.with(Cell::get).is_null(), "run_single cannot nest inside a task");
+    let slab = Slab::new(1, main_stack_bytes)?;
+    let stack = slab.acquire().expect("a single-task slab holds one stack");
+    let limit = stack.limit();
+    let mut result: Option<R> = None;
+    let mut frame = DirectFrame {
+        func: Some(|| {
+            result = Some(main());
+        }),
+        panic: None,
+    };
+    let entry = direct_entry_for(&frame);
+    // SAFETY: `stack` is freshly mapped with a 16-aligned top, `direct_entry` never returns, and `frame` stays live while `switch` runs.
+    let task_sp = unsafe { switch::prepare_range(stack.base(), stack.top(), entry, &raw mut frame as usize) };
+    let mut direct = DirectState { return_sp: 0, limit };
+    struct DirectGuard(*mut DirectState);
+    impl Drop for DirectGuard {
+        fn drop(&mut self) {
+            DIRECT.with(|slot| slot.set(self.0));
+        }
+    }
+    let guard = DirectGuard(DIRECT.with(|slot| {
+        let prev = slot.get();
+        slot.set(&raw mut direct);
+        prev
+    }));
+    // SAFETY: `direct.return_sp` stores this thread's stack pointer; `task_sp` enters `direct_entry` on `stack`.
+    unsafe { switch::switch(&raw mut direct.return_sp, task_sp) };
+    drop(guard);
+    slab.release(stack);
+    // SAFETY: the direct task has finished and nothing runs on this slab again.
+    unsafe { slab.unmap() };
+    if let Some(payload) = frame.panic {
+        resume_unwind(payload);
+    }
+    Ok(result)
 }
 
 /// Switches from the running task to its worker with a request.
@@ -1249,13 +1350,18 @@ pub fn poll_point() -> Poll {
 
 /// What compiled code's runtime entry calls when the stack-limit check fails with the stack pointer `sp`.
 pub fn stack_trap(sp: usize) -> Trap {
-    let task = in_task();
-    if task.cancelled.load(Ordering::SeqCst) {
-        Trap::Cancelled
-    } else if sp < task.real_limit.load(Ordering::SeqCst) {
-        Trap::Overflow
+    if let Some(task) = current_task() {
+        if task.cancelled.load(Ordering::SeqCst) {
+            Trap::Cancelled
+        } else if sp < task.real_limit.load(Ordering::SeqCst) {
+            Trap::Overflow
+        } else {
+            Trap::Spurious
+        }
+    } else if let Some(limit) = direct_stack_limit() {
+        if sp < limit { Trap::Overflow } else { Trap::Spurious }
     } else {
-        Trap::Spurious
+        panic!("this call needs a task");
     }
 }
 

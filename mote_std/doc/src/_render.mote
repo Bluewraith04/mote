@@ -1,0 +1,24 @@
+// Pure HTML escaping and element tag serialization helpers.
+
+let VOID = ["area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "track", "wbr"]
+
+/// Escapes HTML text (`& < >`) and optionally attribute quotes (`" '`).
+pub fn escape_html(text: String, quotes: Bool) -> String {
+    var out = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    if quotes { out = out.replace("\"", "&quot;").replace("'", "&#39;") }
+    return out
+}
+
+/// Whether `name` is an HTML void element rendered self-closing (`<br />`).
+pub fn is_void_tag(name: String) -> Bool {
+    return VOID.contains(name)
+}
+
+/// Serializes an opening tag `<name a="b">` or `<name a="b" />` when void.
+pub fn open_tag(name: String, attrs: List<(String, String)>, is_void: Bool) -> String {
+    var out = "<" + name
+    for attr in attrs {
+        out = out + " " + attr.0 + "=\"" + escape_html(attr.1, true) + "\""
+    }
+    return out + (if is_void { " />" } else { ">" })
+}
