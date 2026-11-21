@@ -1,0 +1,56 @@
+// Instants on the scheduler clock and spans of time between them.
+import { Display, Ord } from std.traits
+import { sleep as pause } from std.task
+
+@intrinsic("sys_now")
+native fn now_of() -> Int
+
+pub struct Duration: (Ord, Display) {
+    ns: Int
+
+    pub fn from_nanos(n: Int) -> Duration { return Duration { ns: n } }
+    pub fn from_micros(n: Int) -> Duration { return Duration { ns: n * 1000 } }
+    pub fn from_millis(n: Int) -> Duration { return Duration { ns: n * 1000000 } }
+    pub fn from_secs(n: Int) -> Duration { return Duration { ns: n * 1000000000 } }
+    pub fn as_nanos(self) -> Int { return self.ns }
+    pub fn as_micros(self) -> Int { return self.ns / 1000 }
+    pub fn as_millis(self) -> Int { return self.ns / 1000000 }
+    pub fn as_secs(self) -> Int { return self.ns / 1000000000 }
+    pub fn add(self, other: Duration) -> Duration { return Duration { ns: self.ns + other.ns } }
+    pub fn sub(self, other: Duration) -> Duration {
+        if other.ns > self.ns { return Duration { ns: 0 } }
+        return Duration { ns: self.ns - other.ns }
+    }
+    pub fn mul(self, times: Int) -> Duration { return Duration { ns: self.ns * times } }
+    pub fn compare(self, other: Duration) -> Int {
+        if self.ns < other.ns { return -1 }
+        if self.ns > other.ns { return 1 }
+        return 0
+    }
+    pub fn to_string(self) -> String {
+        if self.ns % 1000000000 == 0 { return "${self.ns / 1000000000}s" }
+        if self.ns % 1000000 == 0 { return "${self.ns / 1000000}ms" }
+        if self.ns % 1000 == 0 { return "${self.ns / 1000}us" }
+        return "${self.ns}ns"
+    }
+}
+
+pub struct Instant: (Ord) {
+    ns: Int
+
+    pub fn now() -> Instant { return Instant { ns: now_of() } }
+    pub fn elapsed(self) -> Duration { return Instant.now().since(self) }
+    pub fn since(self, earlier: Instant) -> Duration {
+        if earlier.ns > self.ns { return Duration { ns: 0 } }
+        return Duration { ns: self.ns - earlier.ns }
+    }
+    pub fn add(self, span: Duration) -> Instant { return Instant { ns: self.ns + span.ns } }
+    pub fn compare(self, other: Instant) -> Int {
+        if self.ns < other.ns { return -1 }
+        if self.ns > other.ns { return 1 }
+        return 0
+    }
+}
+
+// Parks for the span, to the next whole millisecond.
+pub fn sleep(span: Duration) { pause((span.ns + 999999) / 1000000) }

@@ -1,0 +1,25 @@
+start
+test "range counts from zero"
+passed
+test "map changes each element"
+passed
+test "flat_map joins the results"
+passed
+test "filter keeps what passes"
+passed
+test "find and find_index"
+passed
+test "any and all"
+passed
+test "fold and sum"
+passed
+test "reverse, take and enumerate"
+passed
+test "contains uses equality"
+passed
+test "sort_by is stable"
+passed
+test "sort orders numbers and text"
+passed
+test "the inputs are left alone"
+passed

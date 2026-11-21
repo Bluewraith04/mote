@@ -1,0 +1,161 @@
+// The sized signed integers.
+import std.numeric as n
+
+@lang("int8")
+pub struct Int8 {
+    pub fn eq(self, other: Int8) -> Bool { return self == other }
+    pub fn compare(self, other: Int8) -> Int {
+        if self < other { return -1 }
+        if self > other { return 1 }
+        return 0
+    }
+    pub fn clone(self) -> Int8 { return self }
+    pub fn debug(self) -> String { return n.to_string(self) }
+    pub fn abs(self) -> Int8 {
+        if self < 0 { return -self }
+        return self
+    }
+    pub fn min(self, other: Int8) -> Int8 {
+        if other < self { return other }
+        return self
+    }
+    pub fn max(self, other: Int8) -> Int8 {
+        if other > self { return other }
+        return self
+    }
+    pub fn to_string(self) -> String { return n.to_string(self) }
+
+    pub fn wrapping_add(self, other: Int8) -> Int8 { return n.wrapping_add(self, other) }
+    pub fn wrapping_sub(self, other: Int8) -> Int8 { return n.wrapping_sub(self, other) }
+    pub fn wrapping_mul(self, other: Int8) -> Int8 { return n.wrapping_mul(self, other) }
+    pub fn wrapping_neg(self) -> Int8 { return n.wrapping_neg(self) }
+    pub fn wrapping_shl(self, bits: Int) -> Int8 { return n.wrapping_shl(self, bits) }
+    pub fn wrapping_shr(self, bits: Int) -> Int8 { return n.wrapping_shr(self, bits) }
+
+    pub fn checked_add(self, other: Int8) -> Int8? { return n.checked_add(self, other) }
+    pub fn checked_sub(self, other: Int8) -> Int8? { return n.checked_sub(self, other) }
+    pub fn checked_mul(self, other: Int8) -> Int8? { return n.checked_mul(self, other) }
+    pub fn checked_neg(self) -> Int8? { return n.checked_neg(self) }
+    pub fn checked_shl(self, bits: Int) -> Int8? { return n.checked_shl(self, bits) }
+    pub fn checked_shr(self, bits: Int) -> Int8? { return n.checked_shr(self, bits) }
+
+    pub fn saturating_add(self, other: Int8) -> Int8 { return n.saturating_add(self, other) }
+    pub fn saturating_sub(self, other: Int8) -> Int8 { return n.saturating_sub(self, other) }
+    pub fn saturating_mul(self, other: Int8) -> Int8 { return n.saturating_mul(self, other) }
+    pub fn saturating_neg(self) -> Int8 { return n.saturating_neg(self) }
+    pub fn saturating_shl(self, bits: Int) -> Int8 { return n.saturating_shl(self, bits) }
+    pub fn saturating_shr(self, bits: Int) -> Int8 { return n.saturating_shr(self, bits) }
+
+    pub fn overflowing_add(self, other: Int8) -> (Int8, Bool) { return n.overflowing_add(self, other) }
+    pub fn overflowing_sub(self, other: Int8) -> (Int8, Bool) { return n.overflowing_sub(self, other) }
+    pub fn overflowing_mul(self, other: Int8) -> (Int8, Bool) { return n.overflowing_mul(self, other) }
+    pub fn overflowing_neg(self) -> (Int8, Bool) { return n.overflowing_neg(self) }
+    pub fn overflowing_shl(self, bits: Int) -> (Int8, Bool) { return n.overflowing_shl(self, bits) }
+    pub fn overflowing_shr(self, bits: Int) -> (Int8, Bool) { return n.overflowing_shr(self, bits) }
+}
+
+@lang("int16")
+pub struct Int16 {
+    pub fn eq(self, other: Int16) -> Bool { return self == other }
+    pub fn compare(self, other: Int16) -> Int {
+        if self < other { return -1 }
+        if self > other { return 1 }
+        return 0
+    }
+    pub fn clone(self) -> Int16 { return self }
+    pub fn debug(self) -> String { return n.to_string(self) }
+    pub fn abs(self) -> Int16 {
+        if self < 0 { return -self }
+        return self
+    }
+    pub fn min(self, other: Int16) -> Int16 {
+        if other < self { return other }
+        return self
+    }
+    pub fn max(self, other: Int16) -> Int16 {
+        if other > self { return other }
+        return self
+    }
+    pub fn to_string(self) -> String { return n.to_string(self) }
+
+    pub fn wrapping_add(self, other: Int16) -> Int16 { return n.wrapping_add(self, other) }
+    pub fn wrapping_sub(self, other: Int16) -> Int16 { return n.wrapping_sub(self, other) }
+    pub fn wrapping_mul(self, other: Int16) -> Int16 { return n.wrapping_mul(self, other) }
+    pub fn wrapping_neg(self) -> Int16 { return n.wrapping_neg(self) }
+    pub fn wrapping_shl(self, bits: Int) -> Int16 { return n.wrapping_shl(self, bits) }
+    pub fn wrapping_shr(self, bits: Int) -> Int16 { return n.wrapping_shr(self, bits) }
+
+    pub fn checked_add(self, other: Int16) -> Int16? { return n.checked_add(self, other) }
+    pub fn checked_sub(self, other: Int16) -> Int16? { return n.checked_sub(self, other) }
+    pub fn checked_mul(self, other: Int16) -> Int16? { return n.checked_mul(self, other) }
+    pub fn checked_neg(self) -> Int16? { return n.checked_neg(self) }
+    pub fn checked_shl(self, bits: Int) -> Int16? { return n.checked_shl(self, bits) }
+    pub fn checked_shr(self, bits: Int) -> Int16? { return n.checked_shr(self, bits) }
+
+    pub fn saturating_add(self, other: Int16) -> Int16 { return n.saturating_add(self, other) }
+    pub fn saturating_sub(self, other: Int16) -> Int16 { return n.saturating_sub(self, other) }
+    pub fn saturating_mul(self, other: Int16) -> Int16 { return n.saturating_mul(self, other) }
+    pub fn saturating_neg(self) -> Int16 { return n.saturating_neg(self) }
+    pub fn saturating_shl(self, bits: Int) -> Int16 { return n.saturating_shl(self, bits) }
+    pub fn saturating_shr(self, bits: Int) -> Int16 { return n.saturating_shr(self, bits) }
+
+    pub fn overflowing_add(self, other: Int16) -> (Int16, Bool) { return n.overflowing_add(self, other) }
+    pub fn overflowing_sub(self, other: Int16) -> (Int16, Bool) { return n.overflowing_sub(self, other) }
+    pub fn overflowing_mul(self, other: Int16) -> (Int16, Bool) { return n.overflowing_mul(self, other) }
+    pub fn overflowing_neg(self) -> (Int16, Bool) { return n.overflowing_neg(self) }
+    pub fn overflowing_shl(self, bits: Int) -> (Int16, Bool) { return n.overflowing_shl(self, bits) }
+    pub fn overflowing_shr(self, bits: Int) -> (Int16, Bool) { return n.overflowing_shr(self, bits) }
+}
+
+@lang("int32")
+pub struct Int32 {
+    pub fn eq(self, other: Int32) -> Bool { return self == other }
+    pub fn compare(self, other: Int32) -> Int {
+        if self < other { return -1 }
+        if self > other { return 1 }
+        return 0
+    }
+    pub fn clone(self) -> Int32 { return self }
+    pub fn debug(self) -> String { return n.to_string(self) }
+    pub fn abs(self) -> Int32 {
+        if self < 0 { return -self }
+        return self
+    }
+    pub fn min(self, other: Int32) -> Int32 {
+        if other < self { return other }
+        return self
+    }
+    pub fn max(self, other: Int32) -> Int32 {
+        if other > self { return other }
+        return self
+    }
+    pub fn to_string(self) -> String { return n.to_string(self) }
+
+    pub fn wrapping_add(self, other: Int32) -> Int32 { return n.wrapping_add(self, other) }
+    pub fn wrapping_sub(self, other: Int32) -> Int32 { return n.wrapping_sub(self, other) }
+    pub fn wrapping_mul(self, other: Int32) -> Int32 { return n.wrapping_mul(self, other) }
+    pub fn wrapping_neg(self) -> Int32 { return n.wrapping_neg(self) }
+    pub fn wrapping_shl(self, bits: Int) -> Int32 { return n.wrapping_shl(self, bits) }
+    pub fn wrapping_shr(self, bits: Int) -> Int32 { return n.wrapping_shr(self, bits) }
+
+    pub fn checked_add(self, other: Int32) -> Int32? { return n.checked_add(self, other) }
+    pub fn checked_sub(self, other: Int32) -> Int32? { return n.checked_sub(self, other) }
+    pub fn checked_mul(self, other: Int32) -> Int32? { return n.checked_mul(self, other) }
+    pub fn checked_neg(self) -> Int32? { return n.checked_neg(self) }
+    pub fn checked_shl(self, bits: Int) -> Int32? { return n.checked_shl(self, bits) }
+    pub fn checked_shr(self, bits: Int) -> Int32? { return n.checked_shr(self, bits) }
+
+    pub fn saturating_add(self, other: Int32) -> Int32 { return n.saturating_add(self, other) }
+    pub fn saturating_sub(self, other: Int32) -> Int32 { return n.saturating_sub(self, other) }
+    pub fn saturating_mul(self, other: Int32) -> Int32 { return n.saturating_mul(self, other) }
+    pub fn saturating_neg(self) -> Int32 { return n.saturating_neg(self) }
+    pub fn saturating_shl(self, bits: Int) -> Int32 { return n.saturating_shl(self, bits) }
+    pub fn saturating_shr(self, bits: Int) -> Int32 { return n.saturating_shr(self, bits) }
+
+    pub fn overflowing_add(self, other: Int32) -> (Int32, Bool) { return n.overflowing_add(self, other) }
+    pub fn overflowing_sub(self, other: Int32) -> (Int32, Bool) { return n.overflowing_sub(self, other) }
+    pub fn overflowing_mul(self, other: Int32) -> (Int32, Bool) { return n.overflowing_mul(self, other) }
+    pub fn overflowing_neg(self) -> (Int32, Bool) { return n.overflowing_neg(self) }
+    pub fn overflowing_shl(self, bits: Int) -> (Int32, Bool) { return n.overflowing_shl(self, bits) }
+    pub fn overflowing_shr(self, bits: Int) -> (Int32, Bool) { return n.overflowing_shr(self, bits) }
+}

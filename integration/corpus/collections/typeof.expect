@@ -1,0 +1,13 @@
+ended Returned
+| Int
+| Int8
+| Float
+| Bool
+| String
+| List<String>
+| Int?
+| corpus.main.Point
+| corpus.main.Counter
+| corpus.main.Shape
+| (Int, String)
+| List<Int>

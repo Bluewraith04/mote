@@ -1,0 +1,2 @@
+// UUIDs: versions 4 (random) and 7 (time ordered), their text and their bytes.
+pub import { Uuid } from .uuid

@@ -1,0 +1,116 @@
+// Option, Result and Error.
+import { assert, assert_eq } from std.test
+import { context } from std.error
+
+fn half(n: Int) -> Int? {
+    if n % 2 != 0 { return None }
+    return Some(n / 2)
+}
+
+fn check(n: Int) -> Result<Int, Error> {
+    if n < 0 { return Err(Error.new(InvalidData, "negative")) }
+    return Ok(n)
+}
+
+test "is_some and is_none" {
+    assert(Some(1).is_some(), "some")
+    assert(!Some(1).is_none(), "not none")
+    let nothing: Int? = None
+    assert(nothing.is_none(), "none")
+}
+
+test "unwrap gives the value or faults" {
+    assert_eq(Some(4).unwrap(), 4)
+    let h = spawn {
+        let nothing: Int? = None
+        return nothing.unwrap()
+    }
+    assert(h.await().is_err(), "unwrap on None faults")
+}
+
+test "unwrap_or and unwrap_or_else" {
+    let nothing: Int? = None
+    assert_eq(Some(1).unwrap_or(9), 1)
+    assert_eq(nothing.unwrap_or(9), 9)
+    assert_eq(nothing.unwrap_or_else(|| 7), 7)
+    assert_eq(Some(2).unwrap_or_else(|| 7), 2)
+}
+
+test "map and and_then" {
+    assert_eq(Some(2).map(|x| x * 3)!, 6)
+    let nothing: Int? = None
+    assert(nothing.map(|x| x * 3) == null, "map on none")
+    assert_eq(Some(8).and_then(half)!, 4)
+    assert(Some(3).and_then(half) == null, "and_then to none")
+    assert(nothing.and_then(half) == null, "and_then on none")
+}
+
+test "ok_or makes a Result" {
+    assert_eq(Some(1).ok_or("no").unwrap(), 1)
+    let nothing: Int? = None
+    assert(nothing.ok_or("no").is_err(), "none becomes Err")
+}
+
+test "an optional narrows, coalesces and chains" {
+    let a: Int? = 5
+    let b: Int? = null
+    assert_eq(a ?? 0, 5)
+    assert_eq(b ?? 0, 0)
+    if a != null { assert_eq(a + 1, 6) }
+    var c: Int? = null
+    c ??= 3
+    assert_eq(c!, 3)
+}
+
+test "Ok and Err report which they are" {
+    assert(check(1).is_ok(), "ok")
+    assert(!check(1).is_err(), "not err")
+    assert(check(-1).is_err(), "err")
+}
+
+test "a Result unwraps, maps and chains" {
+    assert_eq(check(3).unwrap(), 3)
+    assert_eq(check(-3).unwrap_or(0), 0)
+    assert_eq(check(-3).unwrap_or_else(|| 5), 5)
+    assert_eq(check(2).map(|x| x + 1).unwrap(), 3)
+    assert(check(-1).map(|x| x + 1).is_err(), "map keeps Err")
+    assert_eq(check(2).and_then(check).unwrap(), 2)
+    assert(check(-2).and_then(check).is_err(), "and_then keeps Err")
+}
+
+test "or and or_else take the other on Err" {
+    assert_eq(check(-1).or(check(4)).unwrap(), 4)
+    assert_eq(check(1).or(check(4)).unwrap(), 1)
+    assert_eq(check(-1).or_else(|| check(6)).unwrap(), 6)
+}
+
+test "a question mark returns the Err" {
+    let h = spawn {
+        let attempt = || -> Result<Int, Error> {
+            let n = check(-1)?
+            return Ok(n + 100)
+        }
+        return attempt().is_err()
+    }
+    assert(h.await().unwrap(), "the error came back")
+}
+
+test "an Error has a kind and a message" {
+    let e = Error.new(NotFound, "gone")
+    assert_eq(e.message, "gone")
+    assert(e.kind == NotFound, "kind")
+    assert_eq(Error.other("x").message, "x")
+    assert(Error.other("x").kind == Other, "other kind")
+    assert_eq(e.to_string(), "gone")
+}
+
+test "context puts a prefix on the message" {
+    let e = Error.new(TimedOut, "slow").context("fetch")
+    assert_eq(e.message, "fetch: slow")
+    assert(e.kind == TimedOut, "the kind stays")
+    match context(check(-1), "load") {
+        Ok(_) => assert(false, "was Ok")
+        Err(failure) => assert_eq(failure.message, "load: negative")
+    }
+    assert_eq(context(check(5), "load").unwrap(), 5)
+}

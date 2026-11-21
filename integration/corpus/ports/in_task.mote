@@ -1,0 +1,14 @@
+// feed 0 10 1,2
+// feed 0 20 3
+// close 0 30
+import { Port, PortMode } from std.port
+
+fn main() {
+    let (end, rx) = Port.open(PortMode.Queue(4))
+    let reader = spawn {
+        var total = 0
+        for message in rx { total += message.len() as Int }
+        return total
+    }
+    println(reader.await()!)
+}

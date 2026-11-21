@@ -1,0 +1,32 @@
+// Bytes as hex digits.
+
+let HEX = "0123456789abcdef"
+/// The bytes as lowercase hex digits.
+pub fn to_hex(bytes: [UInt8]) -> String {
+    var out: [UInt8] = [0; bytes.len() * 2]
+    let digits = HEX.bytes()
+    for at in 0..bytes.len() {
+        let value = bytes[at] as Int
+        out[at * 2] = digits[value / 16]
+        out[at * 2 + 1] = digits[value % 16]
+    }
+    return String.from_bytes(out)!
+}
+
+/// The bytes of hex digits in either case; an `Err` for an odd length or another character.
+pub fn from_hex(text: String) -> Result<[UInt8], Error> {
+    let codes = text.bytes()
+    if codes.len() % 2 != 0 { return Err(Error.new(ErrorKind.InvalidData, "crypto: odd number of hex digits")) }
+    var out: [UInt8] = [0; codes.len() / 2]
+    for at in 0..codes.len() {
+        let code = codes[at] as Int
+        var value = -1
+        if code >= 48 && code <= 57 { value = code - 48 }
+        if code >= 97 && code <= 102 { value = code - 87 }
+        if code >= 65 && code <= 70 { value = code - 55 }
+        if value < 0 { return Err(Error.new(ErrorKind.InvalidData, "crypto: not a hex digit at ${at}")) }
+        let index = at / 2
+        out[index] = (if at % 2 == 0 { value * 16 } else { (out[index] as Int) + value }) as UInt8
+    }
+    return Ok(out)
+}

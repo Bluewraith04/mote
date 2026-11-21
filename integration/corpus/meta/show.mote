@@ -1,0 +1,55 @@
+import { show, debug_text, duplicate } from std.meta
+
+struct Point {
+    x: Int
+    y: Int
+}
+
+class Account {
+    var owner: String
+    var balance: Int
+}
+
+enum Shape {
+    Empty
+    Circle(Float)
+    Rect { width: Float, height: Float }
+}
+
+class Wrapper {
+    name: String
+    inner: Point
+    tags: List<String>
+    maybe: Int?
+    pair: (Int, String)
+    shape: Shape
+}
+
+class Grid {
+    cells: [Int]
+    fixed: [Int; 2]
+}
+
+fn main() {
+    println(show(Point { x: 3, y: 4 }))
+    println(debug_text(Point { x: 3, y: 4 }))
+    println(show(Account { owner: "ann", balance: 5 }))
+    println(debug_text(Account { owner: "ann", balance: 5 }))
+    println(show(Shape.Empty))
+    println(show(Shape.Circle(1.5)))
+    println(show(Shape.Rect { width: 2.0, height: 3.0 }))
+    println(debug_text(Shape.Rect { width: 2.0, height: 3.0 }))
+    println(debug_text(Shape.Circle(1.5)))
+    let w = Wrapper { name: "w", inner: Point { x: 1, y: 2 }, tags: ["a", "b"], maybe: 7, pair: (1, "p"), shape: Shape.Circle(0.5) }
+    println(show(w))
+    println(debug_text(w))
+    let none = Wrapper { name: "n", inner: Point { x: 0, y: 0 }, tags: [], maybe: null, pair: (0, ""), shape: Shape.Empty }
+    println(show(none))
+    println(show(Grid { cells: [1, 2, 3], fixed: [4, 5] }))
+    println(show(5))
+    println(show("text"))
+    println(show([1, 2]))
+    println(show((1, "x")))
+    let copy = duplicate(Point { x: 1, y: 2 })
+    println(show(copy))
+}

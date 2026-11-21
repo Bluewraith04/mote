@@ -1,0 +1,12 @@
+fn checked(n: Int) -> Result<Int, Int> {
+    if n < 0 {
+        return Err(n)
+    }
+    return Ok(n)
+}
+
+fn main() {
+    println(checked(3)!)
+    println(checked(-3)!)
+    println(1)
+}

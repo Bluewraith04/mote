@@ -1,0 +1,10 @@
+fn grow(start: Int8, by: Int8) -> Int8 {
+    var x = start
+    x += by
+    return x
+}
+
+fn main() {
+    println(grow(100, 27))
+    println(grow(100, 28))
+}

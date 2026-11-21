@@ -1,0 +1,46 @@
+fn both(a: Bool, b: Bool) -> Bool {
+    return a && b
+}
+
+fn either(a: Bool, b: Bool) -> Bool {
+    return a || b
+}
+
+fn sign(x: Int) -> Int {
+    if x < 0 {
+        return -1
+    }
+    if x > 0 {
+        return 1
+    }
+    return 0
+}
+
+fn describe(n: Int) -> Int {
+    return match n {
+        0 => 100
+        1 => 101
+        2 => 102
+        _ => 0
+    }
+}
+
+fn main() {
+    println(both(true, false))
+    println(either(true, false))
+    println(!both(true, true))
+    println(sign(-5))
+    println(sign(0))
+    println(sign(7))
+    println(describe(0))
+    println(describe(2))
+    println(describe(9))
+    println(5 & 3)
+    println(5 | 3)
+    println(5 ^ 3)
+    println(~5)
+    var u: UInt8 = 5
+    println(~u)
+    println(true == true)
+    println(true != false)
+}

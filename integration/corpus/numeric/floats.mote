@@ -1,0 +1,50 @@
+import { float_to_int } from std.numeric
+import { sqrt, floor, ceil, round, pow, exp, ln, log10, sin, cos, tan, atan2 } from std.math
+
+fn zero() -> Float {
+    var z = 1.0
+    z -= 1.0
+    return z
+}
+
+fn main() {
+    println(sqrt(2.0))
+    println(sqrt(16.0))
+    println(floor(2.7))
+    println(floor(-2.7))
+    println(ceil(2.1))
+    println(ceil(-2.1))
+    println(round(2.5))
+    println(round(-2.5))
+    println(round(0.49999999999999994))
+    println(pow(2.0, 10.0))
+    println(pow(2.0, 0.5))
+    println(exp(1.0))
+    println(ln(10.0))
+    println(log10(1000.0))
+    println(sin(1.0))
+    println(cos(1.0))
+    println(tan(1.0))
+    println(atan2(1.0, 2.0))
+    let nan = zero() / zero()
+    let inf = 1.0 / zero()
+    println(nan.is_nan())
+    println(inf.is_nan())
+    println(inf.is_infinite())
+    println((-inf).is_infinite())
+    println(1.5.is_infinite())
+    println(sqrt(-1.0).is_nan())
+    println(ln(zero()))
+    println(1.5.to_string())
+    println(inf.to_string())
+    println(nan.to_string())
+    let single: Float32 = 0.1
+    println(single.is_nan())
+    println(single.to_string())
+    println(float_to_int(3.99))
+    println(float_to_int(-3.99))
+    println(float_to_int(inf))
+    println(float_to_int(-inf))
+    println(float_to_int(nan))
+    println(float_to_int(1e30))
+}

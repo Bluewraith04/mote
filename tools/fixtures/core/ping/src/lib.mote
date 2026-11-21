@@ -1,0 +1,6 @@
+@link("ping")
+native fn ping_add(a: Int32, b: Int32) -> Int32
+
+pub fn add(a: Int32, b: Int32) -> Int32 {
+    return ping_add(a, b)
+}

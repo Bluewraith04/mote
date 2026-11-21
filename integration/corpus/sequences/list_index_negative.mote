@@ -1,0 +1,8 @@
+fn main() {
+    var xs: List<Int> = List.new()
+    xs.push(1)
+    println(xs[0])
+    var i = 0
+    i -= 1
+    println(xs[i])
+}

@@ -1,0 +1,80 @@
+// The functions of the native library `doc`.
+
+@link("doc")
+pub native fn doc_new() -> Int
+
+@link("doc")
+pub native fn doc_free(handle: Int) -> Int
+
+@link("doc")
+pub native fn doc_len(handle: Int) -> Int
+
+@link("doc")
+pub native fn doc_element(handle: Int, name: [UInt8]) -> Int
+
+@link("doc")
+pub native fn doc_text_node(handle: Int, text: [UInt8]) -> Int
+
+@link("doc")
+pub native fn doc_comment(handle: Int, text: [UInt8]) -> Int
+
+@link("doc")
+pub native fn doc_raw(handle: Int, text: [UInt8]) -> Int
+
+@link("doc")
+pub native fn doc_insert(handle: Int, parent: Int, child: Int, before: Int) -> Int
+
+@link("doc")
+pub native fn doc_detach(handle: Int, id: Int) -> Int
+
+@link("doc")
+pub native fn doc_set_text(handle: Int, id: Int, text: [UInt8]) -> Int
+
+@link("doc")
+pub native fn doc_set_name(handle: Int, id: Int, name: [UInt8]) -> Int
+
+@link("doc")
+pub native fn doc_set_attr(handle: Int, id: Int, name: [UInt8], value: [UInt8]) -> Int
+
+@link("doc")
+pub native fn doc_remove_attr(handle: Int, id: Int, name: [UInt8]) -> Int
+
+@link("doc")
+pub native fn doc_kind(handle: Int, id: Int) -> Int
+
+@link("doc")
+pub native fn doc_parent(handle: Int, id: Int) -> Int
+
+@link("doc")
+pub native fn doc_child_count(handle: Int, id: Int) -> Int
+
+@link("doc")
+pub native fn doc_child(handle: Int, id: Int, index: Int) -> Int
+
+@link("doc")
+pub native fn doc_attr_count(handle: Int, id: Int) -> Int
+
+@link("doc")
+pub native fn doc_name(handle: Int, id: Int, out: [UInt8]) -> Int
+
+@link("doc")
+pub native fn doc_text(handle: Int, id: Int, out: [UInt8]) -> Int
+
+@link("doc")
+pub native fn doc_attr(handle: Int, id: Int, name: [UInt8], out: [UInt8]) -> Int
+
+@link("doc")
+pub native fn doc_attr_name(handle: Int, id: Int, index: Int, out: [UInt8]) -> Int
+
+@link("doc")
+pub native fn doc_attr_value(handle: Int, id: Int, index: Int, out: [UInt8]) -> Int
+
+@link("doc")
+pub native fn doc_import(handle: Int, other: Int, id: Int) -> Int
+
+@link("doc")
+pub native fn doc_bytes(handle: Int, out: [UInt8]) -> Int
+
+@link("doc")
+pub native fn doc_from_bytes(data: [UInt8]) -> Int
+

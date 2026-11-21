@@ -1,0 +1,20 @@
+import { Channel } from std.sync
+
+fn main() {
+    let (tx, rx) = Channel<Int>(4)
+    let t = spawn { tx.send(5) }
+    t.await()
+    println(rx.recv()!)
+    println(rx.recv() == null)
+    println(rx.is_closed())
+    let (a, b) = Channel<Int>(1)
+    let other = a.clone()
+    let u = spawn { other.send(6) }
+    u.await()
+    println(b.recv()!)
+    println(b.try_recv() == null)
+    println(b.is_closed())
+    a.close()
+    println(b.recv() == null)
+    println(b.is_closed())
+}

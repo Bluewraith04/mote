@@ -1,0 +1,18 @@
+struct Res {
+    var id: Int
+
+    fn close(self) {
+        println("closed ${self.id}")
+    }
+}
+
+fn main() {
+    let n = 0
+    let h = spawn {
+        with r = Res { id: 1 } {
+            return 1 / n
+        }
+    }
+    println(h.await().is_err())
+    println("end")
+}

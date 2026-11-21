@@ -1,0 +1,45 @@
+// Glyphs of a text and the columns they take.
+
+// The glyphs of the text: one string for each Unicode scalar.
+pub fn glyphs(text: String) -> List<String> {
+    let bytes = text.bytes()
+    var found: List<String> = []
+    var start = 0
+    for at in 1..bytes.len() + 1 {
+        if at == bytes.len() || (bytes[at] & 192) != 128 {
+            let glyph = String.from_bytes(bytes.slice(start, at))
+            found.push(if glyph == null { "?" } else { glyph })
+            start = at
+        }
+    }
+    return found
+}
+
+// The columns a glyph takes: 0 for a combining mark, 2 for a wide glyph, else 1.
+pub fn width_of(glyph: String) -> Int {
+    let bytes = glyph.bytes()
+    if bytes.len() == 0 { return 0 }
+    var code = bytes[0] as Int
+    if bytes.len() == 2 {
+        code = ((code & 31) << 6) | ((bytes[1] as Int) & 63)
+    } else if bytes.len() == 3 {
+        code = ((code & 15) << 12) | (((bytes[1] as Int) & 63) << 6) | ((bytes[2] as Int) & 63)
+    } else if bytes.len() == 4 {
+        code = ((code & 7) << 18) | (((bytes[1] as Int) & 63) << 12) | (((bytes[2] as Int) & 63) << 6) | ((bytes[3] as Int) & 63)
+    }
+    if code < 32 || (code >= 127 && code < 160) { return 0 }
+    if code >= 768 && code <= 879 { return 0 }
+    if code >= 8203 && code <= 8207 { return 0 }
+    if code >= 65024 && code <= 65039 { return 0 }
+    if code >= 4352 && code <= 4447 { return 2 }
+    if code >= 11904 && code <= 42191 { return 2 }
+    if code >= 44032 && code <= 55203 { return 2 }
+    if code >= 63744 && code <= 64255 { return 2 }
+    if code >= 65072 && code <= 65135 { return 2 }
+    if code >= 65280 && code <= 65376 { return 2 }
+    if code >= 65504 && code <= 65510 { return 2 }
+    if code >= 127744 && code <= 128591 { return 2 }
+    if code >= 129280 && code <= 129535 { return 2 }
+    if code >= 131072 && code <= 262141 { return 2 }
+    return 1
+}

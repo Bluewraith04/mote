@@ -1,0 +1,50 @@
+struct Point {
+    var x: Int
+    var y: Int
+}
+
+struct Segment {
+    var head: Point
+    var tail: Point
+}
+
+struct Mixed {
+    tiny: Int8
+    wide: Int
+    ratio: Float32
+    flag: Bool
+}
+
+fn shifted(p: Point, by: Int) -> Point {
+    return Point { x: p.x + by, y: p.y - by }
+}
+
+fn length_squared(s: Segment) -> Int {
+    let dx = s.tail.x - s.head.x
+    let dy = s.tail.y - s.head.y
+    return dx * dx + dy * dy
+}
+
+fn main() {
+    var p = Point { x: 3, y: 4 }
+    let q = p
+    p.x = 10
+    println(p.x)
+    println(q.x)
+    p = Point { x: p.y, y: p.x }
+    println(p.x)
+    println(p.y)
+    let moved = shifted(q, 2)
+    println(moved.x)
+    println(moved.y)
+    var s = Segment { head: Point { x: 0, y: 0 }, tail: q }
+    println(length_squared(s))
+    s.tail.x = 6
+    println(s.tail.x)
+    println(q.x)
+    let m = Mixed { tiny: -5, wide: 1000000, ratio: 1.5, flag: true }
+    println(m.tiny)
+    println(m.wide)
+    println(m.ratio)
+    println(m.flag)
+}

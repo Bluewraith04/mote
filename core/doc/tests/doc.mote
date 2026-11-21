@@ -1,0 +1,170 @@
+import { assert, assert_eq } from std.test
+import { join } from std.string
+import { Doc, NodeKind } from doc
+
+fn sample() -> Doc {
+    let doc = Doc.new()
+    let list = doc.element("ul")
+    list.set_attr("class", "tidy")!
+    list.set_attr("id", "a&b")!
+    for word in ["one", "two"] {
+        let item = doc.element("li")
+        item.append(doc.text(word))!
+        list.append(item)!
+    }
+    doc.root().append(list)!
+    return doc
+}
+
+test "a built tree is written as HTML" {
+    let doc = sample()
+    assert_eq(doc.root().to_html(), "<ul class=\"tidy\" id=\"a&amp;b\"><li>one</li><li>two</li></ul>")
+    doc.close()!
+}
+
+test "text and attribute values are escaped, comments and void elements are not" {
+    let doc = Doc.new()
+    let p = doc.element("p")
+    p.append(doc.text("1 < 2 & \"3\""))!
+    p.append(doc.element("br"))!
+    p.append(doc.comment(" note "))!
+    let image = doc.element("img")
+    image.set_attr("alt", "say \"hi\"")!
+    p.append(image)!
+    doc.root().append(p)!
+    p.append(doc.raw("<b>raw</b>"))!
+    assert_eq(doc.root().to_html(), "<p>1 &lt; 2 &amp; \"3\"<br /><!-- note --><img alt=\"say &quot;hi&quot;\" /><b>raw</b></p>")
+    assert(p.child(4)!.kind() == NodeKind.Raw, "raw kind")
+    assert_eq(p.child(4)!.text(), "<b>raw</b>")
+    assert_eq(Doc.from_bytes(doc.bytes())!.root().to_html(), doc.root().to_html())
+    let script = doc.element("script")
+    script.append(doc.text("if (a < b) {}"))!
+    assert_eq(script.to_html(), "<script>if (a < b) {}</script>")
+}
+
+test "nodes are found by walking the tree" {
+    let doc = sample()
+    let items = doc.root().find_all("li")
+    assert_eq(items.len(), 2)
+    assert_eq(items.get(1).text_content(), "two")
+    assert_eq(doc.root().text_content(), "onetwo")
+    let list = doc.root().find("ul")!
+    assert_eq(list.name(), "ul")
+    assert_eq(list.child_count(), 2)
+    assert(list.parent()!.same(doc.root()), "parent")
+    assert(list.child(0)!.next()!.same(list.child(1)!), "next")
+    assert(list.child(1)!.previous()!.same(list.child(0)!), "previous")
+    assert(list.child(1)!.next() == null, "no next")
+    assert(doc.root().find("table") == null, "none")
+    assert_eq(doc.root().descendants().len(), 5)
+}
+
+test "attributes keep their order and can be replaced and removed" {
+    let doc = sample()
+    let list = doc.root().find("ul")!
+    assert_eq(list.attr("class")!, "tidy")
+    assert(list.attr("title") == null, "missing")
+    list.set_attr("class", "loose")!
+    list.set_attr("title", "t")!
+    var names: List<String> = []
+    for pair in list.attrs() {
+        names.push(pair.0)
+    }
+    assert_eq(join(names, ","), "class,id,title")
+    assert_eq(list.attr("class")!, "loose")
+    assert(list.remove_attr("id"), "removed")
+    assert(!list.remove_attr("id"), "gone")
+    assert_eq(list.attrs().len(), 2)
+}
+
+test "a node moves between parents and cannot be put inside itself" {
+    let doc = sample()
+    let list = doc.root().find("ul")!
+    let first = list.child(0)!
+    let other = doc.element("ol")
+    doc.root().append(other)!
+    other.append(first)!
+    assert_eq(list.child_count(), 1)
+    assert_eq(other.child_count(), 1)
+    assert(list.append(doc.root()).is_err(), "the document node is nobody's child")
+    assert(first.append(other).is_err(), "inside its own child")
+    assert(first.append(first).is_err(), "inside itself")
+    other.insert_before(list.child(0)!, first)!
+    assert_eq(other.child(0)!.text_content(), "two")
+    list.detach()
+    assert(list.parent() == null, "detached")
+    assert_eq(doc.root().to_html(), "<ol><li>two</li><li>one</li></ol>")
+}
+
+test "only an element has attributes and a name, and only text has text" {
+    let doc = Doc.new()
+    let text = doc.text("hi")
+    assert(text.set_attr("a", "b").is_err(), "attr")
+    assert(text.rename("p").is_err(), "name")
+    assert(doc.element("p").set_text("x").is_err(), "text")
+    text.set_text("bye")!
+    assert_eq(text.text(), "bye")
+    let p = doc.element("p")
+    p.rename("h1")!
+    assert_eq(p.name(), "h1")
+    assert(text.kind() == NodeKind.Text, "kind")
+    assert(p.kind() == NodeKind.Element, "kind")
+    assert(doc.root().kind() == NodeKind.Document, "kind")
+    assert(text.append(p).is_err(), "text has no children")
+}
+
+test "the byte form reads back equal" {
+    let doc = sample()
+    let bytes = doc.bytes()
+    let again = Doc.from_bytes(bytes)!
+    assert_eq(again.root().to_html(), doc.root().to_html())
+    let rewritten = again.bytes()
+    assert_eq(rewritten.len(), bytes.len())
+    for at in 0..bytes.len() {
+        assert_eq(rewritten[at], bytes[at])
+    }
+    assert_eq(again.len(), doc.len())
+}
+
+test "bytes that are not a document are refused" {
+    assert(Doc.from_bytes([1, 2, 3]).is_err(), "short")
+    let bytes = sample().bytes()
+    assert(Doc.from_bytes(bytes.slice(0, bytes.len() - 2)).is_err(), "cut")
+    var broken = bytes
+    broken[0] = 88
+    assert(Doc.from_bytes(broken).is_err(), "magic")
+}
+
+test "a node is copied inside a document and between documents" {
+    let doc = sample()
+    let list = doc.root().find("ul")!
+    let copy = list.copy()
+    assert(copy.parent() == null, "outside the tree")
+    doc.root().append(copy)!
+    assert_eq(doc.root().find_all("li").len(), 4)
+    let other = Doc.new()
+    let moved = other.adopt(list)
+    other.root().append(moved)!
+    assert_eq(other.root().to_html(), list.to_html())
+    assert_eq(other.root().find("ul")!.attr("id")!, "a&b")
+}
+
+test "a long text and many nodes pass the native boundary whole" {
+    let doc = Doc.new()
+    let p = doc.element("p")
+    let long = "x".repeat(10000)
+    p.append(doc.text(long))!
+    doc.root().append(p)!
+    assert_eq(p.text_content().len(), 10000)
+    for n in 0..500 {
+        doc.root().append(doc.element("hr"))!
+    }
+    assert_eq(doc.root().child_count(), 501)
+    assert_eq(Doc.from_bytes(doc.bytes())!.root().child_count(), 501)
+}
+
+test "closing twice is an error" {
+    let doc = Doc.new()
+    doc.close()!
+    assert(doc.close().is_err(), "twice")
+}

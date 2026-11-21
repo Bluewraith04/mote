@@ -1,0 +1,81 @@
+fn bytes() {
+    let hi: Int8 = 127
+    let lo: Int8 = -128
+    let one: Int8 = 1
+    println(hi.saturating_add(one))
+    println(lo.saturating_sub(one))
+    println(hi.saturating_mul(hi))
+    println(lo.saturating_mul(hi))
+    println(lo.saturating_mul(lo))
+    println(lo.saturating_neg())
+    println(hi.saturating_neg())
+    println(one.saturating_shl(7))
+    println(one.saturating_shl(8))
+    println(lo.saturating_shl(1))
+    println(hi.saturating_shl(1))
+    println(lo.saturating_shr(100))
+    println(hi.saturating_shr(100))
+    println(lo.saturating_shr(3))
+    let zero: Int8 = 0
+    println(zero.saturating_shl(100))
+    let top: UInt8 = 255
+    let two: UInt8 = 2
+    println(top.saturating_add(two))
+    println(two.saturating_sub(top))
+    println(top.saturating_mul(top))
+    println(two.saturating_neg())
+    println(top.saturating_shl(1))
+    println(top.saturating_shl(9))
+    println(top.saturating_shr(9))
+    println(top.saturating_shr(1))
+}
+
+fn words() {
+    let hi: Int32 = 2147483647
+    let lo: Int32 = -2147483648
+    println(hi.saturating_add(hi))
+    println(lo.saturating_sub(hi))
+    println(hi.saturating_mul(hi))
+    println(lo.saturating_mul(hi))
+    println(lo.saturating_neg())
+    let top: UInt32 = 4294967295
+    println(top.saturating_add(1))
+    println(top.saturating_mul(top))
+    println(top.saturating_shl(1))
+    let short: Int16 = 32767
+    println(short.saturating_add(1))
+}
+
+fn longs() {
+    let hi: Int = 9223372036854775807
+    let lo: Int = -9223372036854775807 - 1
+    println(hi.saturating_add(1))
+    println(lo.saturating_add(-1))
+    println(lo.saturating_sub(1))
+    println(hi.saturating_sub(-1))
+    println(hi.saturating_mul(2))
+    println(lo.saturating_mul(2))
+    println(lo.saturating_mul(-1))
+    println(hi.saturating_mul(-2))
+    println(lo.saturating_neg())
+    println(hi.saturating_neg())
+    println(hi.saturating_shl(1))
+    println(lo.saturating_shl(1))
+    println(lo.saturating_shl(64))
+    println(lo.saturating_shr(64))
+    let top: UInt64 = 18446744073709551615
+    println(top.saturating_add(2))
+    println(top.saturating_sub(top))
+    let none: UInt64 = 0
+    println(none.saturating_sub(1))
+    println(top.saturating_mul(top))
+    println(top.saturating_neg())
+    println(top.saturating_shl(1))
+    println(top.saturating_shr(63))
+}
+
+fn main() {
+    bytes()
+    words()
+    longs()
+}

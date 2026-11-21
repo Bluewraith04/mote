@@ -1,0 +1,10 @@
+import { Once } from std.sync
+
+fn main() {
+    let once = Once<Int>()
+    let zero = 0
+    let h = spawn { return once.get_or_init(|| { return 1 / zero }) }
+    println(h.await().is_err())
+    println(once.get_or_init(|| { return 5 }))
+    println(once.get_or_init(|| { return 6 }))
+}

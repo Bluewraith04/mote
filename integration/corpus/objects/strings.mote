@@ -1,0 +1,37 @@
+fn greet(name: String) -> String {
+    return "hello " + name + "!"
+}
+
+fn main() {
+    let a = "apple"
+    let b = "banana"
+    println(a)
+    println(greet(b))
+    println(a + b)
+    println("" + a)
+    println(a < b)
+    println(a == "apple")
+    println(a != b)
+    println(b >= a)
+    println("ab" < "abc")
+    println("" == "")
+    let n = 42
+    let f = 2.5
+    let flag = true
+    println("n=${n} f=${f} flag=${flag}")
+    println("${a}-${b}")
+    let big: Int64 = -9000000000
+    println("big ${big}")
+    let small: UInt8 = 200
+    println("small ${small}")
+    var s = ""
+    var i = 0
+    while i < 5 {
+        s = s + "${i},"
+        i += 1
+    }
+    println(s)
+    print("no newline")
+    print("")
+    println("")
+}

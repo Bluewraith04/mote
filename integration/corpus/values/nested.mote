@@ -1,0 +1,64 @@
+struct Vec2 {
+    x: Float
+    y: Float
+}
+
+enum Item {
+    Pt(Vec2)
+    Seg(Vec2, Vec2)
+    Count(Int8, Int8)
+    Nothing
+}
+
+struct Holder {
+    var item: Item
+    var maybe: Vec2?
+    var grid: (Int8, Int8, Int8)
+}
+
+fn weight(i: Item) -> Float {
+    return match i {
+        Pt(p) => p.x + p.y
+        Seg(a, b) => (b.x - a.x) + (b.y - a.y)
+        Count(a, b) => (a as Float) * (b as Float)
+        Nothing => -1.0
+    }
+}
+
+fn maybe_vec(flag: Bool, v: Float) -> Vec2? {
+    if flag {
+        return Vec2 { x: v, y: v * 2.0 }
+    }
+    return null
+}
+
+fn inspect(h: Holder) -> Float {
+    var total = weight(h.item)
+    let m = h.maybe
+    if m != null {
+        total += m.y
+    }
+    total += h.grid.2 as Float
+    return total
+}
+
+fn reshape(var h: Holder) {
+    h.item = Item.Count(3, 4)
+    h.grid.2 = 9
+    h.maybe = null
+}
+
+fn main() {
+    var h = Holder { item: Item.Seg(Vec2 { x: 1.0, y: 2.0 }, Vec2 { x: 4.0, y: 6.0 }), maybe: maybe_vec(true, 1.5), grid: (1, 2, 3) }
+    println(inspect(h))
+    reshape(h)
+    println(inspect(h))
+    println(weight(Item.Pt(Vec2 { x: 0.5, y: 0.25 })))
+    println(weight(Item.Nothing))
+    let copy = h
+    h.grid.0 = 100
+    println(copy.grid.0)
+    println(h.grid.0)
+    let o = maybe_vec(false, 1.0)
+    println(o == null)
+}

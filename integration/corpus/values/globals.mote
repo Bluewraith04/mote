@@ -1,0 +1,21 @@
+struct Pair {
+    left: Int
+    right: Int
+}
+
+var origin = Pair { left: 1, right: 2 }
+origin = Pair { left: origin.right, right: origin.left }
+let limits: [Int; 3] = [10, 20, 30]
+var maybe: Int? = null
+maybe = 5
+
+fn sum() -> Int {
+    return origin.left + origin.right + limits[2]
+}
+
+fn main() {
+    println(sum())
+    println(origin.left)
+    println(maybe == null)
+    println(maybe!)
+}

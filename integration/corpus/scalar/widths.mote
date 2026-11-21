@@ -1,0 +1,38 @@
+fn grow8(start: Int8, by: Int8) -> Int8 {
+    var x = start
+    x += by
+    return x
+}
+
+fn main() {
+    var a: Int8 = 100
+    var b: Int8 = 27
+    println(a + b)
+    a = -100
+    b = -28
+    println(a + b)
+    var c: UInt8 = 200
+    var d: UInt8 = 55
+    println(c + d)
+    println(c - d)
+    println(c * 1)
+    var e: Int16 = 30000
+    var f: Int16 = 2767
+    println(e + f)
+    var g: Int32 = 2000000000
+    var h: Int32 = 147483647
+    println(g + h)
+    var i: UInt32 = 4000000000
+    println(i)
+    println(i / 3)
+    println(i % 7)
+    var j: UInt64 = 18446744073709551615
+    println(j)
+    println(j / 10)
+    println(j - 1)
+    var k: Int = 9223372036854775807
+    println(k)
+    println(k - 1)
+    println(-k)
+    println(grow8(100, 27))
+}

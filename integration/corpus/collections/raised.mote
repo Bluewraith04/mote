@@ -1,0 +1,10 @@
+fn first(xs: List<Int>) -> Int {
+    return xs.first().unwrap()
+}
+
+fn main() {
+    let xs: List<Int> = [4]
+    println(first(xs))
+    let empty: List<Int> = []
+    println(first(empty))
+}

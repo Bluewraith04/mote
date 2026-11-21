@@ -1,0 +1,243 @@
+// Dyn: values of described types read and written by position, and built from parts.
+import { assert, assert_eq } from std.test
+import { Set } from std.collections
+import { Dyn, build, build_dyn, describe, downcast, Kind } from std.meta
+
+struct Point {
+    x: Int
+    y: Int
+}
+
+class Counter {
+    var count: Int
+    var label: String
+}
+
+enum Shape {
+    Empty
+    Circle(Float)
+    Rect { width: Float, height: Float }
+}
+
+test "a Dyn holds a value and gives it back as its own type" {
+    let d = Dyn.of(41)
+    assert_eq(downcast<Int>(d)!, 41)
+    assert(downcast<String>(d) == null, "not a String")
+    assert(d.ty().kind() == Kind.Int, "Int")
+    assert_eq(d.len(), 0)
+}
+
+test "the parts of a struct are read by position" {
+    let d = Dyn.of(Point { x: 3, y: 4 })
+    assert_eq(d.len(), 2)
+    assert_eq(downcast<Int>(d.get(0))!, 3)
+    assert_eq(downcast<Int>(d.get(1))!, 4)
+    assert_eq(d.get(1).ty().name(), "Int")
+}
+
+test "a part of a struct is replaced in the Dyn and not in the struct" {
+    let p = Point { x: 3, y: 4 }
+    let d = Dyn.of(p)
+    d.set(0, Dyn.of(30))
+    assert_eq(downcast<Int>(d.get(0))!, 30)
+    assert_eq(downcast<Point>(d)!.x, 30)
+    assert_eq(p.x, 3)
+}
+
+test "a part of a class is replaced in the object" {
+    let c = Counter { count: 1, label: "a" }
+    let d = Dyn.of(c)
+    d.set(0, Dyn.of(7))
+    d.set(1, Dyn.of("b"))
+    assert_eq(c.count, 7)
+    assert_eq(c.label, "b")
+}
+
+test "a tuple has its members as parts" {
+    let d = Dyn.of((1, "two"))
+    assert_eq(d.len(), 2)
+    assert_eq(downcast<String>(d.get(1))!, "two")
+}
+
+test "a List has its elements as parts and set changes the List" {
+    var xs = [10, 20, 30]
+    let d = Dyn.of(xs)
+    assert_eq(d.len(), 3)
+    assert_eq(downcast<Int>(d.get(2))!, 30)
+    d.set(1, Dyn.of(99))
+    assert_eq(xs[1], 99)
+}
+
+test "an optional has its value as a part" {
+    let present: Int? = 5
+    let absent: Int? = null
+    let some = Dyn.of(present)
+    assert_eq(some.len(), 1)
+    assert_eq(downcast<Int>(some.get(0))!, 5)
+    assert_eq(Dyn.of(absent).len(), 0)
+}
+
+test "an enum value has its variant and payload" {
+    let empty = Dyn.of(Shape.Empty)
+    assert_eq(empty.tag(), 0)
+    assert_eq(empty.len(), 0)
+    let circle = Dyn.of(Shape.Circle(1.5))
+    assert_eq(circle.tag(), 1)
+    assert_eq(circle.len(), 1)
+    assert_eq(downcast<Float>(circle.get(0))!, 1.5)
+    let rect = Dyn.of(Shape.Rect { width: 2.0, height: 3.0 })
+    assert_eq(rect.tag(), 2)
+    assert_eq(downcast<Float>(rect.get(1))!, 3.0)
+}
+
+test "a struct is built from parts" {
+    let p: Point = build(0, [Dyn.of(5), Dyn.of(6)])
+    assert_eq(p.x, 5)
+    assert_eq(p.y, 6)
+}
+
+test "a class is built from parts" {
+    let c: Counter = build(0, [Dyn.of(2), Dyn.of("two")])
+    assert_eq(c.count, 2)
+    assert_eq(c.label, "two")
+}
+
+test "a tuple is built from parts" {
+    let t: (Int, String) = build(0, [Dyn.of(1), Dyn.of("x")])
+    assert_eq(t.0, 1)
+    assert_eq(t.1, "x")
+}
+
+test "an enum value is built from a variant and its parts" {
+    let empty: Shape = build(0, [])
+    assert(Dyn.of(empty).tag() == 0, "Empty")
+    let circle: Shape = build(1, [Dyn.of(2.5)])
+    assert_eq(downcast<Float>(Dyn.of(circle).get(0))!, 2.5)
+    let rect: Shape = build(2, [Dyn.of(1.0), Dyn.of(2.0)])
+    assert_eq(Dyn.of(rect).tag(), 2)
+}
+
+test "what get reads is what build takes" {
+    let d = Dyn.of(Point { x: 8, y: 9 })
+    let again: Point = build(d.tag(), [d.get(0), d.get(1)])
+    assert_eq(again.x, 8)
+    assert_eq(again.y, 9)
+}
+
+class Team {
+    name: String
+    members: List<Point>
+    lead: Point?
+}
+
+test "a Dyn of a type known at run time is built from parts" {
+    let point = build_dyn(describe<Point>(), 0, [Dyn.of(5), Dyn.of(6)])
+    assert_eq(downcast<Point>(point)!.y, 6)
+    let counter = build_dyn(describe<Counter>(), 0, [Dyn.of(2), Dyn.of("c")])
+    assert_eq(downcast<Counter>(counter)!.label, "c")
+    let pair = build_dyn(describe<(Int, String)>(), 0, [Dyn.of(1), Dyn.of("a")])
+    assert_eq(downcast<(Int, String)>(pair)!.1, "a")
+    let rect = build_dyn(describe<Shape>(), 2, [Dyn.of(1.0), Dyn.of(3.0)])
+    assert_eq(rect.tag(), 2)
+    assert_eq(build_dyn(describe<Shape>(), 0, []).tag(), 0)
+}
+
+test "a list or an array is built from its elements" {
+    let ints = build_dyn(describe<List<Int>>(), 0, [Dyn.of(7), Dyn.of(8), Dyn.of(9)])
+    var list = downcast<List<Int>>(ints)!
+    assert_eq(list.len(), 3)
+    assert_eq(list.get(2), 9)
+    list.push(10)
+    assert_eq(list.len(), 4)
+    let none = downcast<List<String>>(build_dyn(describe<List<String>>(), 0, []))!
+    assert_eq(none.len(), 0)
+    let words = downcast<[String]>(build_dyn(describe<[String]>(), 0, [Dyn.of("a"), Dyn.of("b")]))!
+    assert_eq(words.len(), 2)
+    assert_eq(words.get(1), "b")
+    let points = downcast<List<Point>>(build_dyn(describe<List<Point>>(), 0, [Dyn.of(Point { x: 1, y: 2 }), Dyn.of(Point { x: 3, y: 4 })]))!
+    assert_eq(points.get(1).x, 3)
+}
+
+test "an optional is built from no part or one" {
+    let some = downcast<Int?>(build_dyn(describe<Int?>(), 0, [Dyn.of(4)]))!
+    assert_eq(some!, 4)
+    let none = downcast<Int?>(build_dyn(describe<Int?>(), 0, []))!
+    assert(none == null, "none")
+    let text = downcast<String?>(build_dyn(describe<String?>(), 0, [Dyn.of("t")]))!
+    assert_eq(text!, "t")
+    let no_text = downcast<String?>(build_dyn(describe<String?>(), 0, []))!
+    assert(no_text == null, "no text")
+}
+
+test "a Map has a key then a value for each entry" {
+    var ages: Map<String, Int> = Map()
+    ages.set("ann", 31)
+    ages.set("bo", 4)
+    ages.set("cy", 9)
+    ages.remove("bo")
+    let d = Dyn.of(ages)
+    assert_eq(d.len(), 4)
+    assert_eq(downcast<String>(d.get(0))!, "ann")
+    assert_eq(downcast<Int>(d.get(1))!, 31)
+    assert_eq(downcast<String>(d.get(2))!, "cy")
+    d.set(3, Dyn.of(10))
+    assert_eq(ages.get("cy"), 10)
+}
+
+test "a Set has its members as parts" {
+    var seen: Set<Int> = Set()
+    seen.add(5)
+    seen.add(6)
+    seen.add(5)
+    let d = Dyn.of(seen)
+    assert_eq(d.len(), 2)
+    assert_eq(downcast<Int>(d.get(1))!, 6)
+}
+
+test "a Map is built from keys and values and a later equal key replaces" {
+    let kind = describe<Map<String, Int>>()
+    let parts = [Dyn.of("a"), Dyn.of(1), Dyn.of("b"), Dyn.of(2), Dyn.of("a"), Dyn.of(3)]
+    var made = downcast<Map<String, Int>>(build_dyn(kind, 0, parts))!
+    assert_eq(made.len(), 2)
+    assert_eq(made.get("a"), 3)
+    assert_eq(made.get("b"), 2)
+    assert(!made.contains_key("c"), "no c")
+    made.set("c", 4)
+    assert_eq(made.len(), 3)
+    let empty = downcast<Map<String, Int>>(build_dyn(kind, 0, []))!
+    assert(empty.is_empty(), "empty")
+}
+
+test "a Map of many entries is built and read back" {
+    var parts: List<Dyn> = []
+    for n in 0..100 {
+        parts.push(Dyn.of(n))
+        parts.push(Dyn.of("v${n}"))
+    }
+    var made = downcast<Map<Int, String>>(build_dyn(describe<Map<Int, String>>(), 0, parts))!
+    assert_eq(made.len(), 100)
+    assert_eq(made.get(77), "v77")
+    made.remove(77)
+    assert(!made.contains_key(77), "removed")
+    assert_eq(Dyn.of(made).len(), 198)
+}
+
+test "a Set is built from members and drops a repeat" {
+    var made = downcast<Set<String>>(build_dyn(describe<Set<String>>(), 0, [Dyn.of("x"), Dyn.of("y"), Dyn.of("x")]))!
+    assert_eq(made.len(), 2)
+    assert(made.contains("y"), "y")
+    made.add("z")
+    assert_eq(made.items().len(), 3)
+}
+
+test "the field types of a type give the types of the parts" {
+    let team = describe<Team>()
+    let fields = team.fields()
+    let point = build_dyn(fields[1].ty.args()[0], 0, [Dyn.of(1), Dyn.of(2)])
+    let members = build_dyn(fields[1].ty, 0, [point])
+    let lead = build_dyn(fields[2].ty, 0, [point])
+    let made = downcast<Team>(build_dyn(team, 0, [Dyn.of("core"), members, lead]))!
+    assert_eq(made.name, "core")
+    assert_eq(made.members.get(0).y, 2)
+    assert_eq(made.lead!.x, 1)
+}

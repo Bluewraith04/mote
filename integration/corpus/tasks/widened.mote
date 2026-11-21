@@ -1,0 +1,44 @@
+import { Task, sleep } from std.task
+
+fn number() -> Task<Int> {
+    return spawn { return 7 }
+}
+
+fn text() -> Task<String> {
+    return spawn { return "seven" }
+}
+
+fn slow() -> Task<Int> {
+    return spawn {
+        sleep(50)
+        return 1
+    }
+}
+
+fn show(task: Task<Int | String>) {
+    println(task.await().unwrap())
+}
+
+fn main() {
+    let maybe: Task<Int?> = number()
+    println(maybe.await().unwrap())
+    let mixed: Task<Int | String> = number()
+    show(mixed)
+    show(text())
+    let wider: Task<Int | String | Float> = mixed
+    println(wider.await().unwrap())
+    println(wider.await().unwrap())
+    println(wider.is_ready())
+    let waiting: Task<Int?> = slow()
+    println(waiting.await_timeout(5) == null)
+    println(waiting.is_ready())
+    println(waiting.await().unwrap())
+    let stopped: Task<Int?> = spawn {
+        sleep(100000)
+        return 2
+    }
+    stopped.cancel()
+    println(stopped.await().is_err())
+    let same: Task<Int> = number()
+    println(same.await().unwrap())
+}

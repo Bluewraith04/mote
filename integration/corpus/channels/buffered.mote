@@ -1,0 +1,21 @@
+import { Channel } from std.sync
+
+fn main() {
+    let (tx, rx) = Channel<Int>(3)
+    println(rx.try_recv() == null)
+    tx.send(1)
+    tx.send(2)
+    println(tx.try_send(3))
+    println(tx.try_send(4))
+    println(rx.recv()!)
+    println(rx.recv()!)
+    println(rx.recv()!)
+    println(rx.is_closed())
+    tx.send(9)
+    tx.close()
+    println(rx.is_closed())
+    println(rx.recv()!)
+    println(rx.recv() == null)
+    println(rx.is_closed())
+    println(rx.try_recv() == null)
+}

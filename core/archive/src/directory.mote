@@ -1,0 +1,59 @@
+// Archives and directories.
+import { FileKind, create_dir_all, link_metadata, list, read_bytes, write_bytes } from fs
+import { join, parent } from path
+import { Entry, EntryKind, Format } from .entry
+import { read, write } from .codec
+
+// An error for a path that leaves the directory it is extracted to.
+fn check_path(path: String) -> Result<Null, Error> {
+    if path.starts_with("/") { return Err(Error.new(ErrorKind.InvalidData, "archive: ${path}: absolute path")) }
+    for name in path.split("/") {
+        if name == ".." { return Err(Error.new(ErrorKind.InvalidData, "archive: ${path}: path leaves the directory")) }
+    }
+    return Ok(null)
+}
+
+/// Writes the files and directories of an archive under a directory and returns how many files it wrote. Links are skipped, permission bits and times are not applied, and a path that is absolute or has `..` is an `Err`.
+pub fn extract(format: Format, bytes: [UInt8], directory: String, limit: Int = -1) -> Result<Int, Error> {
+    let entries = read(format, bytes, limit)?
+    for entry in entries { check_path(entry.path)? }
+    create_dir_all(directory)?
+    var written = 0
+    for entry in entries {
+        let target = join(directory, entry.path)
+        if entry.kind == EntryKind.Directory {
+            create_dir_all(target)?
+        } else if entry.kind == EntryKind.File {
+            let above = parent(target)
+            if above != null { create_dir_all(above)? }
+            write_bytes(target, entry.data)?
+            written = written + 1
+        }
+    }
+    return Ok(written)
+}
+
+fn collect(root: String, relative: String, var entries: List<Entry>) -> Result<Null, Error> {
+    let here = if relative == "" { root } else { join(root, relative) }
+    for name in list(here)? {
+        let path = if relative == "" { name } else { relative + "/" + name }
+        let full = join(root, path)
+        let info = link_metadata(full)?
+        let mtime = info.modified / 1000000000
+        let mode = info.mode % 4096
+        if info.kind == FileKind.Directory {
+            entries.push(Entry.directory(path).with_mode(mode).with_mtime(mtime))
+            collect(root, path, entries)?
+        } else if info.kind == FileKind.File {
+            entries.push(Entry.file(path, read_bytes(full)?).with_mode(mode).with_mtime(mtime))
+        }
+    }
+    return Ok(null)
+}
+
+/// An archive of everything under a directory, with paths relative to it, in sorted order. Links and other special files are left out.
+pub fn pack(format: Format, directory: String) -> Result<[UInt8], Error> {
+    var entries: List<Entry> = []
+    collect(directory, "", entries)?
+    return write(format, entries)
+}

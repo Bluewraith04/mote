@@ -1,0 +1,142 @@
+import { assert, assert_eq } from std.test
+import { Args, Flag, flag, help_requested, parse, parse_args, usage, usage_text } from args
+
+enum Mode {
+    Fast
+    SlowAndSteady
+}
+
+/// Serves files from a directory.
+class Serve: (Args) {
+    /// The port to listen on.
+    port: Int
+    host: String
+    verbose: Bool
+    max_depth: Int?
+    include: List<String>
+    mode: Mode
+    root: String
+
+    fn flags() -> List<Flag> {
+        return [
+            flag("port").short("p").default_to("8080"),
+            flag("host").default_to("localhost").help("The address to bind"),
+            flag("verbose").short("v"),
+            flag("mode").default_to("fast"),
+            flag("root").positional()
+        ]
+    }
+}
+
+class Plain: (Args) {
+    name: String
+    count: Int
+    ratio: Float
+}
+
+fn words(text: String) -> List<String> {
+    return text.split(" ")
+}
+
+test "flags are read by field name" {
+    let serve = parse_args<Serve>(words("--port 9000 --host example.com --verbose site"))!
+    assert_eq(serve.port, 9000)
+    assert_eq(serve.host, "example.com")
+    assert(serve.verbose, "verbose")
+    assert(serve.max_depth == null, "optional left out")
+    assert_eq(serve.include.len(), 0)
+    assert(serve.mode == Mode.Fast, "default mode")
+    assert_eq(serve.root, "site")
+}
+
+test "defaults fill what is not given" {
+    let serve = parse_args<Serve>(words("site"))!
+    assert_eq(serve.port, 8080)
+    assert_eq(serve.host, "localhost")
+    assert(!serve.verbose, "switch is off")
+}
+
+test "a value follows the flag, an equals sign or a short name" {
+    assert_eq(parse_args<Serve>(words("--port=81 a"))!.port, 81)
+    assert_eq(parse_args<Serve>(words("-p 82 a"))!.port, 82)
+    assert_eq(parse_args<Serve>(words("-p=83 a"))!.port, 83)
+    assert_eq(parse_args<Serve>(words("-p84 a"))!.port, 84)
+}
+
+test "switches group and take an explicit value" {
+    assert(parse_args<Serve>(words("-v a"))!.verbose, "short")
+    assert(!parse_args<Serve>(words("--verbose=false a"))!.verbose, "off")
+}
+
+test "names in snake case are kebab flags and enums are read by name" {
+    let serve = parse_args<Serve>(words("--max-depth 3 --mode slow-and-steady a"))!
+    assert_eq(serve.max_depth!, 3)
+    assert(serve.mode == Mode.SlowAndSteady, "mode")
+}
+
+test "a list flag repeats" {
+    let serve = parse_args<Serve>(words("--include a --include b a"))!
+    assert_eq(serve.include.len(), 2)
+    assert_eq(serve.include.get(1), "b")
+}
+
+test "words after a double dash are positional" {
+    let serve = parse_args<Serve>(words("-- --odd"))!
+    assert_eq(serve.root, "--odd")
+}
+
+test "a negative number is a value and a word" {
+    let plain = parse_args<Plain>(words("--name x --count -5 --ratio -0.5"))!
+    assert_eq(plain.count, -5)
+    assert_eq(plain.ratio, -0.5)
+}
+
+test "mistakes are errors that say what is wrong" {
+    let unknown = parse_args<Plain>(words("--name x --count 1 --ratio 1 --nope"))
+    assert(unknown.is_err(), "unknown flag")
+    assert(parse_args<Plain>(words("--name x --count 1")).is_err(), "missing")
+    assert(parse_args<Plain>(words("--name x --count one --ratio 1")).is_err(), "not an integer")
+    assert(parse_args<Plain>(words("--name")).is_err(), "no value")
+    assert(parse_args<Plain>(words("--name x --name y --count 1 --ratio 1")).is_err(), "twice")
+    assert(parse_args<Plain>(words("--name x --count 1 --ratio 1 extra")).is_err(), "extra word")
+    assert(parse_args<Serve>(words("--mode sideways a")).is_err(), "no such mode")
+}
+
+test "an error names the flag" {
+    let message = match parse_args<Plain>(words("--name x --count one --ratio 1")) {
+        Err(error) => error.message
+        Ok(_) => ""
+    }
+    assert(message.contains("--count"), "names it")
+    assert(message.contains("one"), "shows the text")
+}
+
+test "help is asked for before a double dash only" {
+    assert(help_requested(words("--port 1 --help")), "long")
+    assert(help_requested(words("-h")), "short")
+    assert(!help_requested(words("-- --help")), "after")
+    assert(!help_requested(words("--port 1")), "none")
+}
+
+test "the usage text lists the options with their help and defaults" {
+    let text = usage_text<Serve>("serve")!
+    assert(text.starts_with("Usage: serve [OPTIONS] <ROOT>\n"), "synopsis")
+    assert(text.contains("Serves files from a directory."), "type doc")
+    assert(text.contains("-p, --port <INT>"), "short and long")
+    assert(text.contains("The port to listen on. [default: 8080]"), "field doc and default")
+    assert(text.contains("The address to bind [default: localhost]"), "flag help")
+    assert(text.contains("--max-depth <INT>"), "kebab")
+    assert(text.contains("--mode <fast|slow-and-steady>"), "enum")
+    assert(text.contains("-v, --verbose"), "switch")
+    assert(text.contains("-h, --help"), "help")
+}
+
+test "the usage text is laid out in columns" {
+    let expected = "Usage: serve [OPTIONS] <ROOT>\n\nServes files from a directory.\n\nArguments:\n  <ROOT>\n\nOptions:\n  -p, --port <INT>                   The port to listen on. [default: 8080]\n      --host <TEXT>                  The address to bind [default: localhost]\n  -v, --verbose\n      --max-depth <INT>\n      --include <TEXT>\n      --mode <fast|slow-and-steady>  [default: fast]\n  -h, --help                         Show this help\n"
+    assert_eq(usage_text<Serve>("serve")!, expected)
+}
+
+test "a type that is not a record is an error" {
+    assert(parse<Int>(words("1")).is_err(), "int")
+    assert(usage<Int>("x").is_err(), "int usage")
+}

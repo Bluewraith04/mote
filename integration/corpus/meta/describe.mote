@@ -1,0 +1,71 @@
+import { describe, Kind, Shape } from std.meta
+
+/// A point on the plane.
+struct Point {
+    pub var x: Int
+    y: Int = 0
+}
+
+class Counter {
+    var count: Int
+
+    pub fn bump(var self) { self.count += 1 }
+    fn peek(self) -> Int { return self.count }
+}
+
+enum Shapely {
+    /// Nothing.
+    Empty
+    Circle(Float)
+    Rect { width: Float, height: Float }
+}
+
+enum Level {
+    Low = 1
+    High = 5
+}
+
+struct Pair<A, B> {
+    first: A
+    second: B
+}
+
+class Node {
+    var value: Int
+    var next: Node?
+}
+
+fn name_of<T>() -> String {
+    return describe<T>().name()
+}
+
+fn main() {
+    println(describe<Int>().name())
+    println(describe<List<Int>>().name())
+    println(describe<Int?>().kind() == Kind.Optional)
+    println(describe<(Int, String)>().kind() == Kind.Tuple)
+    println(describe<Int | String>().kind() == Kind.Union)
+    println(describe<List<String>>().args()[0].name())
+    let point = describe<Point>()
+    println(point.name())
+    println(point.doc())
+    for field in point.fields() {
+        println("${field.name} ${field.ty.name()} ${field.is_var} ${field.is_pub} ${field.has_default}")
+    }
+    for method in describe<Counter>().methods() {
+        println("${method.name} ${method.is_pub} ${method.has_self} ${method.writes_self}")
+    }
+    for variant in describe<Shapely>().variants() {
+        println("${variant.name} ${variant.fields.len()} ${variant.shape == Shape.Named} ${variant.doc}")
+    }
+    for variant in describe<Level>().variants() {
+        println(variant.discriminant ?? -1)
+    }
+    println(describe<Pair<Int, String>>().name())
+    println(describe<Pair<Int, String>>().generics()[1])
+    println(name_of<Point>())
+    println(name_of<List<String>>())
+    let next = describe<Node>().fields()[1].ty
+    println(next.args()[0].fields().len())
+    println(describe<List<Int>>().attributes()[0].args[0].value)
+}

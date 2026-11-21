@@ -1,0 +1,55 @@
+import { Stream } from std.collections
+import { Channel } from std.sync
+import { Task, sleep } from std.task
+
+fn count(n: Int) -> Stream<Int> {
+    var i = 0
+    while i < n {
+        yield i
+        i += 1
+    }
+}
+
+fn slow(n: Int) -> Stream<Int> {
+    for i in 0..n {
+        sleep(2)
+        yield i
+    }
+}
+
+fn main() {
+    let h = spawn {
+        var sum = 0
+        for x in count(10) {
+            sum += x
+        }
+        return sum
+    }
+    println(h.await().unwrap())
+    var tasks: List<Task<Int>> = List.new()
+    for k in 1..4 {
+        tasks.push(spawn {
+            var sum = 0
+            for x in slow(k) {
+                sum += x
+            }
+            return sum
+        })
+    }
+    for t in tasks {
+        println(t.await().unwrap())
+    }
+    let (tx, rx) = Channel<Int>(2)
+    let producer = spawn {
+        for x in count(5) {
+            tx.send(x)
+        }
+        tx.close()
+    }
+    var received = 0
+    for x in rx {
+        received += x
+    }
+    producer.await()
+    println(received)
+}

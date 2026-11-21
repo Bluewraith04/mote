@@ -1,0 +1,18 @@
+[package]
+name = "doc"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[lib]
+name = "doc"
+crate-type = ["cdylib", "staticlib", "rlib"]
+
+[profile.release]
+opt-level = 2
+panic = "abort"
+lto = true
+codegen-units = 1
+strip = true
+
+[workspace]

@@ -1,0 +1,49 @@
+// Functions over strings.
+
+@intrinsic("parse_int")
+native fn parse_int_of(s: String) -> Int?
+@intrinsic("parse_float")
+native fn parse_float_of(s: String) -> Float?
+
+pub fn join(parts: List<String>, separator: String) -> String {
+    var out = ""
+    var first = true
+    for part in parts {
+        if !first { out = out + separator }
+        out = out + part
+        first = false
+    }
+    return out
+}
+
+pub fn lines(s: String) -> List<String> {
+    var out: List<String> = []
+    for line in s.split("\n") {
+        if line.ends_with("\r") {
+            out.push(line.slice(0, line.len() - 1))
+        } else {
+            out.push(line)
+        }
+    }
+    return out
+}
+
+pub fn is_blank(s: String) -> Bool { return s.trim().is_empty() }
+
+pub fn pad_start(s: String, width: Int, pad: String) -> String {
+    var out = s
+    while out.len() < width { out = pad + out }
+    return out
+}
+
+pub fn parse_int(s: String) -> Result<Int, Error> {
+    let value = parse_int_of(s)
+    if value == null { return Err(Error.new(InvalidData, "not an integer: ${s}")) }
+    return Ok(value)
+}
+
+pub fn parse_float(s: String) -> Result<Float, Error> {
+    let value = parse_float_of(s)
+    if value == null { return Err(Error.new(InvalidData, "not a number: ${s}")) }
+    return Ok(value)
+}

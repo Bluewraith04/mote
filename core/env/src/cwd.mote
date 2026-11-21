@@ -1,0 +1,31 @@
+// The working directory.
+import { text_of } from ._text
+import { env_cwd, env_chdir } from ._native
+
+/// The working directory.
+pub fn current_dir() -> Result<String, Error> {
+    var size = 256
+    while true {
+        let buffer: [UInt8] = [0; size]
+        let length = env_cwd(buffer)
+        if length < 0 { return Err(Error.new(ErrorKind.Other, "the working directory cannot be read")) }
+        if length > size {
+            size = length
+            continue
+        }
+        let text = text_of(buffer, 0, length)
+        if text == null { return Err(Error.new(ErrorKind.InvalidData, "the working directory is not UTF-8")) }
+        return Ok(text)
+    }
+    return Ok("")
+}
+
+/// Changes the working directory of the process.
+pub fn set_current_dir(path: String) -> Result<Null, Error> {
+    let code = env_chdir(path)
+    if code == -2 { return Err(Error.new(ErrorKind.NotFound, "${path}: no such file or directory")) }
+    if code == -13 { return Err(Error.new(ErrorKind.PermissionDenied, "${path}: permission denied")) }
+    if code == -20 { return Err(Error.new(ErrorKind.InvalidData, "${path}: not a directory")) }
+    if code < 0 { return Err(Error.new(ErrorKind.Other, "${path}: cannot change to it")) }
+    return Ok(null)
+}

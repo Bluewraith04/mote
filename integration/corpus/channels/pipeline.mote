@@ -1,0 +1,30 @@
+import { Channel } from std.sync
+
+fn main() {
+    let (raw_tx, raw_rx) = Channel<Int>(2)
+    let (sq_tx, sq_rx) = Channel<Int>(0)
+    let (out_tx, out_rx) = Channel<String>(1)
+    let source = spawn {
+        var n = 1
+        while n <= 6 {
+            raw_tx.send(n)
+            n += 1
+        }
+    }
+    let square = spawn {
+        for n in raw_rx {
+            sq_tx.send(n * n)
+        }
+    }
+    let label = spawn {
+        for n in sq_rx {
+            out_tx.send("n={n}")
+        }
+    }
+    for line in out_rx {
+        println(line)
+    }
+    println(source.await().is_ok())
+    println(square.await().is_ok())
+    println(label.await().is_ok())
+}

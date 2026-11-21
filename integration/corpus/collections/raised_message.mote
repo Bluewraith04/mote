@@ -1,0 +1,13 @@
+import { fault } from std.option
+
+fn pick(n: Int) -> Int {
+    if n > 1 {
+        return fault("too big: ${n}")
+    }
+    return n
+}
+
+fn main() {
+    println(pick(1))
+    println(pick(2))
+}

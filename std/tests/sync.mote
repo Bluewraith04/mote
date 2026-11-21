@@ -1,0 +1,272 @@
+// Channels, Mutex, Once and the helpers of std.sync.
+import { assert, assert_eq, fail } from std.test
+import { Channel, Mutex, Once, Sender, merge, broadcast } from std.sync
+import { Task, sleep, await_all } from std.task
+import std.atomic as atomic
+
+test "a buffered channel carries messages in order" {
+    let (tx, rx) = Channel<Int>(3)
+    tx.send(1)
+    tx.send(2)
+    tx.send(3)
+    assert_eq(rx.recv()!, 1)
+    assert_eq(rx.recv()!, 2)
+    assert_eq(rx.recv()!, 3)
+}
+
+test "a closed channel gives null once drained" {
+    let (tx, rx) = Channel<Int>(2)
+    tx.send(7)
+    tx.close()
+    assert_eq(rx.recv()!, 7)
+    assert(rx.recv() == null, "drained")
+    assert(rx.is_closed(), "closed")
+}
+
+test "try_send and try_recv never wait" {
+    let (tx, rx) = Channel<Int>(1)
+    assert(rx.try_recv() == null, "nothing yet")
+    assert(tx.try_send(1), "room")
+    assert(!tx.try_send(2), "full")
+    assert_eq(rx.try_recv()!, 1)
+}
+
+test "a rendezvous channel hands a message over" {
+    let (tx, rx) = Channel<String>(0)
+    let sender = spawn {
+        tx.send("hello")
+        tx.close()
+    }
+    assert_eq(rx.recv()!, "hello")
+    assert(rx.recv() == null, "then closed")
+    sender.await()
+}
+
+test "send faults on a closed sender" {
+    let (tx, rx) = Channel<Int>(1)
+    let h = spawn {
+        tx.close()
+        tx.send(1)
+    }
+    assert(h.await().is_err(), "sending after close faults")
+}
+
+test "a channel closes when its last sender is gone" {
+    let (tx, rx) = Channel<Int>(4)
+    let other = tx.clone()
+    let h = spawn {
+        other.send(5)
+    }
+    h.await()
+    tx.close()
+    assert_eq(rx.recv()!, 5)
+    assert(rx.recv() == null, "every sender is gone")
+}
+
+test "recv_timeout gives null when nothing comes" {
+    let (tx, rx) = Channel<Int>(1)
+    assert(rx.recv_timeout(20) == null, "timed out")
+    tx.send(3)
+    assert_eq(rx.recv_timeout(20)!, 3)
+}
+
+test "a request carries its own reply channel" {
+    let (requests, inbox) = Channel<(Int, Sender<Int>)>(0)
+    let server = spawn {
+        for (n, reply) in inbox {
+            reply.send(n * 10)
+            reply.close()
+        }
+    }
+    let (answer_tx, answer_rx) = Channel<Int>(1)
+    requests.send((4, answer_tx))
+    assert_eq(answer_rx.recv()!, 40)
+    requests.close()
+    server.await()
+}
+
+test "merge forwards every message of its inputs" {
+    let (atx, arx) = Channel<Int>(2)
+    let (btx, brx) = Channel<Int>(2)
+    atx.send(1)
+    atx.close()
+    btx.send(2)
+    btx.close()
+    var sum = 0
+    for v in merge([arx, brx]) { sum += v }
+    assert_eq(sum, 3)
+}
+
+test "broadcast gives every receiver every message" {
+    let (tx, rx) = Channel<Int>(4)
+    let outs = broadcast(rx, 2)
+    let first = outs[0]
+    let second = outs[1]
+    let a = spawn {
+        var sum = 0
+        for v in first { sum += v }
+        return sum
+    }
+    let b = spawn {
+        var sum = 0
+        for v in second { sum += v * 10 }
+        return sum
+    }
+    tx.send(1)
+    tx.send(2)
+    tx.close()
+    assert_eq(a.await().unwrap() + b.await().unwrap(), 33)
+}
+
+test "a mutex serializes the updates of many tasks" {
+    let counter = Mutex(0)
+    scope {
+        for i in 0..5 {
+            spawn { counter.lock(|n| { n += 1 }) }
+        }
+    }
+    assert_eq(counter.lock(|n| { return n }), 5)
+}
+
+test "a mutex owns a copy of what it is given" {
+    var xs = [1]
+    let m = Mutex(xs)
+    xs.push(2)
+    assert_eq(m.lock(|v| { return v.len() }), 1)
+}
+
+test "what lock returns is a copy" {
+    var zeros: [Int] = [0; 2]
+    let m = Mutex(zeros)
+    var out = m.lock(|v| { return v })
+    out[0] = 9
+    assert_eq(m.lock(|v| { return v[0] }), 0)
+}
+
+test "get gives a copy of the whole list and set replaces it" {
+    let m = Mutex([1, 2])
+    var copy = m.get()
+    copy.push(3)
+    assert_eq(m.get().len(), 2)
+    var fresh = [7, 8, 9]
+    m.set(fresh)
+    fresh.push(10)
+    assert_eq(m.get().len(), 3)
+    assert_eq(m.lock(|xs| { return xs[0] }), 7)
+}
+
+test "tasks fill a mutex and the main task reads it whole" {
+    let m = Mutex(0)
+    let seen = Mutex([0])
+    scope {
+        for i in 1..4 {
+            spawn {
+                m.lock(|n| { n += i })
+                seen.set([m.get(), i])
+            }
+        }
+    }
+    assert_eq(m.get(), 6)
+    assert_eq(seen.get().len(), 2)
+}
+
+test "lock inside lock of the same mutex faults" {
+    let m = Mutex(0)
+    let again: Send () -> Int = || { return m.lock(|n| { return n }) }
+    let h = spawn { return m.lock(|n| { return again() }) }
+    assert(h.await().is_err(), "the mutex is locked by this task")
+}
+
+test "a once runs its initializer one time" {
+    let hits = atomic.Int64(0)
+    let once = Once<Int>()
+    let first = once.get_or_init(|| {
+        hits.fetch_add(1)
+        return 42
+    })
+    let second = once.get_or_init(|| {
+        hits.fetch_add(1)
+        return 0
+    })
+    assert_eq(first, 42)
+    assert_eq(second, 42)
+    assert_eq(hits.load(), 1)
+}
+
+test "tasks that ask a once at the same time share one initialization" {
+    let hits = atomic.Int64(0)
+    let once = Once<Int>()
+    var tasks: List<Task<Int>> = []
+    for i in 0..3 {
+        tasks.push(spawn {
+            return once.get_or_init(|| {
+                hits.fetch_add(1)
+                sleep(10)
+                return 7
+            })
+        })
+    }
+    for result in await_all(tasks) { assert_eq(result.unwrap(), 7) }
+    assert_eq(hits.load(), 1)
+}
+
+test "a failed initializer leaves the once empty" {
+    let once = Once<Int>()
+    let n = 0
+    let h = spawn { return once.get_or_init(|| { return 1 / n }) }
+    assert(h.await().is_err(), "the initializer faulted")
+    assert_eq(once.get_or_init(|| { return 5 }), 5)
+}
+
+test "an atomic integer reads, writes and steps" {
+    let a = atomic.Int64(10)
+    assert_eq(a.load(), 10)
+    a.store(3)
+    assert_eq(a.swap(4), 3)
+    assert_eq(a.fetch_add(6), 4)
+    assert_eq(a.fetch_sub(1), 10)
+    assert(a.compare_exchange(9, 20), "9 was there")
+    assert(!a.compare_exchange(9, 30), "20 is there now")
+    assert_eq(a.load(), 20)
+}
+
+test "an atomic integer faults on overflow" {
+    let a = atomic.Int64(9223372036854775807)
+    let h = spawn { return a.fetch_add(1) }
+    assert(h.await().is_err(), "past the largest Int")
+}
+
+test "an atomic counter is exact across tasks" {
+    let a = atomic.Int64(0)
+    scope {
+        for i in 0..4 {
+            spawn { a.fetch_add(i + 1) }
+        }
+    }
+    assert_eq(a.load(), 10)
+}
+
+test "an atomic flag reads, writes and swaps" {
+    let f = atomic.Bool(false)
+    assert(!f.load(), "starts false")
+    f.store(true)
+    assert(f.swap(false), "was true")
+    assert(f.compare_exchange(false, true), "false was there")
+    assert(!f.compare_exchange(false, true), "true is there now")
+    assert(f.load(), "ends true")
+}
+
+test "a cloned receiver shares the channel and a receiver reads as a stream" {
+    let (tx, rx) = Channel<Int>(4)
+    let other = rx.clone()
+    tx.send(1)
+    tx.send(2)
+    tx.send(3)
+    tx.close()
+    assert_eq(other.recv()!, 1)
+    var total = 0
+    for x in rx.stream() {
+        total += x
+    }
+    assert_eq(total, 5)
+}

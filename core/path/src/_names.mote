@@ -1,0 +1,39 @@
+// The names of a path, which the other files read and join again.
+import { join as join_with } from std.string
+
+// The names of a path, without empty parts or `.`.
+pub fn names(path: String) -> List<String> {
+    var out: List<String> = []
+    for part in path.split("/") {
+        if part != "" && part != "." {
+            out.push(part)
+        }
+    }
+    return out
+}
+
+// The names with each `..` cancelling the name before it; a relative path keeps a `..` it cannot cancel and an absolute one drops it.
+pub fn cancel(items: List<String>, absolute: Bool) -> List<String> {
+    var out: List<String> = []
+    for item in items {
+        if item != ".." {
+            out.push(item)
+        } else if out.len() > 0 && out.get(out.len() - 1) != ".." {
+            out.pop()
+        } else if !absolute {
+            out.push("..")
+        }
+    }
+    return out
+}
+
+pub fn assemble(items: List<String>, absolute: Bool) -> String {
+    let body = join_with(items, "/")
+    if absolute {
+        return "/" + body
+    }
+    if body == "" {
+        return "."
+    }
+    return body
+}

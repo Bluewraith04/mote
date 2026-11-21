@@ -1,0 +1,6 @@
+fn main() {
+    let zero = 0
+    println(1)
+    println(1 / zero)
+    println(2)
+}

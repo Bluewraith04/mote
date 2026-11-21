@@ -1,0 +1,12 @@
+fn main() {
+    let zero = 0
+    let h = spawn { return 1 / zero }
+    match h.await() {
+        Ok(_) => println("did not fault")
+        Err(e) => {
+            println(e.message)
+            println(e.kind == ErrorKind.Other)
+        }
+    }
+    println(h.is_ready())
+}

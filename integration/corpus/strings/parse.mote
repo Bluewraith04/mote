@@ -1,0 +1,44 @@
+import { parse_int, parse_float } from std.string
+
+fn int_of(text: String) {
+    let parsed = parse_int(text)
+    println("[${text}] ${parsed.is_ok()} ${parsed.unwrap_or(0)}")
+}
+
+fn float_of(text: String) {
+    let parsed = parse_float(text)
+    println("[${text}] ${parsed.is_ok()} ${parsed.unwrap_or(0.0)}")
+}
+
+fn main() {
+    int_of("42")
+    int_of("-7")
+    int_of("+5")
+    int_of("0")
+    int_of("-0")
+    int_of("007")
+    int_of("9223372036854775807")
+    int_of("-9223372036854775808")
+    int_of("9223372036854775808")
+    int_of(" 1")
+    int_of("1 ")
+    int_of("")
+    int_of("1_000")
+    int_of("0x10")
+    int_of("1.5")
+    int_of("ten")
+    float_of("2.5")
+    float_of("-0.125")
+    float_of("1e3")
+    float_of("1E-2")
+    float_of("5.")
+    float_of(".5")
+    float_of("inf")
+    float_of("-infinity")
+    float_of("NaN")
+    float_of("42")
+    float_of("")
+    float_of("1.2.3")
+    float_of("abc")
+    float_of(" 1.0")
+}

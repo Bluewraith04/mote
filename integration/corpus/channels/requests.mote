@@ -1,0 +1,21 @@
+import { Channel, Sender } from std.sync
+
+fn main() {
+    let (requests, inbox) = Channel<(Int, Sender<Int>)>(0)
+    let server = spawn {
+        for (n, reply) in inbox {
+            reply.send(n * 10)
+            reply.close()
+        }
+    }
+    var round = 1
+    while round <= 3 {
+        let (answer_tx, answer_rx) = Channel<Int>(1)
+        requests.send((round, answer_tx))
+        println(answer_rx.recv()!)
+        println(answer_rx.recv() == null)
+        round += 1
+    }
+    requests.close()
+    println(server.await().is_ok())
+}

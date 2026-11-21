@@ -1,0 +1,104 @@
+import { assert, assert_eq } from std.test
+import { join } from std.string
+import { Color, Pty } from term
+import tile
+
+let ESC = "\u{1b}"
+
+class Counter {
+    var count: Int
+}
+
+fn bump(var s: Counter) { s.count += 1 }
+
+struct Tally {
+    var taps: Int
+}
+
+fn shown(root: tile.Element, rows: Int, cols: Int) -> String {
+    return join(tile.lay_out(root, rows, cols).grid.lines(), "|")
+}
+
+fn counter_view(s: Counter) -> tile.Element {
+    return tile.vstack([
+        tile.text("count ${s.count}"),
+        tile.button("+").on_click(bump)
+    ])
+}
+
+test "builders a column puts its children one under the other with the gap between" {
+    assert_eq(shown(tile.vstack([tile.text("a"), tile.text("b")]).gap(1), 4, 3), "a  |   |b  |   ")
+}
+
+test "builders a row puts its children side by side and a spacer pushes them apart" {
+    assert_eq(shown(tile.hstack([tile.text("a"), tile.spacer(), tile.text("b")]), 1, 8), "a      b")
+}
+
+test "builders a fixed width and a grown child share a row" {
+    assert_eq(shown(tile.hstack([tile.text("ab").width(4), tile.text("c").grow()]), 1, 8), "ab  c   ")
+}
+
+test "builders a border with a title and padding draw around the children" {
+    assert_eq(shown(tile.text("hi").pad(1).border("t"), 5, 8), "┌ t ───┐|│      │|│ hi   │|│      │|└──────┘")
+}
+
+test "builders a style is passed down to the text and the text can set its own" {
+    let root = tile.vstack([tile.text("a"), tile.text("b").fg(Color.Red)]).fg(Color.Green).bold()
+    let grid = tile.lay_out(root, 2, 2).grid
+    assert(grid.cell(0, 0).style.bold, "bold passes down")
+    assert(grid.cell(1, 0).style.bold, "bold passes down")
+    assert(grid.cell(0, 0).style.same(tile.Style { fg: Color.Green, bold: true }), "green")
+    assert(grid.cell(1, 0).style.same(tile.Style { fg: Color.Red, bold: true }), "red")
+}
+
+test "builders a button is its label reversed between spaces" {
+    let grid = tile.lay_out(tile.button("ok"), 1, 6).grid
+    assert_eq(grid.lines().get(0), " ok   ")
+    assert(grid.cell(0, 1).style.reverse, "reversed")
+}
+
+test "builders the area of a named element is where it was drawn" {
+    let painted = tile.lay_out(tile.vstack([tile.text("top"), tile.text("mid").id("m").pad(1)]), 6, 10)
+    assert_eq(painted.areas.len(), 1)
+    let area = painted.areas.get(0)
+    assert_eq(area.tag, "m")
+    assert_eq(area.row, 1)
+    assert_eq(area.rows, 3)
+}
+
+test "builders keys run their handler and a quit key ends the run" {
+    let pty = Pty.open()!
+    pty.resize(4, 20)!
+    pty.send("jjkq")!
+    let app = tile.App(Counter { count: 0 }, counter_view).on_key("j", bump).on_key("k", |var s| { s.count -= 1 }).quit_on("q")
+    let last = app.run_on(pty.terminal())!
+    assert_eq(last.count, 1)
+    pty.close()!
+}
+
+test "builders a press on a button runs its handler and a press elsewhere does nothing" {
+    let pty = Pty.open()!
+    pty.resize(4, 20)!
+    pty.send("${ESC}[<0;2;2M${ESC}[<0;2;2M${ESC}[<0;9;4Mq")!
+    let last = tile.App(Counter { count: 0 }, counter_view).quit_on("q").run_on(pty.terminal())!
+    assert_eq(last.count, 2)
+    pty.close()!
+}
+
+test "builders a state that is a struct is changed by the handler" {
+    let pty = Pty.open()!
+    pty.resize(2, 10)!
+    pty.send("${ESC}[<0;1;1Mq")!
+    let view = |s: Tally| tile.text("${s.taps}").on_click(|var t: Tally| { t.taps += 1 })
+    let last = tile.App(Tally { taps: 0 }, view).quit_on("q").run_on(pty.terminal())!
+    assert_eq(last.taps, 1)
+    pty.close()!
+}
+
+test "builders the timer runs its handler at the interval" {
+    let pty = Pty.open()!
+    pty.resize(2, 10)!
+    let last = tile.App(Counter { count: 0 }, counter_view).every(10, bump).quit_when(|s| s.count >= 3).run_on(pty.terminal())!
+    assert_eq(last.count, 3)
+    pty.close()!
+}

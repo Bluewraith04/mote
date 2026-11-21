@@ -1,0 +1,26 @@
+// The functions of the native library `process`.
+
+@link("process")
+pub native fn process_spawn(program: String, argv: [UInt8], envp: [UInt8], env_inherit: Int, cwd: String, modes: Int, fds: [UInt8]) -> Int
+
+@blocking
+@link("process")
+pub native fn process_wait(pid: Int) -> Int
+
+@link("process")
+pub native fn process_try_wait(pid: Int) -> Int
+
+@link("process")
+pub native fn process_kill(pid: Int, number: Int) -> Int
+
+@blocking
+@link("process")
+pub native fn process_read(fd: Int, buffer: [UInt8], count: Int) -> Int
+
+@blocking
+@link("process")
+pub native fn process_write(fd: Int, bytes: [UInt8], count: Int) -> Int
+
+@link("process")
+pub native fn process_close(fd: Int) -> Int
+

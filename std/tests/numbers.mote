@@ -1,0 +1,103 @@
+// Int, Bool and the sized integers.
+import { assert, assert_eq } from std.test
+
+test "abs, min and max" {
+    assert_eq((-5).abs(), 5)
+    assert_eq(5.abs(), 5)
+    assert_eq(3.min(7), 3)
+    assert_eq(3.max(7), 7)
+    let small: Int8 = -100
+    assert_eq(small.abs() as Int, 100)
+    let wide: UInt16 = 40000
+    assert_eq(wide.max(5) as Int, 40000)
+}
+
+test "compare orders two numbers" {
+    assert_eq(1.compare(2), -1)
+    assert_eq(2.compare(2), 0)
+    assert_eq(3.compare(2), 1)
+}
+
+test "to_string writes digits" {
+    assert_eq(0.to_string(), "0")
+    assert_eq((-42).to_string(), "-42")
+    assert_eq(1234567.to_string(), "1234567")
+    let byte: UInt8 = 255
+    assert_eq(byte.to_string(), "255")
+    assert_eq(true.to_string(), "true")
+    assert_eq(false.to_string(), "false")
+}
+
+test "from converts between Int, Float and Bool" {
+    assert_eq(Int.from(3.9), 3)
+    assert_eq(Int.from(-3.9), -3)
+    assert_eq(Int.from(true), 1)
+    assert_eq(Int.from(false), 0)
+    assert_eq(String.from(12), "12")
+    assert_eq(String.from(true), "true")
+}
+
+test "checked arithmetic gives null on overflow" {
+    let top = 9223372036854775807
+    assert_eq(top.checked_add(1) == null, true)
+    assert_eq(top.checked_sub(1)!, 9223372036854775806)
+    assert_eq(5.checked_mul(6)!, 30)
+    assert_eq(top.checked_mul(2) == null, true)
+    let byte: UInt8 = 250
+    assert_eq(byte.checked_add(5)! as Int, 255)
+    assert_eq(byte.checked_add(6) == null, true)
+}
+
+test "wrapping arithmetic wraps at the width" {
+    let byte: UInt8 = 250
+    assert_eq(byte.wrapping_add(10) as Int, 4)
+    let low: Int8 = -128
+    assert_eq(low.wrapping_sub(1) as Int, 127)
+    assert_eq(low.wrapping_neg() as Int, -128)
+    let top = 9223372036854775807
+    assert_eq(top.wrapping_add(1), -9223372036854775807 - 1)
+}
+
+test "saturating arithmetic stops at the ends" {
+    let byte: UInt8 = 250
+    assert_eq(byte.saturating_add(10) as Int, 255)
+    assert_eq(byte.saturating_sub(251) as Int, 0)
+    let low: Int8 = -120
+    assert_eq(low.saturating_sub(100) as Int, -128)
+    assert_eq(low.saturating_mul(2) as Int, -128)
+}
+
+test "overflowing arithmetic reports the wrap" {
+    let byte: UInt8 = 200
+    let (sum, wrapped) = byte.overflowing_add(100)
+    assert_eq(sum as Int, 44)
+    assert(wrapped, "the sum wraps")
+    let (small, fine) = byte.overflowing_sub(100)
+    assert_eq(small as Int, 100)
+    assert(!fine, "the difference fits")
+}
+
+test "shifts take the amount modulo the width or report it" {
+    assert_eq(1.wrapping_shl(65), 2)
+    assert_eq(1.checked_shl(70) == null, true)
+    assert_eq(1.checked_shl(3)!, 8)
+    assert_eq(256.wrapping_shr(4), 16)
+    assert_eq(1 << 4, 16)
+    assert_eq(-16 >> 2, -4)
+}
+
+test "casts wrap, saturate and round" {
+    let n = 300
+    assert_eq((n as UInt8) as Int, 44)
+    let x = 300.5
+    assert_eq((x as UInt8) as Int, 255)
+    assert_eq((-1.9) as Int, -1)
+    assert_eq(n as Float, 300.0)
+}
+
+test "an overflow is a fault in a task" {
+    // lives apart so the fault does not fail this block
+    let top = 9223372036854775807
+    let h = spawn { return top + 1 }
+    assert(h.await().is_err(), "the task faults")
+}

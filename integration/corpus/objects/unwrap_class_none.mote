@@ -1,0 +1,15 @@
+class Box {
+    n: Int
+}
+
+fn find(flag: Bool) -> Box? {
+    if flag {
+        return Box { n: 1 }
+    }
+    return null
+}
+
+fn main() {
+    println(find(true)!.n)
+    println(find(false)!.n)
+}

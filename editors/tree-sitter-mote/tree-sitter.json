@@ -1,0 +1,28 @@
+{
+  "$schema": "https://tree-sitter.github.io/tree-sitter/assets/schemas/config.schema.json",
+  "grammars": [
+    {
+      "name": "mote",
+      "camelcase": "Mote",
+      "scope": "source.mote",
+      "path": ".",
+      "file-types": ["mote"],
+      "highlights": "../zed/languages/mote/highlights.scm"
+    }
+  ],
+  "metadata": {
+    "version": "0.2.0",
+    "license": "MIT",
+    "description": "Tree-sitter grammar for the Mote language",
+    "authors": [{ "name": "Warith Ogunwoolu" }]
+  },
+  "bindings": {
+    "c": false,
+    "go": false,
+    "node": false,
+    "python": false,
+    "rust": false,
+    "swift": false,
+    "zig": false
+  }
+}

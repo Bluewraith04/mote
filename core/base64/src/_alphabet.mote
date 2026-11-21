@@ -1,0 +1,41 @@
+// The alphabets and the value of each character.
+
+pub enum Alphabet {
+    Standard
+    UrlSafe
+}
+
+// The character of a six-bit value.
+pub fn letter(value: Int, alphabet: Alphabet) -> UInt8 {
+    var code = 0
+    if value < 26 {
+        code = 65 + value
+    } else if value < 52 {
+        code = 71 + value
+    } else if value < 62 {
+        code = value - 4
+    } else if value == 62 {
+        code = 43
+        if alphabet == Alphabet.UrlSafe { code = 45 }
+    } else {
+        code = 47
+        if alphabet == Alphabet.UrlSafe { code = 95 }
+    }
+    return code as UInt8
+}
+
+// The six-bit value of a character, or -1 when the alphabet has no such character.
+pub fn sextet(code: Int, alphabet: Alphabet) -> Int {
+    if code >= 65 && code <= 90 { return code - 65 }
+    if code >= 97 && code <= 122 { return code - 71 }
+    if code >= 48 && code <= 57 { return code + 4 }
+    if alphabet == Alphabet.Standard {
+        if code == 43 { return 62 }
+        if code == 47 { return 63 }
+    } else {
+        if code == 45 { return 62 }
+        if code == 95 { return 63 }
+    }
+    return -1
+}
+

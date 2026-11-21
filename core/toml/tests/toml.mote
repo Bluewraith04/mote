@@ -1,0 +1,183 @@
+import { assert, assert_eq } from std.test
+import { FromToml, Toml, ToToml, encode, parse } from toml
+
+class Server: (ToToml, FromToml) {
+    host: String
+    port: Int
+    tls: Bool
+    tags: List<String>
+    since: String
+}
+
+class Config: (ToToml, FromToml) {
+    title: String
+    ratio: Float
+    owner: String?
+    servers: List<Server>
+}
+
+fn error_of(text: String) -> String {
+    return match parse(text) {
+        Ok(_) => "ok"
+        Err(error) => error.to_string()
+    }
+}
+
+test "keys, strings, numbers, booleans and dates are read" {
+    let table = parse("title = \"TOML Example\"\nint = 99\nneg = -17\nfloat = 3.1415\nexp = 5e+22\nyes = true\nno = false\nodt = 1979-05-27T07:32:00Z\nldt = 1979-05-27T07:32:00\nld = 1979-05-27\nlt = 07:32:00\n")!
+    assert_eq(table.get("title")!.as_text()!, "TOML Example")
+    assert_eq(table.get("int")!.as_int()!, 99)
+    assert_eq(table.get("neg")!.as_int()!, -17)
+    assert_eq(table.get("float")!.as_float()!, 3.1415)
+    assert_eq(table.get("exp")!.as_float()!, 5e22)
+    assert_eq(table.get("yes")!.as_bool()!, true)
+    assert_eq(table.get("no")!.as_bool()!, false)
+    assert_eq(table.get("odt")!.as_datetime()!, "1979-05-27T07:32:00Z")
+    assert_eq(table.get("ldt")!.as_datetime()!, "1979-05-27T07:32:00")
+    assert_eq(table.get("ld")!.as_datetime()!, "1979-05-27")
+    assert_eq(table.get("lt")!.as_datetime()!, "07:32:00")
+    assert(table.get("missing") == null, "missing key")
+    assert(table.get("int")!.as_text() == null, "an integer is not text")
+}
+
+test "integers in other bases and with underscores, and the extremes of 64 bits" {
+    let table = parse("hex = 0xDEADBEEF\noct = 0o755\nbin = 0b1101\nbig = 1_000_000\nmax = 9223372036854775807\nmin = -9223372036854775808\n")!
+    assert_eq(table.get("hex")!.as_int()!, 3735928559)
+    assert_eq(table.get("oct")!.as_int()!, 493)
+    assert_eq(table.get("bin")!.as_int()!, 13)
+    assert_eq(table.get("big")!.as_int()!, 1000000)
+    assert_eq(table.get("max")!.as_int()!, 9223372036854775807)
+    assert_eq(table.get("min")!.as_int()!, -9223372036854775807 - 1)
+    assert(error_of("big = 9223372036854775808").contains("line 1"), "too large")
+}
+
+test "special floats" {
+    let table = parse("a = inf\nb = -inf\nc = nan\nd = -0.0\n")!
+    assert_eq(table.get("a")!.as_float()!, 1.0 / 0.0)
+    assert_eq(table.get("b")!.as_float()!, -1.0 / 0.0)
+    let nan = table.get("c")!.as_float()!
+    assert(nan != nan, "nan")
+    assert_eq(table.get("d")!.as_float()!, 0.0)
+    assert_eq(Toml.Table([("n", Toml.Real(0.0 / 0.0)), ("i", Toml.Real(-1.0 / 0.0))]).to_text()!, "n = nan\ni = -inf\n")
+}
+
+test "string forms" {
+    let table = parse("basic = \"a\\tb\\u00e9\\n\"\nliteral = 'C:\\path\\n'\nmulti = \"\"\"\nRoses are red\nViolets are blue\"\"\"\nraw = '''\nline one\nline two'''\ncont = \"\"\"one \\\n   two\"\"\"\n")!
+    assert_eq(table.get("basic")!.as_text()!, "a\tb\u{e9}\n")
+    assert_eq(table.get("literal")!.as_text()!, "C:\\path\\n")
+    assert_eq(table.get("multi")!.as_text()!, "Roses are red\nViolets are blue")
+    assert_eq(table.get("raw")!.as_text()!, "line one\nline two")
+    assert_eq(table.get("cont")!.as_text()!, "one two")
+}
+
+test "tables, dotted keys, inline tables and arrays" {
+    let text = "name = { first = \"Tom\", last = \"Preston-Werner\" }\nphysical.color = \"orange\"\nints = [ 1, 2, 3 ]\nmixed = [ [ 1, 2 ], [\"a\", \"b\"] ]\n\n[database]\nenabled = true\nports = [ 8000, 8001 ]\n\n[database.limits]\nconnections = 5\n\n[\"quoted key\".sub]\nvalue = 1\n"
+    let table = parse(text)!
+    assert_eq(table.get("name")!.get("last")!.as_text()!, "Preston-Werner")
+    assert_eq(table.get("physical")!.get("color")!.as_text()!, "orange")
+    assert_eq(table.get("ints")!.at(2)!.as_int()!, 3)
+    assert_eq(table.get("mixed")!.at(1)!.at(0)!.as_text()!, "a")
+    assert(table.get("ints")!.at(3) == null, "past the end")
+    assert_eq(table.get("database")!.get("ports")!.at(1)!.as_int()!, 8001)
+    assert_eq(table.get("database")!.get("limits")!.get("connections")!.as_int()!, 5)
+    assert_eq(table.get("quoted key")!.get("sub")!.get("value")!.as_int()!, 1)
+}
+
+test "arrays of tables keep their order" {
+    let table = parse("[[products]]\nname = \"Hammer\"\nsku = 738594937\n\n[[products]]\n\n[[products]]\nname = \"Nail\"\nsku = 284758393\ncolor = \"gray\"\n")!
+    let products = table.get("products")!
+    assert_eq(products.at(0)!.get("name")!.as_text()!, "Hammer")
+    assert(products.at(1)!.get("name") == null, "an empty table")
+    assert_eq(products.at(2)!.get("color")!.as_text()!, "gray")
+    assert(products.at(3) == null, "three tables")
+}
+
+test "members keep the order of the text" {
+    let table = parse("zebra = 1\nalpha = 2\nmid = 3\n")!
+    assert_eq(table.to_text()!, "zebra = 1\nalpha = 2\nmid = 3\n")
+}
+
+test "a mistake names its line and column" {
+    assert(error_of("a = 1\nb = \n").contains("line 2"), "missing value")
+    assert(error_of("a = 1\na = 2\n").contains("line 2"), "duplicate key")
+    assert(error_of("[t]\n[t]\n").contains("line 2"), "duplicate table")
+    assert(error_of("a = [1, \"x\"\n").contains("line"), "unclosed array")
+    assert(error_of("a = 'unterminated\n").contains("line 1"), "unterminated string")
+    assert_eq(error_of("a = 1"), "ok")
+    assert_eq(error_of(""), "ok")
+}
+
+test "a table is written as text and read back equal" {
+    let text = "title = \"x\"\nn = 5\nf = 2.5\nb = true\nd = 1979-05-27\nlist = [1, 2, 3]\n\n[sub]\nk = \"v\"\n\n[sub.deep]\nz = 1\n\n[[rows]]\na = 1\n\n[[rows]]\na = 2\n"
+    let first = parse(text)!
+    let printed = first.to_text()!
+    let second = parse(printed)!
+    assert_eq(second.to_text()!, printed)
+    assert_eq(second.get("sub")!.get("deep")!.get("z")!.as_int()!, 1)
+    assert_eq(second.get("rows")!.at(1)!.get("a")!.as_int()!, 2)
+    assert_eq(second.get("d")!.as_datetime()!, "1979-05-27")
+    assert(printed.contains("[[rows]]"), "arrays of tables")
+}
+
+test "text that needs escaping is written escaped" {
+    let table = Toml.Table([("note", Toml.Text("a \"quote\"\nand \\ more \u{e9}")), ("key with space", Toml.Integer(1))])
+    let printed = table.to_text()!
+    let again = parse(printed)!
+    assert_eq(again.get("note")!.as_text()!, "a \"quote\"\nand \\ more \u{e9}")
+    assert_eq(again.get("key with space")!.as_int()!, 1)
+    assert(printed.contains("\"key with space\""), "quoted key")
+}
+
+test "only a table is written" {
+    assert(Toml.Integer(1).to_text().is_err(), "an integer")
+    assert(Toml.Array([]).to_text().is_err(), "an array")
+    assert_eq(Toml.Table([]).to_text()!, "")
+}
+
+test "pretty puts the items of an array on lines of their own" {
+    let table = parse("list = [1, 2]\n")!
+    assert_eq(table.pretty()!, "list = [\n    1,\n    2,\n]\n")
+}
+
+test "a record is decoded from a table and encoded to one" {
+    let text = "title = \"fleet\"\nratio = 0.5\n\n[[servers]]\nhost = \"a.example\"\nport = 8080\ntls = true\ntags = [\"x\", \"y\"]\nsince = 2024-03-01\n\n[[servers]]\nhost = \"b.example\"\nport = 9090\ntls = false\ntags = []\nsince = 2025-01-02T10:00:00Z\n"
+    let config = Config.from_toml(parse(text)!)!
+    assert_eq(config.title, "fleet")
+    assert_eq(config.ratio, 0.5)
+    assert(config.owner == null, "an optional field left out")
+    assert_eq(config.servers.len(), 2)
+    assert_eq(config.servers.get(0).since, "2024-03-01")
+    assert_eq(config.servers.get(1).port, 9090)
+    let written = config.to_toml()!.to_text()!
+    let again = Config.from_toml(parse(written)!)!
+    assert_eq(again.servers.get(0).tags.len(), 2)
+    assert_eq(again.servers.get(1).since, "2025-01-02T10:00:00Z")
+    assert(!written.contains("owner"), "a null member is left out")
+}
+
+test "a field that is missing or of the wrong type is an error" {
+    assert(Config.from_toml(parse("title = \"x\"\n")!).is_err(), "missing fields")
+    assert(Config.from_toml(parse("title = 3\nratio = 1.0\nservers = []\n")!).is_err(), "wrong type")
+}
+
+test "a null that is not an optional member cannot be written" {
+    let value = encode(["a", "b"])
+    assert(value.is_ok(), "an array of text")
+    let nested: List<String?> = ["a", null]
+    assert(encode(nested).is_err(), "a null item")
+}
+
+test "a long document passes the native boundary whole" {
+    var text = ""
+    for n in 0..3000 {
+        text = text + "key" + n.to_string() + " = \"value " + n.to_string() + "\"\n"
+    }
+    let table = parse(text)!
+    assert_eq(table.get("key2999")!.as_text()!, "value 2999")
+    assert_eq(parse(table.to_text()!)!.get("key1500")!.as_text()!, "value 1500")
+}
+
+test "deeply nested tables are read" {
+    let table = parse("a.b.c.d.e.f.g = 1\n")!
+    assert_eq(table.get("a")!.get("b")!.get("c")!.get("d")!.get("e")!.get("f")!.get("g")!.as_int()!, 1)
+}

@@ -1,0 +1,4 @@
+fn main() {
+    var xs: List<Int> = [1, 2, 3]
+    xs.set_slice(0, 2, [1])
+}

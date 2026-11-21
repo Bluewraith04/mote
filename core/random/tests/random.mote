@@ -1,0 +1,99 @@
+import { assert, assert_eq } from std.test
+import { Random, system_bytes, system_int } from random
+
+test "a seed gives the numbers xoshiro256++ gives" {
+    var zero = Random.seeded(0)
+    assert_eq(zero.next_bits(), 5987356902031041503)
+    assert_eq(zero.next_bits(), 7051070477665621255)
+    assert_eq(zero.next_bits(), 6633766593972829180)
+    assert_eq(zero.next_bits(), 211316841551650330)
+    assert_eq(zero.next_bits(), 9136120204379184874)
+    var other = Random.seeded(12345)
+    assert_eq(other.next_bits(), 10201931350592234856)
+    assert_eq(other.next_bits(), 3780764549115216544)
+    assert_eq(other.next_bits(), 1570246627180645737)
+}
+
+test "the same seed repeats and another seed differs" {
+    var a = Random.seeded(7)
+    var b = Random.seeded(7)
+    var c = Random.seeded(8)
+    assert_eq(a.next_bits(), b.next_bits())
+    assert_eq(a.next_bits(), b.next_bits())
+    assert(a.next_bits() != c.next_bits(), "differs")
+}
+
+test "an integer in a range stays inside it and reaches both ends" {
+    var random = Random.seeded(1)
+    var seen_low = false
+    var seen_high = false
+    for _ in 0..500 {
+        let n = random.between(-3, 4)
+        assert(n >= -3 && n < 4, "inside")
+        if n == -3 { seen_low = true }
+        if n == 3 { seen_high = true }
+    }
+    assert(seen_low && seen_high, "ends")
+    assert_eq(random.below(1), 0)
+}
+
+test "a float is in the unit interval and the mean is near a half" {
+    var random = Random.seeded(2)
+    var total = 0.0
+    for _ in 0..2000 {
+        let x = random.float()
+        assert(x >= 0.0 && x < 1.0, "unit")
+        total += x
+    }
+    let mean = total / 2000.0
+    assert(mean > 0.45 && mean < 0.55, "mean")
+}
+
+test "a bool falls both ways" {
+    var random = Random.seeded(3)
+    var trues = 0
+    for _ in 0..1000 {
+        if random.bool() { trues += 1 }
+    }
+    assert(trues > 400 && trues < 600, "balanced")
+}
+
+test "a shuffle keeps the items and moves them" {
+    var random = Random.seeded(4)
+    let items = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    let shuffled = random.shuffled(items)
+    assert_eq(shuffled.len(), 10)
+    var total = 0
+    for n in shuffled {
+        total += n
+    }
+    assert_eq(total, 55)
+    assert(shuffled != items, "moved")
+    assert_eq(items.get(0), 1)
+    let empty: List<Int> = []
+    assert_eq(random.shuffled(empty).len(), 0)
+}
+
+test "a choice comes from the list" {
+    var random = Random.seeded(5)
+    let words = ["a", "b", "c"]
+    for _ in 0..20 {
+        assert(words.contains(random.choose(words)!), "member")
+    }
+    let none: List<String> = []
+    assert(random.choose(none) == null, "empty")
+}
+
+test "bytes come in the count asked" {
+    var random = Random.seeded(6)
+    assert_eq(random.bytes(0).len(), 0)
+    assert_eq(random.bytes(33).len(), 33)
+}
+
+test "the system source gives bytes and numbers that differ" {
+    assert_eq(system_bytes(16)!.len(), 16)
+    assert_eq(system_bytes(0)!.len(), 0)
+    assert(system_int()! != system_int()!, "differs")
+    var random = Random.system()!
+    assert(random.below(10) < 10, "inside")
+}

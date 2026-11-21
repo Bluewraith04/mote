@@ -1,0 +1,22 @@
+// Standard error, standard input, the program's arguments and its end.
+import { assert_eq } from std.test
+import { args, exit, read_line } from std.io
+
+test "standard error takes text without touching the result" {
+    eprint("e")
+    eprintln("e")
+    println("out")
+}
+
+test "a test run has no program arguments" {
+    assert_eq(args().len(), 0)
+}
+
+// The guards keep the runs from reading a terminal or ending the test run.
+test "input and exit are called only when asked for" {
+    if args().len() > 8 {
+        let line = read_line()
+        println(line == null)
+        exit(2)
+    }
+}

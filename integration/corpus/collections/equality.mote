@@ -1,0 +1,61 @@
+struct Point {
+    x: Int
+    y: Int
+}
+
+enum Shape {
+    Dot
+    Circle(Int)
+    Rect(Int, Int)
+}
+
+class Cell {
+    var value: Int
+}
+
+fn main() {
+    let a: List<Int> = [1, 2, 3]
+    let b: List<Int> = [1, 2, 3]
+    let c: List<Int> = [1, 2]
+    println(a == b)
+    println(a == c)
+    println(a != c)
+    let p: [String] = ["x", "y"]
+    let q: [String] = ["x", "y"]
+    println(p == q)
+    println(Point { x: 1, y: 2 } == Point { x: 1, y: 2 })
+    println(Point { x: 1, y: 2 } == Point { x: 2, y: 1 })
+    println(Shape.Dot == Shape.Dot)
+    println(Shape.Circle(2) == Shape.Circle(2))
+    println(Shape.Circle(2) == Shape.Circle(3))
+    println(Shape.Rect(1, 2) == Shape.Circle(1))
+    let t1 = (1, "one", 1.5)
+    let t2 = (1, "one", 1.5)
+    println(t1 == t2)
+    let n1: Int? = 5
+    let n2: Int? = 5
+    let n3: Int? = null
+    println(n1 == n2)
+    println(n1 == n3)
+    println(n3 == n3)
+    let s1: String? = "same"
+    let s2: String? = "same"
+    println(s1 == s2)
+    let c1 = Cell { value: 1 }
+    let c2 = Cell { value: 1 }
+    println(c1 == c1)
+    println(c1 == c2)
+    let nan = 0.0 / zero()
+    println(nan == nan)
+    let nested: List<List<Int>> = [[1], [2, 3]]
+    let again: List<List<Int>> = [[1], [2, 3]]
+    println(nested == again)
+    println(nested.contains([2, 3]))
+    println(nested.contains([3]))
+}
+
+fn zero() -> Float {
+    var z = 1.0
+    z -= 1.0
+    return z
+}

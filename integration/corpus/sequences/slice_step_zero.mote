@@ -1,0 +1,9 @@
+fn main() {
+    var xs: List<Int> = List.new()
+    xs.push(1)
+    xs.push(2)
+    var step = 1
+    println(xs[0..2..step].len())
+    step -= 1
+    println(xs[0..2..step].len())
+}

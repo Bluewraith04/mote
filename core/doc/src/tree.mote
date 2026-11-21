@@ -1,0 +1,293 @@
+// A document as a tree of nodes in one native arena.
+import { Int64 } from std.atomic
+import { require } from std.meta
+import { Closeable } from std.traits
+import { NodeKind } from .kind
+import { doc_attr, doc_attr_count, doc_attr_name, doc_attr_value, doc_bytes, doc_child, doc_child_count, doc_comment, doc_detach, doc_element, doc_free, doc_from_bytes, doc_import, doc_insert, doc_kind, doc_len, doc_name, doc_new, doc_parent, doc_raw, doc_remove_attr, doc_set_attr, doc_set_name, doc_set_text, doc_text, doc_text_node } from ._native
+
+// The text a call puts in a buffer, asking again with a larger buffer when it did not fit; null when the call has none.
+fn fetch(call: ([UInt8]) -> Int) -> String? {
+    var buffer: [UInt8] = [0; 256]
+    var size = call(buffer)
+    if size < 0 { return null }
+    if size > buffer.len() {
+        buffer = [0; size]
+        size = call(buffer)
+    }
+    return String.from_bytes(buffer.slice(0, size))
+}
+
+let VOID = ["area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "track", "wbr"]
+
+fn escape(text: String, quotes: Bool) -> String {
+    var out = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    if quotes { out = out.replace("\"", "&quot;").replace("'", "&#39;") }
+    return out
+}
+
+/// A tree of nodes. Node 0 is the document node, which holds the top-level nodes; a node made by `element`, `text` or `comment` is outside the tree until it is appended. Closing twice is an error and using a closed document is a fault.
+pub class Doc: (Closeable) {
+    handle: Int64
+
+    /// An empty document.
+    pub fn new() -> Doc { return Doc { handle: Int64.new(doc_new()) } }
+
+    /// A document from its byte form; an `Err` for bytes that are not one.
+    pub fn from_bytes(bytes: [UInt8]) -> Result<Doc, Error> {
+        let handle = doc_from_bytes(bytes)
+        if handle < 0 { return Err(Error.new(ErrorKind.InvalidData, "doc: not a document")) }
+        return Ok(Doc { handle: Int64.new(handle) })
+    }
+
+    // The native handle, which must be open.
+    pub fn live(self) -> Int {
+        let handle = self.handle.load()
+        require(handle != 0, "the document is closed")
+        return handle
+    }
+
+    /// The document node.
+    pub fn root(self) -> Node { return Node { doc: self, id: 0 } }
+
+    /// A new element with a name such as `p`.
+    pub fn element(self, name: String) -> Node { return Node { doc: self, id: doc_element(self.live(), name.bytes()) } }
+
+    /// A new text node.
+    pub fn text(self, text: String) -> Node { return Node { doc: self, id: doc_text_node(self.live(), text.bytes()) } }
+
+    /// A new comment node.
+    pub fn comment(self, text: String) -> Node { return Node { doc: self, id: doc_comment(self.live(), text.bytes()) } }
+
+    /// A new node of HTML text that `to_html` writes as it is.
+    pub fn raw(self, html: String) -> Node { return Node { doc: self, id: doc_raw(self.live(), html.bytes()) } }
+
+    /// A copy of a node and everything under it, from this or another document, outside the tree.
+    pub fn adopt(self, node: Node) -> Node {
+        return Node { doc: self, id: doc_import(self.live(), node.doc.live(), node.id) }
+    }
+
+    /// How many nodes it holds, those outside the tree too.
+    pub fn len(self) -> Int { return doc_len(self.live()) }
+
+    /// The byte form, which `from_bytes` reads back equal.
+    pub fn bytes(self) -> [UInt8] {
+        var buffer: [UInt8] = [0; 4096]
+        let size = doc_bytes(self.live(), buffer)
+        if size > buffer.len() {
+            buffer = [0; size]
+            doc_bytes(self.live(), buffer)
+        }
+        return buffer.slice(0, size)
+    }
+
+    pub fn close(self) -> Result<Null, Error> {
+        let handle = self.handle.swap(0)
+        if handle == 0 { return Err(Error.new(ErrorKind.Other, "already closed")) }
+        doc_free(handle)
+        return Ok(null)
+    }
+}
+
+/// A node of a document, by its place in the arena.
+pub struct Node {
+    pub doc: Doc
+    pub id: Int
+
+    pub fn kind(self) -> NodeKind {
+        let kind = doc_kind(self.doc.live(), self.id)
+        if kind == 0 { return NodeKind.Document }
+        if kind == 1 { return NodeKind.Element }
+        if kind == 2 { return NodeKind.Text }
+        if kind == 3 { return NodeKind.Comment }
+        return NodeKind.Raw
+    }
+
+    /// Whether the other node is this one.
+    pub fn same(self, other: Node) -> Bool { return self.id == other.id && self.doc.live() == other.doc.live() }
+
+    /// The name of an element; "" for the others.
+    pub fn name(self) -> String {
+        let found = fetch(|buffer: [UInt8]| doc_name(self.doc.live(), self.id, buffer))
+        return if found == null { "" } else { found }
+    }
+
+    /// The text of a text or comment node; "" for the others.
+    pub fn text(self) -> String {
+        let found = fetch(|buffer: [UInt8]| doc_text(self.doc.live(), self.id, buffer))
+        return if found == null { "" } else { found }
+    }
+
+    /// The text of every text node under this node, in order.
+    pub fn text_content(self) -> String {
+        var out = ""
+        for node in self.descendants() {
+            if node.kind() == NodeKind.Text { out = out + node.text() }
+        }
+        if self.kind() == NodeKind.Text { out = self.text() }
+        return out
+    }
+
+    pub fn parent(self) -> Node? {
+        let id = doc_parent(self.doc.live(), self.id)
+        if id < 0 { return null }
+        return Node { doc: self.doc, id: id }
+    }
+
+    pub fn child_count(self) -> Int { return doc_child_count(self.doc.live(), self.id) }
+
+    /// The child at an index, or null.
+    pub fn child(self, index: Int) -> Node? {
+        let id = doc_child(self.doc.live(), self.id, index)
+        if id < 0 { return null }
+        return Node { doc: self.doc, id: id }
+    }
+
+    pub fn children(self) -> List<Node> {
+        var out: List<Node> = []
+        for index in 0..self.child_count() {
+            out.push(Node { doc: self.doc, id: doc_child(self.doc.live(), self.id, index) })
+        }
+        return out
+    }
+
+    /// Where this node is among its parent's children, or -1 outside the tree.
+    pub fn index(self) -> Int {
+        let parent = self.parent()
+        if parent == null { return -1 }
+        for index in 0..parent.child_count() {
+            if doc_child(self.doc.live(), parent.id, index) == self.id { return index }
+        }
+        return -1
+    }
+
+    /// The sibling after this node, or null.
+    pub fn next(self) -> Node? {
+        let parent = self.parent()
+        if parent == null { return null }
+        return parent.child(self.index() + 1)
+    }
+
+    /// The sibling before this node, or null.
+    pub fn previous(self) -> Node? {
+        let parent = self.parent()
+        if parent == null || self.index() == 0 { return null }
+        return parent.child(self.index() - 1)
+    }
+
+    /// Every node under this one, parents before children.
+    pub fn descendants(self) -> List<Node> {
+        var out: List<Node> = []
+        for child in self.children() {
+            out.push(child)
+            for inner in child.descendants() {
+                out.push(inner)
+            }
+        }
+        return out
+    }
+
+    /// The elements under this node with a name, in order.
+    pub fn find_all(self, name: String) -> List<Node> {
+        var out: List<Node> = []
+        for node in self.descendants() {
+            if node.kind() == NodeKind.Element && node.name() == name { out.push(node) }
+        }
+        return out
+    }
+
+    /// The first element under this node with a name.
+    pub fn find(self, name: String) -> Node? {
+        for node in self.descendants() {
+            if node.kind() == NodeKind.Element && node.name() == name { return node }
+        }
+        return null
+    }
+
+    /// The value of an attribute, or null.
+    pub fn attr(self, name: String) -> String? {
+        return fetch(|buffer: [UInt8]| doc_attr(self.doc.live(), self.id, name.bytes(), buffer))
+    }
+
+    /// The attributes in the order they were set.
+    pub fn attrs(self) -> List<(String, String)> {
+        var out: List<(String, String)> = []
+        for index in 0..doc_attr_count(self.doc.live(), self.id) {
+            let name = fetch(|buffer: [UInt8]| doc_attr_name(self.doc.live(), self.id, index, buffer))
+            let value = fetch(|buffer: [UInt8]| doc_attr_value(self.doc.live(), self.id, index, buffer))
+            if name != null && value != null { out.push((name, value)) }
+        }
+        return out
+    }
+
+    /// Sets an attribute of an element, replacing a value of the name.
+    pub fn set_attr(self, name: String, value: String) -> Result<Null, Error> {
+        if doc_set_attr(self.doc.live(), self.id, name.bytes(), value.bytes()) < 0 { return Err(Error.new(ErrorKind.InvalidData, "doc: only an element has attributes")) }
+        return Ok(null)
+    }
+
+    /// Removes an attribute; false when there was none.
+    pub fn remove_attr(self, name: String) -> Bool { return doc_remove_attr(self.doc.live(), self.id, name.bytes()) >= 0 }
+
+    /// Renames an element.
+    pub fn rename(self, name: String) -> Result<Null, Error> {
+        if doc_set_name(self.doc.live(), self.id, name.bytes()) < 0 { return Err(Error.new(ErrorKind.InvalidData, "doc: only an element has a name")) }
+        return Ok(null)
+    }
+
+    /// Replaces the text of a text or comment node.
+    pub fn set_text(self, text: String) -> Result<Null, Error> {
+        if doc_set_text(self.doc.live(), self.id, text.bytes()) < 0 { return Err(Error.new(ErrorKind.InvalidData, "doc: only a text or comment node has text")) }
+        return Ok(null)
+    }
+
+    /// Puts a node last among the children, moving it out of its old place; an `Err` when this node cannot have children or the node holds it.
+    pub fn append(self, child: Node) -> Result<Null, Error> { return self.insert_at(child, -1) }
+
+    /// Puts a node before a child of this node.
+    pub fn insert_before(self, child: Node, before: Node) -> Result<Null, Error> { return self.insert_at(child, before.id) }
+
+    fn insert_at(self, child: Node, before: Int) -> Result<Null, Error> {
+        if child.doc.live() != self.doc.live() { return Err(Error.new(ErrorKind.InvalidData, "doc: the node is of another document")) }
+        if doc_insert(self.doc.live(), self.id, child.id, before) < 0 { return Err(Error.new(ErrorKind.InvalidData, "doc: that node cannot go there")) }
+        return Ok(null)
+    }
+
+    /// Takes the node out of its parent; the node stays in the document.
+    pub fn detach(self) { doc_detach(self.doc.live(), self.id) }
+
+    /// A copy of this node and everything under it, outside the tree.
+    pub fn copy(self) -> Node { return self.doc.adopt(self) }
+
+    /// The HTML text of this node: the node itself, or for the document node its children. Nothing is added between nodes; a void element is written `<br />`.
+    pub fn to_html(self) -> String {
+        var out = ""
+        let kind = self.kind()
+        if kind == NodeKind.Text {
+            return escape(self.text(), false)
+        }
+        if kind == NodeKind.Comment {
+            return "<!--" + self.text() + "-->"
+        }
+        if kind == NodeKind.Raw {
+            return self.text()
+        }
+        if kind == NodeKind.Element {
+            let name = self.name()
+            out = "<" + name
+            for attr in self.attrs() {
+                out = out + " " + attr.0 + "=\"" + escape(attr.1, true) + "\""
+            }
+            if VOID.contains(name) { return out + " />" }
+            out = out + ">"
+            let raw = name == "script" || name == "style"
+            for child in self.children() {
+                out = out + (if raw && child.kind() == NodeKind.Text { child.text() } else { child.to_html() })
+            }
+            return out + "</" + name + ">"
+        }
+        for child in self.children() {
+            out = out + child.to_html()
+        }
+        return out
+    }
+}

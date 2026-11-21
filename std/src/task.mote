@@ -1,0 +1,41 @@
+// Task and the functions that wait on tasks.
+
+@intrinsic("task_await")
+native fn task_await<T>(task: Task<T>) -> Result<T, Error>
+@intrinsic("task_await_timeout")
+native fn task_await_timeout<T>(task: Task<T>, ms: Int) -> Result<T, Error>?
+@intrinsic("task_cancel")
+native fn task_cancel<T>(task: Task<T>)
+@intrinsic("task_is_ready")
+native fn task_is_ready<T>(task: Task<T>) -> Bool
+@intrinsic("spawn_call")
+native fn spawn_call<T>(work: Send () -> T) -> Task<T>
+
+@intrinsic("task_view")
+native fn task_view<A, B>(task: Task<A>, convert: () -> B) -> Task<B>
+@intrinsic("task_value")
+native fn task_value<T>(task: Task<T>) -> T
+
+@intrinsic("sleep")
+pub native fn sleep(ms: Int)
+
+@lang("task")
+pub class Task<T> {
+    pub fn await(self) -> Result<T, Error> { return task_await(self) }
+    pub fn await_timeout(self, ms: Int) -> Result<T, Error>? { return task_await_timeout(self, ms) }
+    pub fn cancel(self) { task_cancel(self) }
+    pub fn is_ready(self) -> Bool { return task_is_ready(self) }
+}
+
+pub fn await_all<T>(tasks: List<Task<T>>) -> List<Result<T, Error>> {
+    var results: List<Result<T, Error>> = []
+    for task in tasks { results.push(task.await()) }
+    return results
+}
+
+pub fn with_timeout<T>(ms: Int, work: Send () -> T) -> Result<T, Error>? {
+    let task = spawn_call(work)
+    let done = task.await_timeout(ms)
+    if done == null { task.cancel() }
+    return done
+}

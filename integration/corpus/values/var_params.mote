@@ -1,0 +1,56 @@
+struct Counter {
+    var n: Int
+    step: Int
+
+    pub fn tick(var self) {
+        self.n += self.step
+    }
+}
+
+fn bump(var n: Int) {
+    n += 1
+}
+
+fn swap(var a: Int, var b: Int) {
+    let t = a
+    a = b
+    b = t
+}
+
+fn reset(var c: Counter) {
+    c.n = 0
+}
+
+fn fill(var xs: [Int; 3], value: Int) -> Int {
+    xs[0] = value
+    xs[2] = value + 1
+    return value
+}
+
+fn main() {
+    var x = 1
+    bump(x)
+    bump(x)
+    println(x)
+    var a = 1
+    var b = 2
+    swap(a, b)
+    println(a)
+    println(b)
+    var c = Counter { n: 5, step: 2 }
+    c.tick()
+    c.tick()
+    println(c.n)
+    reset(c)
+    println(c.n)
+    var xs: [Int; 3] = [0, 0, 0]
+    println(fill(xs, 8))
+    println(xs[0])
+    println(xs[1])
+    println(xs[2])
+    var f = 1.5
+    var g = 2
+    bump(g)
+    println(f)
+    println(g)
+}

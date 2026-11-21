@@ -1,0 +1,13 @@
+// feed 0 250 9,9
+// close 0 300
+import { Port, PortMode } from std.port
+
+fn main() {
+    let (end, rx) = Port.open(PortMode.Queue(4))
+    println(rx.recv_timeout(10) == null)
+    println(rx.try_recv() == null)
+    let message = rx.recv_timeout(3000)!
+    println(message.len())
+    println(rx.recv_timeout(3000) == null)
+    println(rx.is_closed())
+}

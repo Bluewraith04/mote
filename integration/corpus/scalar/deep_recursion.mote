@@ -1,0 +1,8 @@
+fn down(n: Int) -> Int {
+    return down(n + 1) + 1
+}
+
+fn main() {
+    println(1)
+    println(down(0))
+}

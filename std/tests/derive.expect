@@ -1,0 +1,31 @@
+start
+test "Display writes the fields"
+passed
+test "Display of an enum writes the variant"
+passed
+test "Debug writes the fields in braces"
+passed
+test "a type with no fields"
+passed
+test "nested values are written by their fields"
+passed
+test "arrays are shown by their elements"
+passed
+test "a field is shown by its fields whatever its type writes"
+passed
+test "a generic type writes its declared name"
+passed
+test "print shows what to_string shows"
+passed
+| Point(x: 3, y: 4)
+| Circle(2.5)
+test "a method the type writes is kept"
+passed
+test "Clone copies a struct"
+passed
+test "Clone makes a new object with the same field values"
+passed
+test "Clone of an enum keeps the variant and payload"
+passed
+test "Clone shares the objects a field holds"
+passed

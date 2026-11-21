@@ -1,0 +1,4 @@
+fn main() {
+    let text = "héllo"
+    println(text.slice(0, 2))
+}

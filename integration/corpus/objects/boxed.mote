@@ -1,0 +1,64 @@
+struct Vec2 {
+    x: Float
+    y: Float
+}
+
+enum Tree {
+    Leaf
+    Branch(Tree, Int, Tree)
+}
+
+fn insert(t: Tree, v: Int) -> Tree {
+    return match t {
+        Leaf => Tree.Branch(Tree.Leaf, v, Tree.Leaf)
+        Branch(l, x, r) => if v < x { Tree.Branch(insert(l, v), x, r) } else { Tree.Branch(l, x, insert(r, v)) }
+    }
+}
+
+fn sum(t: Tree) -> Int {
+    return match t {
+        Leaf => 0
+        Branch(l, x, r) => sum(l) + x + sum(r)
+    }
+}
+
+fn larger(a: Int, b: Int) -> Int {
+    if a > b {
+        return a
+    }
+    return b
+}
+
+fn depth(t: Tree) -> Int {
+    return match t {
+        Leaf => 0
+        Branch(l, _, r) => 1 + larger(depth(l), depth(r))
+    }
+}
+
+fn describe(u: Int | Vec2 | String) -> String {
+    if u is Int {
+        return "int ${u}"
+    }
+    if u is Vec2 {
+        return "vec ${u.x} ${u.y}"
+    }
+    return "string " + u
+}
+
+fn main() {
+    var t = Tree.Leaf
+    var v = 5
+    while v < 10 {
+        t = insert(t, (v * 7) % 10)
+        v += 1
+    }
+    println(sum(t))
+    println(depth(t))
+    println(describe(7))
+    println(describe(Vec2 { x: 1.5, y: 2.5 }))
+    println(describe("text"))
+    let held: Int | Vec2 | String = Vec2 { x: 3.0, y: 4.0 }
+    let copy = held
+    println(describe(copy))
+}

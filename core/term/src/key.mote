@@ -1,0 +1,62 @@
+// Keys and the modifiers held with them.
+import { Display } from std.traits
+
+/// A key, apart from the modifiers held with it.
+pub enum Key: (Display) {
+    Char(String)
+    Enter
+    Tab
+    BackTab
+    Backspace
+    Escape
+    Up
+    Down
+    Left
+    Right
+    Home
+    End
+    PageUp
+    PageDown
+    Insert
+    Delete
+    Function(Int)
+
+    pub fn to_string(self) -> String {
+        return match self {
+            Char(text) => text
+            Enter => "Enter"
+            Tab => "Tab"
+            BackTab => "BackTab"
+            Backspace => "Backspace"
+            Escape => "Escape"
+            Up => "Up"
+            Down => "Down"
+            Left => "Left"
+            Right => "Right"
+            Home => "Home"
+            End => "End"
+            PageUp => "PageUp"
+            PageDown => "PageDown"
+            Insert => "Insert"
+            Delete => "Delete"
+            Function(number) => "F${number}"
+        }
+    }
+}
+
+/// A key pressed with the modifiers held.
+pub struct KeyEvent: (Display) {
+    pub key: Key
+    pub ctrl: Bool
+    pub alt: Bool
+    pub shift: Bool
+
+    /// `Ctrl+Alt+Shift+` for the modifiers held, then the key: `Ctrl+c`, `Alt+Up`, `F5`.
+    pub fn to_string(self) -> String {
+        var text = ""
+        if self.ctrl { text = text + "Ctrl+" }
+        if self.alt { text = text + "Alt+" }
+        if self.shift { text = text + "Shift+" }
+        return text + self.key.to_string()
+    }
+}

@@ -1,0 +1,9 @@
+import { Mutex } from std.sync
+
+fn main() {
+    let m = Mutex(1)
+    let zero = 0
+    let h = spawn { return m.lock(|n| { return 1 / zero }) }
+    println(h.await().is_err())
+    println(m.get())
+}

@@ -1,0 +1,17 @@
+import { Channel } from std.sync
+
+fn main() {
+    let (tx, rx) = Channel<String>(0)
+    let sender = spawn {
+        tx.send("hello")
+        tx.send("world")
+        tx.close()
+    }
+    println(rx.recv()!)
+    println(rx.recv()!)
+    println(rx.recv() == null)
+    println(sender.await().is_ok())
+    let (a, b) = Channel<Int>(0)
+    println(a.try_send(1))
+    println(b.try_recv() == null)
+}

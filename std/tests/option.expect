@@ -1,0 +1,25 @@
+start
+test "is_some and is_none"
+passed
+test "unwrap gives the value or faults"
+passed
+test "unwrap_or and unwrap_or_else"
+passed
+test "map and and_then"
+passed
+test "ok_or makes a Result"
+passed
+test "an optional narrows, coalesces and chains"
+passed
+test "Ok and Err report which they are"
+passed
+test "a Result unwraps, maps and chains"
+passed
+test "or and or_else take the other on Err"
+passed
+test "a question mark returns the Err"
+passed
+test "an Error has a kind and a message"
+passed
+test "context puts a prefix on the message"
+passed

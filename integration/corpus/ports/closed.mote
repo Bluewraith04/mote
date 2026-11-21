@@ -1,0 +1,10 @@
+// close 0 10
+import { Port, PortMode } from std.port
+
+fn main() {
+    let (end, rx) = Port.open(PortMode.Queue(1))
+    println(rx.is_closed())
+    println(rx.recv() == null)
+    println(rx.is_closed())
+    println(rx.try_recv() == null)
+}

@@ -1,0 +1,26 @@
+import { sleep } from std.task
+
+class Res {
+    let label: String
+
+    fn close(self) {
+        println("closed ${self.label}")
+    }
+}
+
+fn main() {
+    let slow = spawn {
+        sleep(1000)
+        return 1
+    }
+    let waiter = spawn {
+        with r = Res { label: "waiter" } {
+            return slow.await().is_ok()
+        }
+    }
+    sleep(100)
+    waiter.cancel()
+    println(waiter.await().is_err())
+    slow.cancel()
+    println(slow.await().is_err())
+}

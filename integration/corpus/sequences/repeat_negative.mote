@@ -1,0 +1,8 @@
+fn main() {
+    var n = 2
+    let ok: [Int] = [0; n]
+    println(ok[1])
+    n -= 3
+    let bad: [Int] = [0; n]
+    println(bad[0])
+}

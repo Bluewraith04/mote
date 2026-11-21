@@ -1,0 +1,47 @@
+struct Wide {
+    a: Int
+    b: Int
+    c: Int
+    d: Int
+    var e: Int
+    var f: Float
+}
+
+fn make(seed: Int) -> Wide {
+    return Wide { a: seed, b: seed + 1, c: seed + 2, d: seed + 3, e: seed + 4, f: 0.5 }
+}
+
+fn total(w: Wide) -> Int {
+    return w.a + w.b + w.c + w.d + w.e
+}
+
+fn bumped(w: Wide) -> Wide {
+    var out = w
+    out.e = out.e * 10
+    out.f = out.f + 1.0
+    return out
+}
+
+fn table(n: Int) -> [Int; 10] {
+    var t: [Int; 10] = [0; 10]
+    for i in 0..10 {
+        t[i] = n * i
+    }
+    return t
+}
+
+fn pick(t: [Int; 10], i: Int) -> Int {
+    return t[i]
+}
+
+fn main() {
+    let w = make(1)
+    println(total(w))
+    let v = bumped(w)
+    println(total(v))
+    println(v.f)
+    println(w.f)
+    let t = table(3)
+    println(pick(t, 9))
+    println(pick(t, 0))
+}

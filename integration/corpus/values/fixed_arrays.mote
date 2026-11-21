@@ -1,0 +1,39 @@
+fn sum(a: [Int; 5]) -> Int {
+    var total = 0
+    for i in 0..5 {
+        total += a[i]
+    }
+    return total
+}
+
+fn doubled(a: [Int; 5]) -> [Int; 5] {
+    var out = a
+    for i in 0..5 {
+        out[i] = out[i] * 2
+    }
+    return out
+}
+
+fn main() {
+    var a: [Int; 5] = [1, 2, 3, 4, 5]
+    let b = a
+    a[0] = 100
+    println(sum(a))
+    println(sum(b))
+    let d = doubled(b)
+    println(d[4])
+    var big: [Int; 40] = [7; 40]
+    big[39] = 1
+    var total = 0
+    for i in 0..40 {
+        total += big[i]
+    }
+    println(total)
+    var small: [Int8; 3] = [1, 2, 3]
+    small[1] = -4
+    println(small[1])
+    println(small[2])
+    var grid: [[Int; 2]; 2] = [[1, 2], [3, 4]]
+    grid[1][0] = 9
+    println(grid[1][0] + grid[0][1])
+}

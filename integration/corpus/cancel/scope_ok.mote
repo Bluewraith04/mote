@@ -1,0 +1,27 @@
+fn work() -> Result<Int, Error> {
+    var total = 0
+    scope {
+        let h = spawn { return 20 }
+        total = h.await().unwrap() + 1
+    }
+    return Ok(total)
+}
+
+fn looped() -> Result<Int, Error> {
+    let n = 0
+    while true {
+        scope {
+            spawn { return 1 / n }
+            break
+        }
+    }
+    return Ok(1)
+}
+
+fn main() {
+    println(work().unwrap())
+    match looped() {
+        Ok(value) => println(value)
+        Err(error) => println(error.message)
+    }
+}

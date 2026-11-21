@@ -1,0 +1,3 @@
+// gzip, zlib and raw deflate, for a buffer or for a stream pushed in pieces.
+pub import { Decoder, Encoder, Format } from .stream
+pub import { compress, decompress } from .buffer

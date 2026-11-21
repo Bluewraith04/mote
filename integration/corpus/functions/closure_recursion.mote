@@ -1,0 +1,7 @@
+fn forever(f: (Int) -> Int, n: Int) -> Int {
+    return f(n) + forever(f, n + 1)
+}
+
+fn main() {
+    println(forever(|n| n, 0))
+}

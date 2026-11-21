@@ -1,0 +1,472 @@
+// Reflection: the types a program describes, as data.
+import { fault } from std.option
+
+@intrinsic("type_id")
+native fn type_id<T>() -> Int
+@intrinsic("meta_ints")
+native fn meta_ints() -> [Int]
+@intrinsic("meta_texts")
+native fn meta_texts() -> [String]
+
+/// What a type is.
+pub enum Kind {
+    Null
+    Bool
+    Int
+    Float
+    String
+    Tuple
+    Array
+    List
+    Map
+    Set
+    Optional
+    Union
+    Struct
+    Class
+    Enum
+    Function
+    Handle
+}
+
+/// How a variant carries its payload.
+pub enum Shape {
+    Unit
+    Tuple
+    Named
+}
+
+/// One argument of an attribute: its key, empty when bare, and its value as text.
+pub struct AttributeArg {
+    pub key: String
+    pub value: String
+}
+
+/// An attribute written before a type.
+pub class Attribute {
+    pub name: String
+    pub args: List<AttributeArg>
+}
+
+/// A field of a struct or class, or of a variant.
+pub struct Field {
+    pub name: String
+    pub ty: Type
+    pub doc: String
+    pub is_var: Bool
+    pub is_pub: Bool
+    pub has_default: Bool
+}
+
+/// A variant of an enum.
+pub class Variant {
+    pub name: String
+    pub doc: String
+    pub shape: Shape
+    pub fields: List<Field>
+    pub discriminant: Int?
+}
+
+/// A method a type writes: its name, its signature as source writes it, and who may call it.
+pub struct Method {
+    pub name: String
+    pub signature: String
+    pub is_pub: Bool
+    pub has_self: Bool
+    pub writes_self: Bool
+}
+
+// The table behind `Type`: `meta_ints` holds a base offset for each section, then the number of types, then the sections.
+// Sections 0 to 16 have one entry per type: kind, name, doc, then a start and a count for the arguments, generics, traits,
+// methods, attributes, variants and fields. Sections 17 to 24 hold what the starts point into: argument types, generic names,
+// trait names, method rows of 3, attribute rows of 3, attribute argument rows of 2, variant rows of 7 and field rows of 4.
+// Section 25 has the declared name of each type. A name, a doc and a signature are positions in `meta_texts`.
+// The Rust side is ir/src/reflect.rs.
+
+fn num(section: Int, at: Int) -> Int {
+    let ints = meta_ints()
+    return ints[ints[section] + at]
+}
+
+fn row(section: Int, width: Int, start: Int, at: Int, column: Int) -> Int {
+    let ints = meta_ints()
+    return ints[ints[section] + (start + at) * width + column]
+}
+
+fn text(at: Int) -> String {
+    return meta_texts()[at]
+}
+
+fn kind_of(code: Int) -> Kind {
+    return match code {
+        0 => Kind.Null
+        1 => Kind.Bool
+        2 => Kind.Int
+        3 => Kind.Float
+        4 => Kind.String
+        5 => Kind.Tuple
+        6 => Kind.Array
+        7 => Kind.List
+        8 => Kind.Map
+        9 => Kind.Set
+        10 => Kind.Optional
+        11 => Kind.Union
+        12 => Kind.Struct
+        13 => Kind.Class
+        14 => Kind.Enum
+        15 => Kind.Function
+        _ => Kind.Handle
+    }
+}
+
+fn shape_of(code: Int) -> Shape {
+    return match code {
+        0 => Shape.Unit
+        1 => Shape.Tuple
+        _ => Shape.Named
+    }
+}
+
+fn field_at(start: Int, at: Int) -> Field {
+    let flags = row(24, 4, start, at, 2)
+    return Field {
+        name: text(row(24, 4, start, at, 0)),
+        ty: Type { id: row(24, 4, start, at, 1) },
+        doc: text(row(24, 4, start, at, 3)),
+        is_var: flags % 2 == 1,
+        is_pub: flags / 2 % 2 == 1,
+        has_default: flags / 4 % 2 == 1
+    }
+}
+
+/// A type of the program, by what it is made of.
+pub struct Type {
+    id: Int
+
+    /// The name as `typeof` writes it.
+    pub fn name(self) -> String { return text(num(1, self.id)) }
+
+    /// The declared name of a struct, class or enum without its module or type arguments; the same as `name` for any other type.
+    pub fn short_name(self) -> String { return text(num(25, self.id)) }
+
+    pub fn kind(self) -> Kind { return kind_of(num(0, self.id)) }
+
+    /// The `///` lines before the type, joined with a line break.
+    pub fn doc(self) -> String { return text(num(2, self.id)) }
+
+    /// The type arguments, the element type, the members of a tuple or union, or a function's parameters then its result.
+    pub fn args(self) -> List<Type> {
+        var found: List<Type> = []
+        let start = num(3, self.id)
+        for at in 0..num(4, self.id) {
+            found.push(Type { id: row(17, 1, start, at, 0) })
+        }
+        return found
+    }
+
+    /// The names of the type parameters the declaration takes.
+    pub fn generics(self) -> List<String> {
+        var found: List<String> = []
+        let start = num(5, self.id)
+        for at in 0..num(6, self.id) {
+            found.push(text(row(18, 1, start, at, 0)))
+        }
+        return found
+    }
+
+    /// The traits the declaration lists.
+    pub fn traits(self) -> List<String> {
+        var found: List<String> = []
+        let start = num(7, self.id)
+        for at in 0..num(8, self.id) {
+            found.push(text(row(19, 1, start, at, 0)))
+        }
+        return found
+    }
+
+    /// The methods the declaration writes.
+    pub fn methods(self) -> List<Method> {
+        var found: List<Method> = []
+        let start = num(9, self.id)
+        for at in 0..num(10, self.id) {
+            let flags = row(20, 3, start, at, 2)
+            let receiver = flags / 2
+            found.push(Method {
+                name: text(row(20, 3, start, at, 0)),
+                signature: text(row(20, 3, start, at, 1)),
+                is_pub: flags % 2 == 1,
+                has_self: receiver > 0,
+                writes_self: receiver == 2
+            })
+        }
+        return found
+    }
+
+    /// The attributes written before the declaration.
+    pub fn attributes(self) -> List<Attribute> {
+        var found: List<Attribute> = []
+        let start = num(11, self.id)
+        for at in 0..num(12, self.id) {
+            var args: List<AttributeArg> = []
+            let first = row(21, 3, start, at, 1)
+            for index in 0..row(21, 3, start, at, 2) {
+                args.push(AttributeArg { key: text(row(22, 2, first, index, 0)), value: text(row(22, 2, first, index, 1)) })
+            }
+            found.push(Attribute { name: text(row(21, 3, start, at, 0)), args: args })
+        }
+        return found
+    }
+
+    /// The variants of an enum.
+    pub fn variants(self) -> List<Variant> {
+        var found: List<Variant> = []
+        let start = num(13, self.id)
+        for at in 0..num(14, self.id) {
+            var fields: List<Field> = []
+            let first = row(23, 7, start, at, 5)
+            for index in 0..row(23, 7, start, at, 6) {
+                fields.push(field_at(first, index))
+            }
+            var discriminant: Int? = null
+            if row(23, 7, start, at, 3) == 1 {
+                discriminant = row(23, 7, start, at, 4)
+            }
+            found.push(Variant {
+                name: text(row(23, 7, start, at, 0)),
+                doc: text(row(23, 7, start, at, 1)),
+                shape: shape_of(row(23, 7, start, at, 2)),
+                fields: fields,
+                discriminant: discriminant
+            })
+        }
+        return found
+    }
+
+    /// The fields of a struct or class.
+    pub fn fields(self) -> List<Field> {
+        var found: List<Field> = []
+        let start = num(15, self.id)
+        for at in 0..num(16, self.id) {
+            found.push(field_at(start, at))
+        }
+        return found
+    }
+}
+
+/// The type `T`.
+pub fn describe<T>() -> Type {
+    return Type { id: type_id<T>() }
+}
+
+@intrinsic("dyn_of")
+native fn dyn_of<T>(value: T, ty: Int) -> Dyn
+@intrinsic("dyn_type")
+native fn dyn_type(dynamic: Dyn) -> Int
+@intrinsic("dyn_to")
+native fn dyn_to<T>(dynamic: Dyn, ty: Int) -> T?
+@intrinsic("dyn_len")
+native fn dyn_len(dynamic: Dyn) -> Int
+@intrinsic("dyn_tag")
+native fn dyn_tag(dynamic: Dyn) -> Int
+@intrinsic("dyn_get")
+native fn dyn_get(dynamic: Dyn, at: Int) -> Dyn
+@intrinsic("dyn_set")
+native fn dyn_set(dynamic: Dyn, at: Int, part: Dyn)
+@intrinsic("dyn_build")
+native fn dyn_build<T>(ty: Int, tag: Int, parts: List<Dyn>) -> T
+@intrinsic("dyn_make")
+native fn dyn_make(ty: Int, tag: Int, parts: List<Dyn>) -> Dyn
+
+/// A value of a described type, read and written by position. A struct, tuple or enum value is held as a copy.
+pub class Dyn {
+    /// Holds `value`.
+    pub fn of<T>(value: T) -> Dyn { return dyn_of(value, type_id<T>()) }
+
+    /// The type of the value held.
+    pub fn ty(self) -> Type { return Type { id: dyn_type(self) } }
+
+    /// The number of parts: the fields of a struct, class or tuple, the payload of an enum value, the elements of a `List`, array or `Set`, a key then a value for each entry of a `Map`, the value of an optional that has one; 0 for any other type.
+    pub fn len(self) -> Int { return dyn_len(self) }
+
+    /// The position of the variant an enum value holds; 0 for any other type.
+    pub fn tag(self) -> Int { return dyn_tag(self) }
+
+    /// Part `at`; faults when `at` is out of range.
+    pub fn get(self, at: Int) -> Dyn { return dyn_get(self, at) }
+
+    /// Replaces part `at`; faults when `at` is out of range, `part` is not of the part's type, or the part is a key of a `Map` or a member of a `Set`.
+    pub fn set(self, at: Int, part: Dyn) {
+        if dyn_type(dyn_get(self, at)) != dyn_type(part) {
+            fault<()>("a part of another type")
+        }
+        let kind = self.ty().kind()
+        if kind == Kind.Set || kind == Kind.Map && at % 2 == 0 {
+            fault<()>("a key cannot be replaced")
+        }
+        dyn_set(self, at, part)
+    }
+}
+
+/// The value `dynamic` holds as a `T`, or null when it holds another type.
+pub fn downcast<T>(dynamic: Dyn) -> T? {
+    return dyn_to<T>(dynamic, type_id<T>())
+}
+
+fn part_types(ty: Type, tag: Int) -> List<Int> {
+    var found: List<Int> = []
+    let kind = ty.kind()
+    if kind == Kind.Struct || kind == Kind.Class {
+        for field in ty.fields() {
+            found.push(field.ty.id)
+        }
+    } else if kind == Kind.Tuple {
+        for member in ty.args() {
+            found.push(member.id)
+        }
+    } else if kind == Kind.Enum {
+        for field in ty.variants()[tag].fields {
+            found.push(field.ty.id)
+        }
+    } else {
+        return fault("this type cannot be built")
+    }
+    return found
+}
+
+@intrinsic("dyn_show")
+native fn dyn_show(dynamic: Dyn, top: Bool) -> String
+
+/// Stops the program with `message` unless `condition` holds. Before any branch of a function, with arguments that read no parameter or global, it is decided before the program runs: unmet, it is an error where a type lists the trait the default method comes from, or at the call elsewhere. Any other call faults when it runs.
+@intrinsic("require")
+pub native fn require(condition: Bool, message: String)
+
+fn joined(items: List<String>) -> String {
+    var out = ""
+    for at in 0..items.len() {
+        if at > 0 {
+            out = out + ", "
+        }
+        out = out + items[at]
+    }
+    return out
+}
+
+fn render_parts(dynamic: Dyn, names: List<String>, debug: Bool) -> String {
+    var shown: List<String> = []
+    for at in 0..dynamic.len() {
+        let part = render(dynamic.get(at), debug, false)
+        shown.push(if names[at] == "" { part } else { names[at] + ": " + part })
+    }
+    return joined(shown)
+}
+
+fn render_record(name: String, names: List<String>, dynamic: Dyn, debug: Bool) -> String {
+    let inner = render_parts(dynamic, names, debug)
+    if debug {
+        return if names.len() == 0 { name } else { name + " { " + inner + " }" }
+    }
+    return name + "(" + inner + ")"
+}
+
+fn render(dynamic: Dyn, debug: Bool, top: Bool) -> String {
+    let ty = dynamic.ty()
+    let kind = ty.kind()
+    if kind == Kind.Struct || kind == Kind.Class {
+        var names: List<String> = []
+        for field in ty.fields() {
+            names.push(field.name)
+        }
+        return render_record(ty.short_name(), names, dynamic, debug)
+    }
+    if kind == Kind.Enum {
+        let variant = ty.variants()[dynamic.tag()]
+        if variant.shape == Shape.Unit {
+            return variant.name
+        }
+        var names: List<String> = []
+        for field in variant.fields {
+            names.push(field.name)
+        }
+        if variant.shape == Shape.Tuple {
+            return variant.name + "(" + render_parts(dynamic, names, debug) + ")"
+        }
+        return render_record(variant.name, names, dynamic, debug)
+    }
+    if kind == Kind.Tuple || kind == Kind.List || kind == Kind.Array {
+        var names: List<String> = []
+        for at in 0..dynamic.len() {
+            names.push("")
+        }
+        let inner = render_parts(dynamic, names, debug)
+        return if kind == Kind.Tuple { "(" + inner + ")" } else { "[" + inner + "]" }
+    }
+    if kind == Kind.Optional && dynamic.len() == 1 {
+        return render(dynamic.get(0), debug, top)
+    }
+    return dyn_show(dynamic, top)
+}
+
+/// The text `print` writes for `value`: `Point(x: 3, y: 4)`. A nested value is shown by its fields, whatever methods its type writes.
+pub fn show<T>(value: T) -> String {
+    return render(Dyn.of(value), false, true)
+}
+
+/// `Point { x: 3, y: 4 }`; a variant with a tuple payload and every other value as `show` writes it.
+pub fn debug_text<T>(value: T) -> String {
+    return render(Dyn.of(value), true, true)
+}
+
+/// A new value of a struct, class, tuple or enum type with the parts of `value`; a part that is an object is shared.
+pub fn duplicate<T>(value: T) -> T {
+    let dynamic = Dyn.of(value)
+    var parts: List<Dyn> = []
+    for at in 0..dynamic.len() {
+        parts.push(dynamic.get(at))
+    }
+    return build(dynamic.tag(), parts)
+}
+
+/// A `T` from its parts: variant `tag` when `T` is an enum, else the fields or members in order. Faults when `T` is not a struct, class, tuple or enum, `tag` is not a variant, or the parts do not fit.
+pub fn build<T>(tag: Int, parts: List<Dyn>) -> T {
+    let wanted = part_types(describe<T>(), tag)
+    if parts.len() != wanted.len() {
+        return fault("the wrong number of parts")
+    }
+    for at in 0..wanted.len() {
+        if dyn_type(parts[at]) != wanted[at] {
+            return fault("a part of another type")
+        }
+    }
+    return dyn_build<T>(type_id<T>(), tag, parts)
+}
+
+// The type numbers the parts of a `Dyn` of the type must have: a list, array or set repeats its element type, a map alternates key and value, an optional has none or one.
+fn wanted_types(ty: Type, tag: Int, count: Int) -> List<Int> {
+    let kind = ty.kind()
+    if kind != Kind.List && kind != Kind.Array && kind != Kind.Optional && kind != Kind.Map && kind != Kind.Set {
+        return part_types(ty, tag)
+    }
+    if kind == Kind.Optional && count > 1 {
+        return fault("the wrong number of parts")
+    }
+    var found: List<Int> = []
+    for at in 0..count {
+        let member = if kind == Kind.Map && at % 2 == 1 { 1 } else { 0 }
+        found.push(ty.args()[member].id)
+    }
+    return found
+}
+
+/// A `Dyn` of `ty` from its parts, for a type known only at run time: as `build` for a struct, class, tuple or enum (`tag` is the variant), the elements of a `List`, `[T]` or `Set`, the keys and values of a `Map` in turn, and no part or one for an optional. Faults when `ty` is another kind (a fixed-length array too), `tag` is not a variant, or the parts do not fit. An equal key later in `parts` replaces an earlier one.
+pub fn build_dyn(ty: Type, tag: Int, parts: List<Dyn>) -> Dyn {
+    let wanted = wanted_types(ty, tag, parts.len())
+    if parts.len() != wanted.len() {
+        return fault("the wrong number of parts")
+    }
+    for at in 0..wanted.len() {
+        if dyn_type(parts[at]) != wanted[at] {
+            return fault("a part of another type")
+        }
+    }
+    return dyn_make(ty.id, tag, parts)
+}

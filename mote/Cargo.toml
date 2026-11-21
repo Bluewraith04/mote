@@ -1,0 +1,19 @@
+[package]
+name = "mote"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+mote-base.workspace = true
+mote-syntax.workspace = true
+mote-semantics.workspace = true
+mote-ir.workspace = true
+mote-codegen.workspace = true
+mote-runtime.workspace = true
+mote-scheduler.workspace = true
+mote-packages.workspace = true
+
+[dev-dependencies]
+mote-packages = { workspace = true, features = ["testing"] }
+mote-semantics = { workspace = true, features = ["testing"] }

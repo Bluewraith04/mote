@@ -1,0 +1,4 @@
+fn main() {
+    let xs: [Int] = [1, 2]
+    println(xs.get(-1))
+}

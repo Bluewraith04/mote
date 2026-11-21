@@ -1,0 +1,50 @@
+// The pipelines of a program, each for one event.
+import { Event, Next } from .event
+import { Step, run_steps } from .steps
+
+// The event a route answers: a click on an element, a key, or the window closing.
+class Route {
+    kind: Int
+    id: String
+    code: Int
+    steps: List<Step>
+}
+
+/// The pipelines of a program, each for one event.
+pub class Routes {
+    var entries: List<Route>
+
+    pub fn new() -> Routes { return Routes { entries: [] } }
+
+    /// The steps to run when the element with the id is clicked.
+    pub fn on_click(var self, id: String, steps: List<Step>) {
+        self.entries.push(Route { kind: 1, id: id, code: 0, steps: steps })
+    }
+
+    /// The steps to run when the key is pressed.
+    pub fn on_key(var self, code: Int, steps: List<Step>) {
+        self.entries.push(Route { kind: 2, id: "", code: code, steps: steps })
+    }
+
+    /// The steps to run when the window is closed, instead of ending the run.
+    pub fn on_close(var self, steps: List<Step>) {
+        self.entries.push(Route { kind: 6, id: "", code: 0, steps: steps })
+    }
+
+    /// Runs the first pipeline whose event is `event`; with none, an event changes nothing and a `Close` quits.
+    pub fn handle<S>(self, state: S, event: Event) -> Result<Next<S>, Error> {
+        for route in self.entries {
+            let hit = match event {
+                Click(target, _, _, _) => route.kind == 1 && target == route.id
+                Key(code) => route.kind == 2 && code == route.code
+                Close => route.kind == 6
+                _ => false
+            }
+            if hit { return run_steps<S>(state, route.steps) }
+        }
+        return match event {
+            Close => Ok(Next.Quit(state))
+            _ => Ok(Next.Continue(state))
+        }
+    }
+}

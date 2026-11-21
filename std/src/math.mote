@@ -1,0 +1,29 @@
+// Constants and functions over Float.
+
+pub let PI = 3.141592653589793
+pub let E = 2.718281828459045
+
+@intrinsic("math_sqrt")
+pub native fn sqrt(x: Float) -> Float
+@intrinsic("math_floor")
+pub native fn floor(x: Float) -> Float
+@intrinsic("math_ceil")
+pub native fn ceil(x: Float) -> Float
+@intrinsic("math_round")
+pub native fn round(x: Float) -> Float
+@intrinsic("math_pow")
+pub native fn pow(x: Float, y: Float) -> Float
+@intrinsic("math_exp")
+pub native fn exp(x: Float) -> Float
+@intrinsic("math_ln")
+pub native fn ln(x: Float) -> Float
+@intrinsic("math_log10")
+pub native fn log10(x: Float) -> Float
+@intrinsic("math_sin")
+pub native fn sin(x: Float) -> Float
+@intrinsic("math_cos")
+pub native fn cos(x: Float) -> Float
+@intrinsic("math_tan")
+pub native fn tan(x: Float) -> Float
+@intrinsic("math_atan2")
+pub native fn atan2(y: Float, x: Float) -> Float

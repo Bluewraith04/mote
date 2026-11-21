@@ -1,0 +1,6 @@
+fn main() {
+    let text = "aé"
+    println(text[0..1])
+    var end = 2
+    println(text[0..end])
+}

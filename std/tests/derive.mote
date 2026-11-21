@@ -1,0 +1,146 @@
+// Display, Debug and Clone on types that list them and write none of their methods.
+import { assert, assert_eq } from std.test
+import { Display, Debug, Clone } from std.traits
+
+struct Point: (Display, Debug, Clone) {
+    x: Int
+    y: Int
+}
+
+class Account: (Display, Debug, Clone) {
+    var owner: String
+    var balance: Int
+}
+
+enum Shape: (Display, Debug, Clone) {
+    Empty
+    Circle(Float)
+    Rect { width: Float, height: Float }
+}
+
+class Wrapper: (Display, Debug, Clone) {
+    name: String
+    inner: Point
+    tags: List<String>
+    maybe: Int?
+    pair: (Int, String)
+    shape: Shape
+}
+
+struct Pair<A, B>: (Display, Debug) {
+    first: A
+    second: B
+}
+
+struct Quiet: (Display, Debug) {
+}
+
+struct Custom: (Display) {
+    n: Int
+
+    pub fn to_string(self) -> String { return "custom ${self.n}" }
+}
+
+test "Display writes the fields" {
+    assert_eq(Point { x: 3, y: 4 }.to_string(), "Point(x: 3, y: 4)")
+    assert_eq("${Point { x: 1, y: 2 }}", "Point(x: 1, y: 2)")
+    assert_eq(Account { owner: "ann", balance: 5 }.to_string(), "Account(owner: \"ann\", balance: 5)")
+}
+
+test "Display of an enum writes the variant" {
+    assert_eq(Shape.Empty.to_string(), "Empty")
+    assert_eq(Shape.Circle(1.5).to_string(), "Circle(1.5)")
+    assert_eq(Shape.Rect { width: 2.0, height: 3.0 }.to_string(), "Rect(width: 2.0, height: 3.0)")
+}
+
+test "Debug writes the fields in braces" {
+    assert_eq(Point { x: 3, y: 4 }.debug(), "Point { x: 3, y: 4 }")
+    assert_eq(Account { owner: "ann", balance: 5 }.debug(), "Account { owner: \"ann\", balance: 5 }")
+    assert_eq(Shape.Rect { width: 2.0, height: 3.0 }.debug(), "Rect { width: 2.0, height: 3.0 }")
+    assert_eq(Shape.Circle(1.5).debug(), "Circle(1.5)")
+    assert_eq(Shape.Empty.debug(), "Empty")
+}
+
+test "a type with no fields" {
+    assert_eq(Quiet {}.to_string(), "Quiet()")
+    assert_eq(Quiet {}.debug(), "Quiet")
+}
+
+test "nested values are written by their fields" {
+    let w = Wrapper { name: "w", inner: Point { x: 1, y: 2 }, tags: ["a", "b"], maybe: 7, pair: (1, "p"), shape: Shape.Circle(0.5) }
+    assert_eq(w.to_string(), "Wrapper(name: \"w\", inner: Point(x: 1, y: 2), tags: [\"a\", \"b\"], maybe: 7, pair: (1, \"p\"), shape: Circle(0.5))")
+    assert_eq(w.debug(), "Wrapper { name: \"w\", inner: Point { x: 1, y: 2 }, tags: [\"a\", \"b\"], maybe: 7, pair: (1, \"p\"), shape: Circle(0.5) }")
+    let none = Wrapper { name: "n", inner: Point { x: 0, y: 0 }, tags: [], maybe: null, pair: (0, ""), shape: Shape.Empty }
+    assert_eq(none.to_string(), "Wrapper(name: \"n\", inner: Point(x: 0, y: 0), tags: [], maybe: null, pair: (0, \"\"), shape: Empty)")
+}
+
+class Grid: (Display, Debug) {
+    cells: [Int]
+    fixed: [Int; 2]
+}
+
+test "arrays are shown by their elements" {
+    let g = Grid { cells: [1, 2, 3], fixed: [4, 5] }
+    assert_eq(g.to_string(), "Grid(cells: [1, 2, 3], fixed: [4, 5])")
+    assert_eq(g.debug(), "Grid { cells: [1, 2, 3], fixed: [4, 5] }")
+}
+
+struct Loud: (Display) {
+    n: Int
+
+    pub fn to_string(self) -> String { return "LOUD" }
+}
+
+struct Holder: (Display, Debug) {
+    loud: Loud
+}
+
+test "a field is shown by its fields whatever its type writes" {
+    assert_eq(Loud { n: 1 }.to_string(), "LOUD")
+    assert_eq(Holder { loud: Loud { n: 1 } }.to_string(), "Holder(loud: Loud(n: 1))")
+    assert_eq(Holder { loud: Loud { n: 1 } }.debug(), "Holder { loud: Loud { n: 1 } }")
+}
+
+test "a generic type writes its declared name" {
+    assert_eq(Pair { first: 1, second: "x" }.to_string(), "Pair(first: 1, second: \"x\")")
+    assert_eq(Pair { first: true, second: 2.5 }.debug(), "Pair { first: true, second: 2.5 }")
+}
+
+test "print shows what to_string shows" {
+    println(Point { x: 3, y: 4 })
+    println(Shape.Circle(2.5))
+}
+
+test "a method the type writes is kept" {
+    assert_eq(Custom { n: 3 }.to_string(), "custom 3")
+}
+
+test "Clone copies a struct" {
+    let a = Point { x: 1, y: 2 }
+    let b = a.clone()
+    assert_eq(b.x, 1)
+    assert_eq(b.y, 2)
+}
+
+test "Clone makes a new object with the same field values" {
+    let a = Account { owner: "ann", balance: 5 }
+    var b = a.clone()
+    b.balance = 99
+    assert_eq(a.balance, 5)
+    assert_eq(b.owner, "ann")
+    assert(a != b, "a new object")
+}
+
+test "Clone of an enum keeps the variant and payload" {
+    let a = Shape.Rect { width: 1.0, height: 2.0 }
+    let b = a.clone()
+    assert_eq(b.to_string(), "Rect(width: 1.0, height: 2.0)")
+}
+
+test "Clone shares the objects a field holds" {
+    var list = ["a"]
+    let a = Wrapper { name: "w", inner: Point { x: 1, y: 2 }, tags: list, maybe: null, pair: (1, "p"), shape: Shape.Empty }
+    let b = a.clone()
+    list.push("b")
+    assert_eq(b.tags.len(), 2)
+}

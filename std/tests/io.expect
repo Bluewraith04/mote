@@ -1,0 +1,8 @@
+start
+test "standard error takes text without touching the result"
+passed
+| out
+test "a test run has no program arguments"
+passed
+test "input and exit are called only when asked for"
+passed

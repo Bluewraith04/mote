@@ -1,0 +1,14 @@
+// Constants and helpers that every file of the module uses.
+
+pub fn hex_value(code: Int) -> Int {
+    if code >= 48 && code <= 57 { return code - 48 }
+    if code >= 65 && code <= 70 { return code - 55 }
+    if code >= 97 && code <= 102 { return code - 87 }
+    return -1
+}
+
+
+pub let MAX_LINE = 8192
+pub let MAX_HEADERS = 200
+
+pub fn invalid(text: String) -> Error { return Error.new(ErrorKind.InvalidData, text) }

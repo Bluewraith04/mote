@@ -1,0 +1,90 @@
+// Directories, and moving and copying paths.
+import { sort } from std.iter
+import { FileKind, failure } from ._support
+import { File, read_bytes, write_bytes } from .file
+import { link_metadata, is_dir } from .metadata
+import { fs_mkdir, fs_rmdir, fs_unlink, fs_rename, fs_list } from ._native
+
+/// The names in a directory in sorted order, without `.` and `..`.
+pub fn list(path: String) -> Result<List<String>, Error> {
+    var size = 4096
+    while true {
+        let buffer: [UInt8] = [0; size]
+        let needed = fs_list(path, buffer)
+        if needed < 0 { return Err(failure(needed, path)) }
+        if needed > size {
+            size = needed
+            continue
+        }
+        var names: List<String> = []
+        var start = 0
+        for at in 0..needed {
+            if buffer[at] != 0 { continue }
+            let name = String.from_bytes(buffer.slice(start, at))
+            if name == null { return Err(Error.new(ErrorKind.InvalidData, "${path}: a name is not valid UTF-8")) }
+            names.push(name)
+            start = at + 1
+        }
+        return Ok(sort(names))
+    }
+    return Ok([])
+}
+
+/// Makes one directory; its parent must exist.
+pub fn create_dir(path: String) -> Result<Null, Error> {
+    let code = fs_mkdir(path, 493)
+    if code < 0 { return Err(failure(code, path)) }
+    return Ok(null)
+}
+
+/// Makes a directory and the ones above it that are missing; one that exists is not an error.
+pub fn create_dir_all(path: String) -> Result<Null, Error> {
+    if is_dir(path) { return Ok(null) }
+    var made = ""
+    let absolute = path.starts_with("/")
+    for name in path.split("/") {
+        if name == "" { continue }
+        made = if made == "" && !absolute { name } else { made + "/" + name }
+        if is_dir(made) { continue }
+        create_dir(made)?
+    }
+    return Ok(null)
+}
+
+/// Removes a file or a symbolic link.
+pub fn remove_file(path: String) -> Result<Null, Error> {
+    let code = fs_unlink(path)
+    if code < 0 { return Err(failure(code, path)) }
+    return Ok(null)
+}
+
+/// Removes an empty directory.
+pub fn remove_dir(path: String) -> Result<Null, Error> {
+    let code = fs_rmdir(path)
+    if code < 0 { return Err(failure(code, path)) }
+    return Ok(null)
+}
+
+/// Removes a path and everything below it; a symbolic link is removed, not followed.
+pub fn remove_all(path: String) -> Result<Null, Error> {
+    let found = link_metadata(path)?
+    if !found.is_dir() { return remove_file(path) }
+    for name in list(path)? {
+        remove_all(path + "/" + name)?
+    }
+    return remove_dir(path)
+}
+
+/// Renames or moves a path; the target is replaced when it is a file.
+pub fn rename(source: String, target: String) -> Result<Null, Error> {
+    let code = fs_rename(source, target)
+    if code < 0 { return Err(failure(code, source)) }
+    return Ok(null)
+}
+
+/// Copies the contents of a file to another path and gives the number of bytes.
+pub fn copy(source: String, target: String) -> Result<Int, Error> {
+    let bytes = read_bytes(source)?
+    write_bytes(target, bytes)?
+    return Ok(bytes.len())
+}

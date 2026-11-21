@@ -1,0 +1,73 @@
+import { Display, Debug, Clone } from std.traits
+
+struct Point: (Display, Debug, Clone) {
+    x: Int
+    y: Int
+}
+
+class Account: (Display, Debug, Clone) {
+    var owner: String
+    var balance: Int
+}
+
+enum Shape: (Display, Debug, Clone) {
+    Empty
+    Circle(Float)
+    Rect { width: Float, height: Float }
+}
+
+class Wrapper: (Display, Debug, Clone) {
+    name: String
+    inner: Point
+    tags: List<String>
+    maybe: Int?
+    pair: (Int, String)
+    shape: Shape
+}
+
+struct Pair<A, B>: (Display, Debug) {
+    first: A
+    second: B
+}
+
+struct Quiet: (Display, Debug) {
+}
+
+struct Custom: (Display) {
+    n: Int
+
+    pub fn to_string(self) -> String { return "custom ${self.n}" }
+}
+
+fn main() {
+    println(Point { x: 3, y: 4 }.to_string())
+    println("${Point { x: 1, y: 2 }}")
+    println(Account { owner: "ann", balance: 5 }.to_string())
+    println(Shape.Empty.to_string())
+    println(Shape.Circle(1.5).to_string())
+    println(Shape.Rect { width: 2.0, height: 3.0 }.to_string())
+    println(Point { x: 3, y: 4 }.debug())
+    println(Account { owner: "ann", balance: 5 }.debug())
+    println(Shape.Rect { width: 2.0, height: 3.0 }.debug())
+    println(Shape.Circle(1.5).debug())
+    println(Shape.Empty.debug())
+    println(Quiet {}.to_string())
+    println(Quiet {}.debug())
+    let w = Wrapper { name: "w", inner: Point { x: 1, y: 2 }, tags: ["a", "b"], maybe: 7, pair: (1, "p"), shape: Shape.Circle(0.5) }
+    println(w.to_string())
+    println(w.debug())
+    println(Pair { first: 1, second: "x" }.to_string())
+    println(Pair { first: true, second: 2.5 }.debug())
+    println(Custom { n: 3 }.to_string())
+    println(Point { x: 5, y: 6 })
+    println(Shape.Circle(2.5))
+    let a = Point { x: 1, y: 2 }
+    let b = a.clone()
+    println(b.x + b.y)
+    let account = Account { owner: "ann", balance: 5 }
+    var copy = account.clone()
+    copy.balance = 99
+    println(account.balance)
+    println(copy.owner)
+    println(Shape.Rect { width: 1.0, height: 2.0 }.clone().to_string())
+}

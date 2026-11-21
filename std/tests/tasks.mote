@@ -1,0 +1,182 @@
+// spawn, scope, await, cancel and std.task.
+import { assert, assert_eq, fail } from std.test
+import { Task, sleep, await_all, with_timeout } from std.task
+import { Channel } from std.sync
+
+fn double(n: Int) -> Int { return n * 2 }
+
+test "a task gives its value to await" {
+    let h = spawn { return 6 * 7 }
+    assert_eq(h.await().unwrap(), 42)
+}
+
+test "spawn of a call is shorthand for a block" {
+    let h = spawn double(8)
+    assert_eq(h.await().unwrap(), 16)
+}
+
+test "a task sees the values it captured" {
+    let base = 10
+    let word = "ab"
+    let h = spawn { return base + word.len() }
+    assert_eq(h.await().unwrap(), 12)
+}
+
+test "await can be asked again" {
+    let h = spawn { return 1 }
+    assert_eq(h.await().unwrap(), 1)
+    assert_eq(h.await().unwrap(), 1)
+}
+
+test "a task that faults gives await an Err" {
+    let zero = 0
+    let h = spawn { return 1 / zero }
+    match h.await() {
+        Ok(_) => fail("did not fault")
+        Err(e) => assert_eq(e.message, "division by zero")
+    }
+}
+
+test "await_all gathers results in order" {
+    let tasks = [spawn { return 1 }, spawn { return 2 }, spawn { return 3 }]
+    let results = await_all(tasks)
+    assert_eq(results.len(), 3)
+    assert_eq(results[2].unwrap(), 3)
+    assert_eq(results[0].unwrap() + results[1].unwrap(), 3)
+}
+
+test "tasks take turns while they sleep" {
+    let (tx, rx) = Channel<String>(2)
+    let slow = tx.clone()
+    let quick = tx.clone()
+    let a = spawn {
+        sleep(30)
+        slow.send("a")
+    }
+    let b = spawn {
+        sleep(10)
+        quick.send("b")
+    }
+    a.await()
+    b.await()
+    tx.close()
+    assert_eq(rx.recv()!, "b")
+    assert_eq(rx.recv()!, "a")
+}
+
+test "await_timeout gives null when time runs out" {
+    let slow = spawn {
+        sleep(500)
+        return 1
+    }
+    assert(slow.await_timeout(50) == null, "timed out")
+    let quick = spawn { return 2 }
+    assert_eq(quick.await_timeout(50)!.unwrap(), 2)
+}
+
+test "cancel stops a task and is not a fault" {
+    let h = spawn {
+        sleep(1000)
+        return 1
+    }
+    sleep(10)
+    h.cancel()
+    assert(!h.await().is_ok(), "cancelled")
+    assert(h.is_ready(), "ready after it unwound")
+}
+
+test "is_ready tells whether a task has ended" {
+    let h = spawn {
+        sleep(20)
+        return 1
+    }
+    assert(!h.is_ready(), "still running")
+    h.await()
+    assert(h.is_ready(), "ended")
+}
+
+test "with_timeout cancels work that runs long" {
+    let late = with_timeout(50, || {
+        sleep(500)
+        return 1
+    })
+    assert(late == null, "timed out")
+    let quick = with_timeout(500, || { return 4 })
+    assert_eq(quick!.unwrap(), 4)
+}
+
+test "scope waits for every task spawned in it" {
+    let (tx, rx) = Channel<Int>(4)
+    let first = tx.clone()
+    let second = tx.clone()
+    scope {
+        spawn {
+            sleep(20)
+            first.send(1)
+        }
+        spawn {
+            sleep(10)
+            second.send(1)
+        }
+    }
+    tx.close()
+    var done = 0
+    for n in rx { done += n }
+    assert_eq(done, 2)
+}
+
+test "a scope can be left early by break and return paths" {
+    var rounds = 0
+    let (tx, rx) = Channel<Int>(4)
+    while rounds < 3 {
+        rounds += 1
+        let mine = tx.clone()
+        scope {
+            spawn { mine.send(1) }
+            if rounds == 2 { break }
+        }
+    }
+    tx.close()
+    var done = 0
+    for n in rx { done += n }
+    assert_eq(done, 2)
+}
+
+test "a task spawned in a scope is awaited when the scope ends" {
+    let (tx, rx) = Channel<Int>(4)
+    let early = tx.clone()
+    scope {
+        spawn {
+            sleep(5)
+            early.send(1)
+        }
+    }
+    tx.send(2)
+    tx.close()
+    var order: List<Int> = []
+    for n in rx { order.push(n) }
+    assert(order == [1, 2], "the task ended before the scope")
+}
+
+test "a detached task is dropped when the test ends" {
+    spawn {
+        sleep(100000)
+    }
+    assert(true, "the test does not wait for it")
+}
+
+test "tasks hand results to each other over a channel" {
+    let (tx, rx) = Channel<Int>(0)
+    let producer = spawn {
+        var i = 0
+        while i < 4 {
+            tx.send(i * i)
+            i += 1
+        }
+        tx.close()
+    }
+    var total = 0
+    for v in rx { total += v }
+    assert_eq(total, 14)
+    producer.await()
+}

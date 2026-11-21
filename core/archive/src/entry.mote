@@ -1,0 +1,56 @@
+// What an archive holds: its format and its entries.
+
+/// The kind of archive.
+pub enum Format {
+    Tar
+    TarGz
+    Zip
+}
+
+/// What an entry is.
+pub enum EntryKind {
+    File
+    Directory
+    Symlink
+    Hardlink
+}
+
+/// One member of an archive: its path, kind, permission bits, modification time in seconds since 1970-01-01, link target and contents.
+pub class Entry {
+    pub path: String
+    pub kind: EntryKind
+    pub mode: Int
+    pub mtime: Int
+    pub target: String
+    pub data: [UInt8]
+
+    /// A file with mode 0644 and time 0.
+    pub fn file(path: String, data: [UInt8]) -> Entry {
+        return Entry { path: path, kind: EntryKind.File, mode: 420, mtime: 0, target: "", data: data }
+    }
+
+    /// A directory with mode 0755 and time 0.
+    pub fn directory(path: String) -> Entry {
+        let none: [UInt8] = []
+        return Entry { path: path, kind: EntryKind.Directory, mode: 493, mtime: 0, target: "", data: none }
+    }
+
+    /// A symbolic link to a target.
+    pub fn symlink(path: String, target: String) -> Entry {
+        let none: [UInt8] = []
+        return Entry { path: path, kind: EntryKind.Symlink, mode: 511, mtime: 0, target: target, data: none }
+    }
+
+    /// The entry with other permission bits.
+    pub fn with_mode(self, mode: Int) -> Entry {
+        return Entry { path: self.path, kind: self.kind, mode: mode, mtime: self.mtime, target: self.target, data: self.data }
+    }
+
+    /// The entry with another modification time, in seconds since 1970-01-01.
+    pub fn with_mtime(self, mtime: Int) -> Entry {
+        return Entry { path: self.path, kind: self.kind, mode: self.mode, mtime: mtime, target: self.target, data: self.data }
+    }
+
+    /// The contents as text; null when they are not UTF-8.
+    pub fn text(self) -> String? { return String.from_bytes(self.data) }
+}

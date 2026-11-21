@@ -1,0 +1,173 @@
+// The Mote value a JSON value holds.
+import { Dyn, Field, Kind, Shape, Type, build_dyn, describe, downcast } from std.meta
+import { join, parse_float, parse_int } from std.string
+import { Json } from .value
+
+fn expected(what: String, path: String) -> Error {
+    return Error.new(ErrorKind.InvalidData, "expected ${what} at ${path}")
+}
+
+// An integer of the named width as a `Dyn`, or an error when it does not fit.
+fn int_dyn(name: String, n: Int, path: String) -> Result<Dyn, Error> {
+    if name == "Int" || name == "Int64" { return Ok(Dyn.of(n)) }
+    if name == "Int8" && n >= -128 && n <= 127 { return Ok(Dyn.of(n as Int8)) }
+    if name == "Int16" && n >= -32768 && n <= 32767 { return Ok(Dyn.of(n as Int16)) }
+    if name == "Int32" && n >= -2147483648 && n <= 2147483647 { return Ok(Dyn.of(n as Int32)) }
+    if name == "UInt8" && n >= 0 && n <= 255 { return Ok(Dyn.of(n as UInt8)) }
+    if name == "UInt16" && n >= 0 && n <= 65535 { return Ok(Dyn.of(n as UInt16)) }
+    if name == "UInt32" && n >= 0 && n <= 4294967295 { return Ok(Dyn.of(n as UInt32)) }
+    if name == "UInt64" && n >= 0 { return Ok(Dyn.of(n as UInt64)) }
+    return Err(expected("${name}", path))
+}
+
+fn decode_items(ty: Type, items: List<Json>, path: String, depth: Int) -> Result<Dyn, Error> {
+    var parts: List<Dyn> = []
+    for at in 0..items.len() {
+        parts.push(decode_dyn(ty.args()[0], items[at], "${path}[${at}]", depth + 1)?)
+    }
+    return Ok(build_dyn(ty, 0, parts))
+}
+
+// The parts of a record or variant read from the named members of an object.
+fn decode_members(fields: List<Field>, json: Json, path: String, depth: Int) -> Result<List<Dyn>, Error> {
+    var parts: List<Dyn> = []
+    for field in fields {
+        let found = json.get(field.name)
+        let at = path + "." + field.name
+        if found != null {
+            parts.push(decode_dyn(field.ty, found, at, depth + 1)?)
+        } else if field.ty.kind() == Kind.Optional {
+            parts.push(build_dyn(field.ty, 0, []))
+        } else {
+            return Err(Error.new(ErrorKind.InvalidData, "missing ${field.name} at ${path}"))
+        }
+    }
+    return Ok(parts)
+}
+
+fn decode_variant(ty: Type, json: Json, path: String, depth: Int) -> Result<Dyn, Error> {
+    let variants = ty.variants()
+    var name = json.as_text()
+    var inner = Json.Null
+    if name == null {
+        let members = match json {
+            Object(list) => list
+            _ => []
+        }
+        if members.len() != 1 { return Err(expected("a variant name or an object with one", path)) }
+        name = members[0].0
+        inner = members[0].1
+    }
+    for tag in 0..variants.len() {
+        let variant = variants[tag]
+        if variant.name != name! { continue }
+        let at = path + "." + variant.name
+        if variant.shape == Shape.Unit {
+            if json.as_text() == null && !inner.is_null() { return Err(expected("no payload", at)) }
+            return Ok(build_dyn(ty, tag, []))
+        }
+        if variant.shape == Shape.Named {
+            return Ok(build_dyn(ty, tag, decode_members(variant.fields, inner, at, depth)?))
+        }
+        var parts: List<Dyn> = []
+        if variant.fields.len() == 1 {
+            parts.push(decode_dyn(variant.fields[0].ty, inner, at, depth + 1)?)
+        } else {
+            let items = match inner {
+                Array(list) => list
+                _ => []
+            }
+            if items.len() != variant.fields.len() { return Err(expected("${variant.fields.len()} elements", at)) }
+            for index in 0..items.len() {
+                parts.push(decode_dyn(variant.fields[index].ty, items[index], "${at}[${index}]", depth + 1)?)
+            }
+        }
+        return Ok(build_dyn(ty, tag, parts))
+    }
+    return Err(Error.new(ErrorKind.InvalidData, "no variant ${name!} at ${path}"))
+}
+
+fn decode_dyn(ty: Type, json: Json, path: String, depth: Int) -> Result<Dyn, Error> {
+    if depth > 256 { return Err(Error.new(ErrorKind.InvalidData, "a value nested too deeply to decode from JSON")) }
+    let kind = ty.kind()
+    if kind == Kind.Bool {
+        let value = json.as_bool()
+        if value == null { return Err(expected("a boolean", path)) }
+        return Ok(Dyn.of(value))
+    }
+    if kind == Kind.Int {
+        let value = json.as_int()
+        if value == null { return Err(expected("an integer", path)) }
+        return int_dyn(ty.name(), value, path)
+    }
+    if kind == Kind.Float {
+        let value = json.as_float()
+        if value == null { return Err(expected("a number", path)) }
+        if ty.name() == "Float32" { return Ok(Dyn.of(value as Float32)) }
+        return Ok(Dyn.of(value))
+    }
+    if kind == Kind.String {
+        let value = json.as_text()
+        if value == null { return Err(expected("a string", path)) }
+        return Ok(Dyn.of(value))
+    }
+    if kind == Kind.Optional {
+        if json.is_null() { return Ok(build_dyn(ty, 0, [])) }
+        return Ok(build_dyn(ty, 0, [decode_dyn(ty.args()[0], json, path, depth + 1)?]))
+    }
+    if kind == Kind.List || kind == Kind.Set || (kind == Kind.Array && !ty.name().contains(";")) {
+        return match json {
+            Array(items) => decode_items(ty, items, path, depth)
+            _ => Err(expected("an array", path))
+        }
+    }
+    if kind == Kind.Map && ty.args()[0].kind() == Kind.String {
+        if !is_object(json) { return Err(expected("an object", path)) }
+        let members = match json {
+            Object(list) => list
+            _ => []
+        }
+        var parts: List<Dyn> = []
+        for member in members {
+            parts.push(Dyn.of(member.0))
+            parts.push(decode_dyn(ty.args()[1], member.1, path + "." + member.0, depth + 1)?)
+        }
+        return Ok(build_dyn(ty, 0, parts))
+    }
+    if kind == Kind.Tuple {
+        let members = ty.args()
+        let items = match json {
+            Array(list) => list
+            _ => []
+        }
+        if items.len() != members.len() { return Err(expected("${members.len()} elements", path)) }
+        var parts: List<Dyn> = []
+        for at in 0..items.len() {
+            parts.push(decode_dyn(members[at], items[at], "${path}[${at}]", depth + 1)?)
+        }
+        return Ok(build_dyn(ty, 0, parts))
+    }
+    if kind == Kind.Struct || kind == Kind.Class {
+        if !is_object(json) { return Err(expected("an object", path)) }
+        return Ok(build_dyn(ty, 0, decode_members(ty.fields(), json, path, depth)?))
+    }
+    if kind == Kind.Enum { return decode_variant(ty, json, path, depth) }
+    return Err(Error.new(ErrorKind.InvalidData, "${ty.name()} cannot be decoded from JSON"))
+}
+
+fn is_object(json: Json) -> Bool {
+    return match json {
+        Object(_) => true
+        _ => false
+    }
+}
+
+/// The `T` the value holds, for a `T` that `encode` writes: a record takes its fields from the members of an object by name, and an optional field may be left out. An `Err` names the place of the first mismatch; a field with a default is not taken from it, and a fixed-length array, a map with other than `String` keys, a union, function or handle is an `Err` too.
+pub fn decode<T>(json: Json) -> Result<T, Error> {
+    return Ok(downcast<T>(decode_dyn(describe<T>(), json, "$", 0)?)!)
+}
+
+/// `T.from_json(json)` on any type that lists it.
+pub trait FromJson {
+    fn from_json(json: Json) -> Result<Self, Error> { return decode(json) }
+}

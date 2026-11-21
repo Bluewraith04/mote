@@ -1,0 +1,51 @@
+import { fail } from std.test
+
+fn divide() -> Result<Int, Error> {
+    let n = 0
+    scope {
+        spawn { return 1 / n }
+    }
+    return Ok(1)
+}
+
+fn index() -> Result<Int, Error> {
+    let i = 3
+    scope {
+        spawn {
+            let xs: List<Int> = []
+            return xs[i]
+        }
+    }
+    return Ok(1)
+}
+
+fn raised() -> Result<Int, Error> {
+    scope {
+        spawn { fail("custom message") }
+    }
+    return Ok(1)
+}
+
+fn nothing() -> Result<Int, Error> {
+    scope {
+        spawn {
+            let none: Int? = null
+            return none!
+        }
+    }
+    return Ok(1)
+}
+
+fn show(result: Result<Int, Error>) {
+    match result {
+        Ok(value) => println(value)
+        Err(error) => println(error.message)
+    }
+}
+
+fn main() {
+    show(divide())
+    show(index())
+    show(raised())
+    show(nothing())
+}

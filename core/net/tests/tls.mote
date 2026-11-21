@@ -1,0 +1,136 @@
+import { assert, assert_eq } from std.test
+import { TcpListener, TcpStream } from net.socket
+import { TlsAcceptor, TlsStream } from net.tls
+import { authority, certificate, private_key } from .keys
+
+fn text_of(bytes: [UInt8]) -> String {
+    return String.from_bytes(bytes)!
+}
+
+test "a client and a server share an encrypted stream" {
+    let acceptor = TlsAcceptor.new(certificate(), private_key())!
+    let listener = TcpListener.bind("127.0.0.1", 0)!
+    let port = listener.port()!
+    let server = spawn {
+        let secure = acceptor.accept(listener.accept()!)!
+        let got = secure.read(64)!
+        secure.write_string("echo:" + text_of(got))!
+        secure.close()!
+        return text_of(got)
+    }
+    let client = TlsStream.connect_trusting("localhost", port, authority())!
+    client.write_string("hello")!
+    assert_eq(text_of(client.read_all()!), "echo:hello")
+    assert_eq(server.await()!, "hello")
+    client.close()!
+    listener.close()!
+}
+
+test "a large transfer arrives whole" {
+    let acceptor = TlsAcceptor.new(certificate(), private_key())!
+    let listener = TcpListener.bind("127.0.0.1", 0)!
+    let port = listener.port()!
+    let server = spawn {
+        let secure = acceptor.accept(listener.accept()!)!
+        let all = secure.read_all()!
+        secure.close()!
+        return all.len()
+    }
+    let client = TlsStream.connect_trusting("127.0.0.1", port, authority())!
+    let block: [UInt8] = [7; 70000]
+    for _ in 0..3 {
+        client.write(block)!
+    }
+    client.close()!
+    assert_eq(server.await()!, 210000)
+    listener.close()!
+}
+
+test "a client opens with a handshake record" {
+    let listener = TcpListener.bind("127.0.0.1", 0)!
+    let port = listener.port()!
+    let spy = spawn {
+        let tcp = listener.accept()!
+        let first = tcp.read(4096)!
+        tcp.close()!
+        return first
+    }
+    let result = TlsStream.connect_trusting("127.0.0.1", port, authority())
+    assert(result.is_err(), "the server never answered")
+    let seen = spy.await()!
+    assert(seen.len() > 0, "a hello was sent")
+    assert_eq(seen[0], 22)
+    listener.close()!
+}
+
+test "a certificate nobody vouches for is refused" {
+    let acceptor = TlsAcceptor.new(certificate(), private_key())!
+    let listener = TcpListener.bind("127.0.0.1", 0)!
+    let port = listener.port()!
+    let server = spawn {
+        let result = acceptor.accept(listener.accept()!)
+        return result.is_err()
+    }
+    let result = TlsStream.connect("127.0.0.1", port)
+    assert(result.is_err(), "unknown authority")
+    let message = match result {
+        Ok(_) => ""
+        Err(error) => error.message
+    }
+    assert(message.starts_with("tls: "), message)
+    assert(server.await()!, "the server saw the refusal")
+    listener.close()!
+}
+
+test "a name the certificate does not carry is refused" {
+    let acceptor = TlsAcceptor.new(certificate(), private_key())!
+    let listener = TcpListener.bind("127.0.0.1", 0)!
+    let port = listener.port()!
+    let server = spawn {
+        let result = acceptor.accept(listener.accept()!)
+        return result.is_err()
+    }
+    let tcp = TcpStream.connect("127.0.0.1", port)!
+    let result = TlsStream.client(tcp, "other.example", authority())
+    assert(result.is_err(), "wrong name")
+    assert(server.await()!, "the server saw the refusal")
+    listener.close()!
+}
+
+test "a certificate that is not PEM is refused up front" {
+    assert(TlsAcceptor.new("not a certificate", private_key()).is_err(), "chain")
+    assert(TlsAcceptor.new(certificate(), "not a key").is_err(), "key")
+}
+
+test "a peer that is not speaking TLS is an error" {
+    let listener = TcpListener.bind("127.0.0.1", 0)!
+    let port = listener.port()!
+    let server = spawn {
+        let tcp = listener.accept()!
+        tcp.read(4096)!
+        tcp.write_string("HTTP/1.1 400 Bad Request\r\n\r\n")!
+        tcp.close()!
+        return 0
+    }
+    let result = TlsStream.connect_trusting("127.0.0.1", port, authority())
+    assert(result.is_err(), "plain text answer")
+    server.await()!
+    listener.close()!
+}
+
+test "closing twice is an error" {
+    let acceptor = TlsAcceptor.new(certificate(), private_key())!
+    let listener = TcpListener.bind("127.0.0.1", 0)!
+    let port = listener.port()!
+    let server = spawn {
+        let secure = acceptor.accept(listener.accept()!)!
+        secure.read_all()!
+        secure.close()!
+        return 0
+    }
+    let client = TlsStream.connect_trusting("127.0.0.1", port, authority())!
+    client.close()!
+    assert(client.close().is_err(), "twice")
+    server.await()!
+    listener.close()!
+}

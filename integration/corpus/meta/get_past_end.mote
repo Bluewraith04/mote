@@ -1,0 +1,11 @@
+import { Dyn } from std.meta
+
+struct Point {
+    x: Int
+    y: Int
+}
+
+fn main() {
+    let d = Dyn.of(Point { x: 1, y: 2 })
+    println(d.get(2).len())
+}

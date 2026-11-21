@@ -1,0 +1,22 @@
+import { Stream } from std.collections
+
+class Holder {
+    var stream: Stream<Int>?
+}
+
+fn looped(holder: Holder) -> Stream<Int> {
+    yield 1
+    var inner = holder.stream
+    if inner != null {
+        inner!.next()
+    }
+    yield 2
+}
+
+fn main() {
+    var holder = Holder { stream: null }
+    var s = looped(holder)
+    holder.stream = s
+    println(s.next()!)
+    println(s.next()!)
+}

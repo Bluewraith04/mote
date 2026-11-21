@@ -1,0 +1,6 @@
+import { sleep } from std.task
+
+fn main() {
+    sleep(6000)
+    println(0)
+}

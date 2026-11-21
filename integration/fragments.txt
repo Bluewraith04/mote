@@ -1,0 +1,6 @@
+# Blocks of docs/reference that do not build alone or after the declarations before them on their page.
+# Each line is `page@hash | first line of the error`; the hash is the first 8 digits of the FNV-1a hash of the block's text.
+# The docs test fails on a block that is missing here, on a line whose error changed, and on a line whose block now
+# builds or was edited, so the list only shrinks.
+lexical.md@7c15f1db | unknown name `xs`
+lexical.md@a8448427 | unknown name `a`

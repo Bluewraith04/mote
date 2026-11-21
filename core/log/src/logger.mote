@@ -1,0 +1,38 @@
+// A logger that hands the records at or above its floor to a sink.
+import { Level } from .level
+import { Record } from .record
+
+
+pub class Logger {
+    label: String
+    var floor: Level
+    sink: (Record) -> Null
+
+    /// A logger that passes each record at `Info` or above to the sink.
+    pub fn new(name: String, sink: (Record) -> Null) -> Logger {
+        return Logger { label: name, floor: Level.Info, sink: sink }
+    }
+
+    /// A logger whose sink prints the formatted record to standard output.
+    pub fn to_stdout(name: String) -> Logger { return Logger.new(name, |record| println(record.format())) }
+
+    /// A logger whose sink prints the formatted record to standard error.
+    pub fn to_stderr(name: String) -> Logger { return Logger.new(name, |record| eprintln(record.format())) }
+
+    pub fn name(self) -> String { return self.label }
+    pub fn level(self) -> Level { return self.floor }
+    pub fn set_level(var self, level: Level) { self.floor = level }
+    pub fn enabled(self, level: Level) -> Bool { return level.number() >= self.floor.number() }
+
+    /// Passes the record to the sink when `level` is at least the logger's level.
+    pub fn log(self, level: Level, message: String, fields: List<(String, String)> = []) {
+        if !self.enabled(level) { return }
+        let write = self.sink
+        write(Record { level: level, logger: self.label, message: message, fields: fields })
+    }
+
+    pub fn debug(self, message: String, fields: List<(String, String)> = []) { self.log(Level.Debug, message, fields) }
+    pub fn info(self, message: String, fields: List<(String, String)> = []) { self.log(Level.Info, message, fields) }
+    pub fn warn(self, message: String, fields: List<(String, String)> = []) { self.log(Level.Warn, message, fields) }
+    pub fn error(self, message: String, fields: List<(String, String)> = []) { self.log(Level.Error, message, fields) }
+}

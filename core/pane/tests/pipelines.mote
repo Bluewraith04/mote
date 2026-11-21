@@ -1,0 +1,179 @@
+import { assert, assert_eq } from std.test
+import { Channel } from std.sync
+import { Doc, Node } from doc
+import { Event, KEY_ENTER, Next, Routes, Step, Window, run_steps } from pane
+
+enum Screen {
+    Home
+    Settings
+}
+
+class App {
+    screen: Screen
+    name: String
+    count: Int
+    ready: Bool
+    ratio: Float
+}
+
+fn fresh() -> App {
+    return App { screen: Screen.Home, name: "none", count: 0, ready: false, ratio: 0.5 }
+}
+
+fn state_of(next: Next<App>) -> App {
+    return match next {
+        Continue(app) => app
+        Quit(app) => app
+    }
+}
+
+fn quit(next: Next<App>) -> Bool {
+    return match next {
+        Continue(_) => false
+        Quit(_) => true
+    }
+}
+
+fn button(doc: Doc, id: String) -> Node {
+    let box = doc.element("box")
+    box.set_attr("id", id)!
+    box.set_attr("width", "100")!
+    box.set_attr("height", "40")!
+    return box
+}
+
+fn view(app: App, doc: Doc) -> Node {
+    let root = doc.element("column")
+    root.append(button(doc, "go"))!
+    root.append(button(doc, "ask"))!
+    let label = doc.element("text")
+    let shown = if app.screen == Screen.Settings { "settings" } else { "home" }
+    label.append(doc.text("${shown} ${app.name} ${app.count}"))!
+    root.append(label)!
+    return root
+}
+
+test "pipelines set a field from text for each kind of field" {
+    let steps = [Step.Set("name", "ada"), Step.Set("count", "42"), Step.Set("ready", "true"), Step.Set("ratio", "2.5"), Step.Set("screen", "Settings")]
+    let app = state_of(run_steps<App>(fresh(), steps)!)
+    assert_eq(app.name, "ada")
+    assert_eq(app.count, 42)
+    assert(app.ready, "bool")
+    assert(app.ratio == 2.5, "float")
+    assert(app.screen == Screen.Settings, "enum variant")
+}
+
+test "pipelines show a screen by setting the field screen" {
+    let app = state_of(run_steps<App>(fresh(), [Step.Show("Settings")])!)
+    assert(app.screen == Screen.Settings, "settings")
+}
+
+test "pipelines leave the state they were given as it was" {
+    let before = fresh()
+    let after = state_of(run_steps<App>(before, [Step.Set("count", "9")])!)
+    assert_eq(before.count, 0)
+    assert_eq(after.count, 9)
+}
+
+test "pipelines with a step that is wrong are an error that names the field" {
+    let missing = run_steps<App>(fresh(), [Step.Set("colour", "red")])
+    assert(missing.is_err(), "no such field")
+    let message = match missing {
+        Err(error) => error.message
+        Ok(_) => ""
+    }
+    assert(message.contains("no field colour"), message)
+    assert(run_steps<App>(fresh(), [Step.Set("count", "many")]).is_err(), "not an integer")
+    assert(run_steps<App>(fresh(), [Step.Set("ready", "yes")]).is_err(), "not a bool")
+    assert(run_steps<App>(fresh(), [Step.Show("Elsewhere")]).is_err(), "no such variant")
+}
+
+test "pipelines stop at a quit step" {
+    let next = run_steps<App>(fresh(), [Step.Set("count", "1"), Step.Quit, Step.Set("count", "2")])!
+    assert(quit(next), "quit")
+    assert_eq(state_of(next).count, 1)
+    assert(!quit(run_steps<App>(fresh(), [])!), "no steps continue")
+}
+
+test "pipelines send text to a channel and wait for the reply" {
+    let (ask, asked) = Channel<String>(1)
+    let (answer, answered) = Channel<String>(1)
+    let service = spawn {
+        let question = asked.recv()!
+        answer.send("${question}!")
+    }
+    let next = run_steps<App>(fresh(), [Step.Send(ask, "hello"), Step.Await(answered, "name")])!
+    assert_eq(state_of(next).name, "hello!")
+    service.await()
+}
+
+test "pipelines wait on a channel that closes with no reply is an error" {
+    let (answer, answered) = Channel<String>(1)
+    answer.close()
+    assert(run_steps<App>(fresh(), [Step.Await(answered, "name")]).is_err(), "closed")
+}
+
+test "pipelines routes run the pipeline of the event and no other" {
+    var routes = Routes.new()
+    routes.on_click("go", [Step.Show("Settings")])
+    routes.on_key(KEY_ENTER, [Step.Set("count", "7")])
+    let clicked = state_of(routes.handle(fresh(), Event.Click("go", 1, 1, 0))!)
+    assert(clicked.screen == Screen.Settings, "click")
+    assert_eq(clicked.count, 0)
+    let pressed = state_of(routes.handle(fresh(), Event.Key(KEY_ENTER))!)
+    assert_eq(pressed.count, 7)
+    let other = state_of(routes.handle(fresh(), Event.Click("ask", 1, 1, 0))!)
+    assert_eq(other.count, 0)
+    assert(other.screen == Screen.Home, "unrouted click changes nothing")
+}
+
+test "pipelines a close with no route quits and one with a route runs it" {
+    var routes = Routes.new()
+    assert(quit(routes.handle(fresh(), Event.Close)!), "default")
+    routes.on_close([Step.Set("name", "bye")])
+    let next = routes.handle(fresh(), Event.Close)!
+    assert(!quit(next), "the route decides")
+    assert_eq(state_of(next).name, "bye")
+}
+
+test "pipelines in a window change the state and the screen shown" {
+    var routes = Routes.new()
+    routes.on_click("go", [Step.Show("Settings"), Step.Set("count", "3")])
+    routes.on_key(KEY_ENTER, [Step.Quit])
+    var window = Window.headless(300, 200)
+    window.inject(Event.Click(null, 10, 10, 0))
+    window.inject(Event.Click(null, 10, 70, 0))
+    window.inject(Event.Key(KEY_ENTER))
+    window.inject(Event.Click(null, 10, 10, 0))
+    let last = window.run_routes(fresh(), view, routes)!
+    assert(last.screen == Screen.Settings, "ended on settings")
+    assert_eq(last.count, 3)
+    assert_eq(window.frames.len(), 3)
+}
+
+test "pipelines in a window ask a task and show its answer" {
+    let (ask, asked) = Channel<String>(4)
+    let (answer, answered) = Channel<String>(4)
+    let service = spawn {
+        for question in asked.stream() {
+            answer.send("re ${question}")
+        }
+    }
+    var routes = Routes.new()
+    routes.on_click("ask", [Step.Send(ask, "ping"), Step.Await(answered, "name")])
+    var window = Window.headless(300, 200)
+    window.inject(Event.Click(null, 10, 50, 0))
+    let last = window.run_routes(fresh(), view, routes)!
+    assert_eq(last.name, "re ping")
+    assert(window.frames.get(1).draws.len() > 0, "the answer was shown")
+    ask.close()
+    service.await()
+}
+
+test "pipelines in a window end the run with the error of a step" {
+    var routes = Routes.new()
+    routes.on_click("go", [Step.Set("nothing", "1")])
+    var window = Window.headless(300, 200)
+    window.inject(Event.Click(null, 10, 10, 0))
+    assert(window.run_routes(fresh(), view, routes).is_err(), "the step failed")
+}

@@ -1,0 +1,24 @@
+// The functions of the native library `pane`, and the widths of the records they fill.
+import { PortEnd } from std.port
+
+@link("pane")
+pub native fn pane_layout(ops: [Int], strings: [UInt8], width: Int, height: Int, commands: [Int], texts: [UInt8], boxes: [Int], info: [Int]) -> Int
+
+@link("pane")
+pub native fn pane_open(width: Int, height: Int, title: String, events: PortEnd, error: [UInt8]) -> Int
+
+@link("pane")
+pub native fn pane_present(handle: Int, commands: [Int], texts: [UInt8], count: Int) -> Int
+
+@link("pane")
+pub native fn pane_close(handle: Int)
+
+@link("pane")
+pub native fn pane_headless(events: PortEnd) -> Int
+
+@link("pane")
+pub native fn pane_inject(handle: Int, bytes: [UInt8]) -> Int
+
+pub let OP_WIDTH = 24
+pub let CMD_WIDTH = 12
+pub let BOX_WIDTH = 6

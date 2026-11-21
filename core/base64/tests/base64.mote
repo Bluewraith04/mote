@@ -1,0 +1,65 @@
+import { assert, assert_eq } from std.test
+import { Alphabet, decode, decode_string, encode, encode_string } from base64
+
+test "the strings of RFC 4648 encode" {
+    assert_eq(encode_string(""), "")
+    assert_eq(encode_string("f"), "Zg==")
+    assert_eq(encode_string("fo"), "Zm8=")
+    assert_eq(encode_string("foo"), "Zm9v")
+    assert_eq(encode_string("foob"), "Zm9vYg==")
+    assert_eq(encode_string("fooba"), "Zm9vYmE=")
+    assert_eq(encode_string("foobar"), "Zm9vYmFy")
+}
+
+test "the strings of RFC 4648 decode" {
+    assert_eq(decode_string("")!, "")
+    assert_eq(decode_string("Zg==")!, "f")
+    assert_eq(decode_string("Zm8=")!, "fo")
+    assert_eq(decode_string("Zm9vYmFy")!, "foobar")
+    assert_eq(decode_string("Zm9vYmE=")!, "fooba")
+}
+
+test "padding may be left out" {
+    assert_eq(encode_string("foob", Alphabet.Standard, false), "Zm9vYg")
+    assert_eq(encode_string("fo", Alphabet.Standard, false), "Zm8")
+    assert_eq(decode_string("Zm9vYg")!, "foob")
+    assert_eq(decode_string("Zm8")!, "fo")
+}
+
+test "the alphabets differ at 62 and 63" {
+    let bytes: [UInt8] = [251, 255, 190]
+    assert_eq(encode(bytes), "+/++")
+    assert_eq(encode(bytes, Alphabet.UrlSafe), "-_--")
+    assert_eq(decode("+/++")!.get(0), 251)
+    assert_eq(decode("-_--", Alphabet.UrlSafe)!.get(1), 255)
+    assert(decode("-_--").is_err(), "standard rejects url-safe")
+    assert(decode("+/++", Alphabet.UrlSafe).is_err(), "url-safe rejects standard")
+}
+
+test "every byte value round trips" {
+    var all: List<UInt8> = []
+    var n = 0
+    while n < 256 {
+        all.push(n as UInt8)
+        n += 1
+    }
+    let array = all.to_array()
+    for alphabet in [Alphabet.Standard, Alphabet.UrlSafe] {
+        for padded in [true, false] {
+            let back = decode(encode(array, alphabet, padded), alphabet)!
+            assert_eq(back.len(), 256)
+            assert_eq(back.get(0), 0)
+            assert_eq(back.get(200), 200)
+            assert_eq(back.get(255), 255)
+        }
+    }
+}
+
+test "text that is not base64 is an error" {
+    assert(decode("Zm9v!A==").is_err(), "character")
+    assert(decode("Z").is_err(), "lone")
+    assert(decode("Zm9vY").is_err(), "five")
+    assert(decode("Zg=").is_err(), "short padding")
+    assert(decode("Zg===").is_err(), "long padding")
+    assert(decode_string("/w==").is_err(), "not utf-8")
+}

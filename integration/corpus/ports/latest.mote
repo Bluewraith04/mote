@@ -1,0 +1,16 @@
+// feed 0 10 1,2,3
+// feed 0 20 4,5
+import { Port, PortMode } from std.port
+import { sleep } from std.task
+
+fn main() {
+    let (end, rx) = Port.open(PortMode.Latest)
+    sleep(150)
+    var total = 0
+    while true {
+        let message = rx.try_recv()
+        if message == null { break }
+        total += message.len() as Int
+    }
+    println(total)
+}

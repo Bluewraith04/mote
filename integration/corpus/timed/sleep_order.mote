@@ -1,0 +1,26 @@
+import { Channel } from std.sync
+import { sleep } from std.task
+
+fn main() {
+    let (tx, rx) = Channel<Int>(3)
+    let a = tx.clone()
+    let b = tx.clone()
+    scope {
+        spawn {
+            sleep(90)
+            tx.send(3)
+        }
+        spawn {
+            sleep(30)
+            a.send(1)
+        }
+        spawn {
+            sleep(60)
+            b.send(2)
+        }
+    }
+    println(rx.try_recv()! * 100 + rx.try_recv()! * 10 + rx.try_recv()!)
+    sleep(0)
+    sleep(-5)
+    println("slept")
+}

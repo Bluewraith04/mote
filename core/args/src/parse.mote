@@ -1,0 +1,163 @@
+// Reading the words into a record.
+import { Dyn, Kind, Type, build_dyn, describe, downcast } from std.meta
+import { join, parse_float, parse_int } from std.string
+import { Flag } from .flag
+import { Slot, Spec, by_long, by_short, is_number, kebab, label, specs_of } from ._spec
+
+// Records a value for a flag; returns the position of the next word.
+fn take(spec: Spec, given: String?, words: List<String>, at: Int, slots: List<Slot>, shown: String) -> Result<Int, Error> {
+    var slot = slots[spec.index]
+    if slot.values.len() > 0 && !spec.is_list && !spec.is_switch {
+        return Err(Error.new(ErrorKind.InvalidData, "${shown} is given twice"))
+    }
+    if spec.is_switch {
+        slot.add(if given == null { "true" } else { given })
+        return Ok(at)
+    }
+    if given != null {
+        slot.add(given)
+        return Ok(at)
+    }
+    if at >= words.len() { return Err(Error.new(ErrorKind.InvalidData, "${shown} needs a value")) }
+    slot.add(words[at])
+    return Ok(at + 1)
+}
+
+fn int_dyn(name: String, n: Int, shown: String) -> Result<Dyn, Error> {
+    if name == "Int" || name == "Int64" { return Ok(Dyn.of(n)) }
+    if name == "Int8" && n >= -128 && n <= 127 { return Ok(Dyn.of(n as Int8)) }
+    if name == "Int16" && n >= -32768 && n <= 32767 { return Ok(Dyn.of(n as Int16)) }
+    if name == "Int32" && n >= -2147483648 && n <= 2147483647 { return Ok(Dyn.of(n as Int32)) }
+    if name == "UInt8" && n >= 0 && n <= 255 { return Ok(Dyn.of(n as UInt8)) }
+    if name == "UInt16" && n >= 0 && n <= 65535 { return Ok(Dyn.of(n as UInt16)) }
+    if name == "UInt32" && n >= 0 && n <= 4294967295 { return Ok(Dyn.of(n as UInt32)) }
+    if name == "UInt64" && n >= 0 { return Ok(Dyn.of(n as UInt64)) }
+    return Err(Error.new(ErrorKind.InvalidData, "${shown}: ${n} does not fit ${name}"))
+}
+
+fn bad(shown: String, wanted: String, text: String) -> Error {
+    return Error.new(ErrorKind.InvalidData, "${shown}: expected ${wanted}, not ${text}")
+}
+
+// One value of a scalar type from its text.
+fn scalar(ty: Type, text: String, shown: String) -> Result<Dyn, Error> {
+    let kind = ty.kind()
+    if kind == Kind.Bool {
+        if text == "true" { return Ok(Dyn.of(true)) }
+        if text == "false" { return Ok(Dyn.of(false)) }
+        return Err(bad(shown, "true or false", text))
+    }
+    if kind == Kind.Int {
+        let n = parse_int(text)
+        if n.is_err() { return Err(bad(shown, "an integer", text)) }
+        return int_dyn(ty.name(), n.unwrap(), shown)
+    }
+    if kind == Kind.Float {
+        let x = parse_float(text)
+        if x.is_err() { return Err(bad(shown, "a number", text)) }
+        if ty.name() == "Float32" { return Ok(Dyn.of(x.unwrap() as Float32)) }
+        return Ok(Dyn.of(x.unwrap()))
+    }
+    if kind == Kind.String { return Ok(Dyn.of(text)) }
+    let variants = ty.variants()
+    var names: List<String> = []
+    for tag in 0..variants.len() {
+        let name = kebab(variants[tag].name)
+        if name == kebab(text) { return Ok(build_dyn(ty, tag, [])) }
+        names.push(name)
+    }
+    return Err(bad(shown, join(names, " or "), text))
+}
+
+fn value_of(spec: Spec, values: List<String>) -> Result<Dyn, Error> {
+    let shown = label(spec)
+    let ty = spec.ty
+    if spec.is_optional {
+        let text = if values.len() > 0 { values[values.len() - 1] } else { spec.default_text }
+        if text == null { return Ok(build_dyn(ty, 0, [])) }
+        return Ok(build_dyn(ty, 0, [scalar(ty.args()[0], text, shown)?]))
+    }
+    if spec.is_list {
+        var texts = values
+        if texts.len() == 0 && spec.default_text != null { texts = [spec.default_text!] }
+        var parts: List<Dyn> = []
+        for text in texts { parts.push(scalar(ty.args()[0], text, shown)?) }
+        return Ok(build_dyn(ty, 0, parts))
+    }
+    if values.len() > 0 { return scalar(ty, values[values.len() - 1], shown) }
+    if spec.is_switch { return Ok(Dyn.of(spec.default_text == "true")) }
+    if spec.default_text != null { return scalar(ty, spec.default_text!, shown) }
+    return Err(Error.new(ErrorKind.InvalidData, "missing ${shown}"))
+}
+
+/// Whether the words ask for help: `--help` or `-h` before a `--`.
+pub fn help_requested(words: List<String>) -> Bool {
+    for word in words {
+        if word == "--" { return false }
+        if word == "--help" || word == "-h" { return true }
+    }
+    return false
+}
+
+/// A `T` read from the words, which `std.io.args()` gives. Each field is a flag named after it (`max_depth` is `--max-depth`): a `Bool` is a switch, an optional may be left out, a list repeats, an `Int`, `Float`, `String` or an enum of unit variants takes a value as `--port 80` or `--port=80`. `flags` adds short names, help, defaults and positional fields. A missing value, an unknown flag and a value of the wrong kind are an `Err`.
+pub fn parse<T>(words: List<String>, flags: List<Flag> = []) -> Result<T, Error> {
+    let ty = describe<T>()
+    if ty.kind() != Kind.Struct && ty.kind() != Kind.Class {
+        return Err(Error.new(ErrorKind.InvalidData, "args: ${ty.name()} is not a struct or class"))
+    }
+    let specs = specs_of(ty, flags)?
+    var slots: List<Slot> = []
+    for _ in specs { slots.push(Slot { values: [] }) }
+    var positionals: List<String> = []
+    var at = 0
+    var only_words = false
+    while at < words.len() {
+        let word = words[at]
+        at = at + 1
+        if only_words || !word.starts_with("-") || word == "-" || is_number(word) {
+            positionals.push(word)
+        } else if word == "--" {
+            only_words = true
+        } else if word.starts_with("--") {
+            let body = word.slice(2, word.len())
+            let cut = body.find("=")
+            let name = if cut == null { body } else { body.slice(0, cut) }
+            let given: String? = if cut == null { null } else { body.slice(cut + 1, body.len()) }
+            let spec = by_long(specs, name)
+            if spec == null { return Err(Error.new(ErrorKind.InvalidData, "unknown flag --${name}")) }
+            at = take(spec, given, words, at, slots, "--" + name)?
+        } else {
+            var place = 1
+            while place < word.len() {
+                let letter = word.slice(place, place + 1)
+                let spec = by_short(specs, letter)
+                if spec == null { return Err(Error.new(ErrorKind.InvalidData, "unknown flag -${letter}")) }
+                if spec.is_switch {
+                    at = take(spec, null, words, at, slots, "-" + letter)?
+                    place = place + 1
+                } else {
+                    var rest = word.slice(place + 1, word.len())
+                    if rest.starts_with("=") { rest = rest.slice(1, rest.len()) }
+                    at = take(spec, if rest == "" { null } else { rest }, words, at, slots, "-" + letter)?
+                    place = word.len()
+                }
+            }
+        }
+    }
+    var next = 0
+    for spec in specs {
+        if !spec.positional { continue }
+        while next < positionals.len() {
+            var slot = slots[spec.index]
+            slot.add(positionals[next])
+            next = next + 1
+            if !spec.is_list { break }
+        }
+    }
+    if next < positionals.len() {
+        return Err(Error.new(ErrorKind.InvalidData, "unexpected argument ${positionals[next]}"))
+    }
+    var parts: List<Dyn> = []
+    for spec in specs { parts.push(value_of(spec, slots[spec.index].values)?) }
+    return Ok(downcast<T>(build_dyn(ty, 0, parts))!)
+}

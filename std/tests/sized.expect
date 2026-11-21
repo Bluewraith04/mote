@@ -1,0 +1,17 @@
+start
+test "each signed width wraps at its own edge"
+passed
+test "each unsigned width wraps at its own edge"
+passed
+test "unsigned subtraction below zero is a fault or a report"
+passed
+test "compare, min and max exist on every width"
+passed
+test "a cast moves between widths"
+passed
+test "Float32 rounds to single precision"
+passed
+test "typeof names the static type"
+passed
+test "a union holds a value with the type it entered with"
+passed

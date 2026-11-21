@@ -1,0 +1,80 @@
+// std.iter.
+import { assert, assert_eq } from std.test
+import { range, map, flat_map, filter, find, find_index, any, all, fold, sum, reverse, take, enumerate, contains, sort_by, sort } from std.iter
+
+test "range counts from zero" {
+    assert(range(4) == [0, 1, 2, 3], "four")
+    assert(range(0) == [], "none")
+}
+
+test "map changes each element" {
+    assert(map([1, 2, 3], |x| x * 10) == [10, 20, 30], "tens")
+    assert(map(["a", "bb"], |s| s.len()) == [1, 2], "lengths")
+}
+
+test "flat_map joins the results" {
+    assert(flat_map([1, 2], |x| [x, x]) == [1, 1, 2, 2], "doubled")
+}
+
+test "filter keeps what passes" {
+    assert(filter([1, 2, 3, 4], |x| x % 2 == 0) == [2, 4], "evens")
+}
+
+test "find and find_index" {
+    assert_eq(find([1, 2, 3], |x| x > 1)!, 2)
+    assert(find([1, 2, 3], |x| x > 5) == null, "none")
+    assert_eq(find_index([5, 6, 7], |x| x == 7)!, 2)
+    assert(find_index([5, 6], |x| x == 0) == null, "no index")
+}
+
+test "any and all" {
+    assert(any([1, 2, 3], |x| x == 2), "any")
+    assert(!any([1, 2, 3], |x| x == 9), "none")
+    assert(all([2, 4], |x| x % 2 == 0), "all")
+    assert(!all([2, 3], |x| x % 2 == 0), "not all")
+    let none: List<Int> = []
+    assert(all(none, |x| false), "all of nothing")
+}
+
+test "fold and sum" {
+    assert_eq(fold([1, 2, 3], 10, |a, x| a + x), 16)
+    assert_eq(fold(["a", "b"], "", |a, x| a + x), "ab")
+    assert_eq(sum([1, 2, 3, 4]), 10)
+    let none: List<Int> = []
+    assert_eq(sum(none), 0)
+}
+
+test "reverse, take and enumerate" {
+    assert(reverse([1, 2, 3]) == [3, 2, 1], "reverse")
+    let none: List<Int> = []
+    assert(reverse(none) == none, "reverse nothing")
+    assert(take([1, 2, 3], 2) == [1, 2], "take")
+    assert(take([1, 2], 5) == [1, 2], "take more than there is")
+    assert(enumerate(["a", "b"]) == [(0, "a"), (1, "b")], "enumerate")
+}
+
+test "contains uses equality" {
+    assert(contains(["a", "b"], "b"), "found")
+    assert(!contains([1, 2], 3), "missing")
+}
+
+test "sort_by is stable" {
+    let pairs = [(2, "x"), (1, "a"), (2, "b"), (1, "c")]
+    let sorted = sort_by(pairs, |a, b| a.0 < b.0)
+    assert(sorted == [(1, "a"), (1, "c"), (2, "x"), (2, "b")], "stable")
+}
+
+test "sort orders numbers and text" {
+    assert(sort([3, 1, 2]) == [1, 2, 3], "numbers")
+    assert(sort(["pear", "apple", "fig"]) == ["apple", "fig", "pear"], "text")
+    assert(sort([2, 2, 1]) == [1, 2, 2], "duplicates")
+    assert(sort([5]) == [5], "one")
+    assert(sort([1, 2, 3, 4, 5, 6, 7, 8, 9]) == [1, 2, 3, 4, 5, 6, 7, 8, 9], "sorted already")
+}
+
+test "the inputs are left alone" {
+    let xs = [3, 1, 2]
+    let _ = sort(xs)
+    let _ = reverse(xs)
+    assert(xs == [3, 1, 2], "unchanged")
+}

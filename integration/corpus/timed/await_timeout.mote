@@ -1,0 +1,26 @@
+import { Task, sleep, with_timeout } from std.task
+
+fn main() {
+    let slow = spawn {
+        sleep(600)
+        return 1
+    }
+    let quick = spawn { return 2 }
+    println(slow.await_timeout(40) == null)
+    println(quick.await_timeout(500)!.unwrap())
+    println(quick.await_timeout(0)!.unwrap())
+    println(slow.await_timeout(0) == null)
+    slow.cancel()
+    println(slow.await_timeout(500)!.is_err())
+    println(slow.is_ready())
+    let late = with_timeout(40, || {
+        sleep(600)
+        return 1
+    })
+    println(late == null)
+    let fast = with_timeout(500, || { return 4 })
+    println(fast!.unwrap())
+    let n = 0
+    let broken = spawn { return 1 / n }
+    println(broken.await_timeout(500)!.is_err())
+}

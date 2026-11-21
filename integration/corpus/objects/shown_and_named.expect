@@ -1,0 +1,8 @@
+ended Returned
+| corpus.main.C
+| corpus.main.P
+| List<Int>
+| Int
+| C(a: 1)
+| P(x: 2)
+| [C(a: 9), C(a: 8), C(a: 3)]

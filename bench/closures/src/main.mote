@@ -1,0 +1,14 @@
+fn apply(f: (Int) -> Int, n: Int) -> Int {
+    var total = 0
+    var i = 0
+    while i < n {
+        total += f(i)
+        i += 1
+    }
+    return total
+}
+
+fn main() {
+    let k = 3
+    println(apply(|x| x * k + 1, 200000000))
+}

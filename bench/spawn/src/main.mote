@@ -1,0 +1,20 @@
+import { Task } from std.task
+
+fn main() {
+    var total = 0
+    var round = 0
+    while round < 20 {
+        var tasks: List<Task<Int>> = List.new()
+        var i = 0
+        while i < 5000 {
+            let n = i
+            tasks.push(spawn { return n * 2 })
+            i += 1
+        }
+        for task in tasks {
+            total += task.await().unwrap()
+        }
+        round += 1
+    }
+    println(total)
+}

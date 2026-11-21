@@ -1,0 +1,33 @@
+// How a process ended, and what it wrote.
+
+/// How a process ended: an exit code, or the signal that ended it.
+pub struct Status {
+    pub raw: Int
+
+    /// The exit code, or null when a signal ended the process.
+    pub fn code(self) -> Int? { return if self.raw < 256 { self.raw } else { null } }
+
+    /// The number of the signal that ended the process, or null.
+    pub fn signal(self) -> Int? { return if self.raw >= 256 { self.raw - 256 } else { null } }
+
+    /// Whether the process exited with code 0.
+    pub fn success(self) -> Bool { return self.raw == 0 }
+
+    pub fn to_string(self) -> String {
+        if self.raw < 256 { return "exit code ${self.raw}" }
+        return "signal ${self.raw - 256}"
+    }
+}
+
+/// What a finished process wrote.
+pub class Output {
+    pub status: Status
+    pub stdout: [UInt8]
+    pub stderr: [UInt8]
+
+    /// Standard output as text, or null when it is not UTF-8.
+    pub fn stdout_string(self) -> String? { return String.from_bytes(self.stdout) }
+
+    /// Standard error as text, or null when it is not UTF-8.
+    pub fn stderr_string(self) -> String? { return String.from_bytes(self.stderr) }
+}

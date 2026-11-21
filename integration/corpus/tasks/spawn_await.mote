@@ -1,0 +1,16 @@
+fn double(n: Int) -> Int {
+    return n * 2
+}
+
+fn main() {
+    let a = spawn { return 6 * 7 }
+    let b = spawn double(8)
+    let base = 10
+    let word = "ab"
+    let c = spawn { return base + word.len() }
+    println(a.await().unwrap())
+    println(b.await().unwrap())
+    println(c.await().unwrap())
+    println(a.await().unwrap())
+    println(a.is_ready())
+}

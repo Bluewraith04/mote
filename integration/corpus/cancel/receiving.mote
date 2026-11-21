@@ -1,0 +1,24 @@
+import { Channel } from std.sync
+
+struct Res {
+    var id: Int
+
+    fn close(self) {
+        println("closed ${self.id}")
+    }
+}
+
+fn main() {
+    let (tx, rx) = Channel<Int>(1)
+    let (ready_tx, ready_rx) = Channel<Int>(1)
+    let h = spawn {
+        with r = Res { id: 7 } {
+            ready_tx.send(1)
+            return rx.recv()
+        }
+    }
+    ready_rx.recv()
+    h.cancel()
+    println(h.await().is_err())
+    tx.close()
+}

@@ -1,0 +1,97 @@
+import { assert, assert_eq } from std.test
+import { Random } from random
+import { Uuid } from uuid
+
+test "text parses and prints back in lowercase" {
+    let id = Uuid.parse("F81D4FAE-7DEC-11D0-A765-00A0C91E6BF6")!
+    assert_eq(id.to_string(), "f81d4fae-7dec-11d0-a765-00a0c91e6bf6")
+    assert_eq(id.to_simple(), "f81d4fae7dec11d0a76500a0c91e6bf6")
+    assert_eq(Uuid.parse("f81d4fae7dec11d0a76500a0c91e6bf6")!, id)
+    assert_eq(id.version(), 1)
+}
+
+test "bad text is an error" {
+    assert(Uuid.parse("").is_err(), "empty")
+    assert(Uuid.parse("f81d4fae-7dec-11d0-a765-00a0c91e6bf").is_err(), "short")
+    assert(Uuid.parse("f81d4fae_7dec_11d0_a765_00a0c91e6bf6").is_err(), "hyphens")
+    assert(Uuid.parse("g81d4fae-7dec-11d0-a765-00a0c91e6bf6").is_err(), "digit")
+}
+
+test "bytes round trip" {
+    let id = Uuid.parse("00112233-4455-6677-8899-aabbccddeeff")!
+    let bytes = id.bytes()
+    assert_eq(bytes.len(), 16)
+    assert_eq(bytes[0] as Int, 0)
+    assert_eq(bytes[8] as Int, 0x88)
+    assert_eq(bytes[15] as Int, 255)
+    assert_eq(Uuid.from_bytes(bytes)!, id)
+    assert(Uuid.from_bytes([1, 2, 3]).is_err(), "length")
+}
+
+test "nil is all zeros" {
+    let nil = Uuid.nil()
+    assert_eq(nil.to_string(), "00000000-0000-0000-0000-000000000000")
+    assert(nil.is_nil(), "nil")
+    assert(!Uuid.parse("00000000-0000-0000-0000-000000000001")!.is_nil(), "not nil")
+}
+
+test "version 4 sets the version and the variant" {
+    var random = Random.seeded(5)
+    for _ in 0..50 {
+        let id = Uuid.v4_from(random)
+        assert_eq(id.version(), 4)
+        let text = id.to_string()
+        assert_eq(text.slice(14, 15), "4")
+        assert("89ab".contains(text.slice(19, 20)), "variant")
+        assert_eq(Uuid.parse(text)!, id)
+    }
+}
+
+test "a seed repeats the identifier" {
+    assert_eq(Uuid.v4_from(Random.seeded(9)), Uuid.v4_from(Random.seeded(9)))
+    assert(Uuid.v4_from(Random.seeded(9)) != Uuid.v4_from(Random.seeded(10)), "differs")
+}
+
+test "the system source gives distinct identifiers" {
+    let a = Uuid.v4()!
+    let b = Uuid.v4()!
+    assert(a != b, "distinct")
+    assert_eq(a.version(), 4)
+}
+
+test "version 7 carries the time and sorts by it" {
+    var random = Random.seeded(3)
+    let early = Uuid.v7_from(1700000000000, random)!
+    let late = Uuid.v7_from(1700000000001, random)!
+    assert_eq(early.version(), 7)
+    assert_eq(early.unix_millis()!, 1700000000000)
+    assert_eq(late.unix_millis()!, 1700000000001)
+    assert(early.compare(late) < 0, "order")
+    assert(early.to_string().starts_with("018bcfe5-6800-7"), "text")
+    assert(Uuid.v4_from(random).unix_millis() == null, "version 4 has no time")
+    assert(Uuid.v7_from(-1, random).is_err(), "negative")
+    assert(Uuid.v7_from(281474976710656, random).is_err(), "too large")
+    assert_eq(Uuid.v7(1700000000000)!.unix_millis()!, 1700000000000)
+}
+
+test "identifiers order as their bytes do" {
+    let low = Uuid.parse("00000000-0000-0000-0000-ffffffffffff")!
+    let high = Uuid.parse("00000000-0000-0001-0000-000000000000")!
+    let top = Uuid.parse("ffffffff-ffff-ffff-ffff-ffffffffffff")!
+    assert(low.compare(high) < 0, "low high")
+    assert(high.compare(top) < 0, "high top")
+    assert(top.compare(low) > 0, "top low")
+    assert_eq(top.compare(top), 0)
+}
+
+test "base64 is 22 url-safe characters" {
+    let id = Uuid.parse("00112233-4455-6677-8899-aabbccddeeff")!
+    assert_eq(id.to_base64(), "ABEiM0RVZneImaq7zN3u_w")
+    assert_eq(Uuid.from_base64("ABEiM0RVZneImaq7zN3u_w")!, id)
+    assert(Uuid.from_base64("AAAA").is_err(), "short")
+}
+
+test "display writes the text" {
+    let id = Uuid.parse("00112233-4455-6677-8899-aabbccddeeff")!
+    assert_eq("${id}", "00112233-4455-6677-8899-aabbccddeeff")
+}

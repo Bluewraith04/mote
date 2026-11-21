@@ -1,0 +1,8 @@
+fn shl(a: Int, by: Int) -> Int {
+    return a << by
+}
+
+fn main() {
+    println(shl(1, 63))
+    println(shl(1, 64))
+}

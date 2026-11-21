@@ -1,0 +1,57 @@
+ended Returned
+| 20
+| false
+| true
+| Hello, Wörld! ßeta!?
+| Hello
+| W
+| Wö
+| 0
+| HeLLo, WörLd! ßeta
+| Hello, Wörld! ßeta
+| Hello, ! ßeta
+| Hello, Wörld! ßeta
+| HELLO, WÖRLD! SSETA
+| hello, wörld! ßeta
+| padded|
+| 0
+| ababab
+| 0
+| 0
+| true
+| false
+| true
+| false
+| true
+| false
+| true
+| 2
+| 11
+| 8
+| none
+| none
+| 0
+| 20
+| 0
+| 4: [a] [b] [] [c]
+| 5: [a] [b] [] [c] []
+| 2: [] [a]
+| 3: [a] [b] [c]
+| 3: [h] [é] [y]
+| 0:
+| 1: []
+| 1: [no separator]
+| 3: [a] [b] [c]
+| 104
+| 195
+| 169
+| 111
+| a + b + c
+| 0
+| 3: [one] [two] [three]
+| true
+| false
+| 007
+| true
+| true
+| true

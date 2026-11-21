@@ -1,0 +1,14 @@
+import { Channel } from std.sync
+
+fn main() {
+    let (atx, arx) = Channel<Int>(0)
+    let (btx, brx) = Channel<Int>(0)
+    let h = spawn {
+        let got = arx.recv()!
+        btx.send(got)
+        return got
+    }
+    let back = brx.recv()!
+    atx.send(back)
+    println(h.await().unwrap())
+}

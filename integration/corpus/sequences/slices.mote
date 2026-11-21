@@ -1,0 +1,53 @@
+fn total(xs: [Int]) -> Int {
+    var sum = 0
+    for x in xs {
+        sum += x
+    }
+    return sum
+}
+
+fn show(xs: List<Int>) {
+    var i = 0
+    var line = ""
+    while i < xs.len() {
+        line = line + "${xs[i]} "
+        i += 1
+    }
+    println(line)
+}
+
+fn main() {
+    let xs: [Int] = [1, 2, 3, 4, 5, 6, 7, 8]
+    println(total(xs[2..5]))
+    println(total(xs[2..=5]))
+    println(total(xs[..3]))
+    println(total(xs[5..]))
+    println(total(xs[..]))
+    println(total(xs[1..8..3]))
+    println(total(xs[0..0]))
+    let fixed: [Int; 4] = [10, 20, 30, 40]
+    println(total(fixed[1..3]))
+    var list: List<Int> = List.new()
+    var i = 0
+    while i < 10 {
+        list.push(i)
+        i += 1
+    }
+    show(list[3..6])
+    show(list[..2])
+    show(list[7..])
+    show(list[0..10..4])
+    list[2..4] = [20, 30]
+    show(list)
+    list[5..8] = 0
+    show(list)
+    list[0..0] = []
+    show(list)
+    list[..] = list
+    show(list)
+    let text = "hello, wörld"
+    println(text[0..5])
+    println(text[7..])
+    println(text[..=4])
+    println(text[7..10])
+}

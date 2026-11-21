@@ -1,0 +1,19 @@
+start
+test "abs, min and max"
+passed
+test "to_string is the shortest text that reads back"
+passed
+test "nan and infinity are detected"
+passed
+test "from converts between Int, Float and Float32"
+passed
+test "compare orders floats"
+passed
+test "rounding functions"
+passed
+test "powers, roots and logarithms"
+passed
+test "trigonometry"
+passed
+test "constants"
+passed

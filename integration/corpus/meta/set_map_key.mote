@@ -1,0 +1,9 @@
+import { Dyn } from std.meta
+
+fn main() {
+    var ages: Map<String, Int> = Map()
+    ages.set("ann", 31)
+    let d = Dyn.of(ages)
+    d.set(0, Dyn.of("bo"))
+    println("unreachable")
+}

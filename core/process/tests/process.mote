@@ -1,0 +1,130 @@
+import { assert, assert_eq } from std.test
+import { Task } from std.task
+import { Child, Command, Stdio, command } from process
+
+fn text_of(bytes: [UInt8]) -> String {
+    return String.from_bytes(bytes)!
+}
+
+fn shell(script: String) -> Command {
+    return command("/bin/sh").arg("-c").arg(script)
+}
+
+test "a program's output and status are collected" {
+    let out = command("echo").arg("hello").arg("world").output()!
+    assert(out.status.success(), "success")
+    assert_eq(out.stdout_string()!, "hello world\n")
+    assert_eq(out.stderr.len(), 0)
+    assert_eq(out.status.code()!, 0)
+    assert(out.status.signal() == null, "no signal")
+}
+
+test "an exit code is reported" {
+    let status = shell("exit 3").output()!.status
+    assert(!status.success(), "failure")
+    assert_eq(status.code()!, 3)
+    assert_eq(status.to_string(), "exit code 3")
+}
+
+test "standard error is collected apart, or merged into standard output" {
+    let out = shell("echo out; echo err 1>&2").output()!
+    assert_eq(out.stdout_string()!, "out\n")
+    assert_eq(out.stderr_string()!, "err\n")
+    let child = shell("echo out; echo err 1>&2").with_stdout(Stdio.Piped).with_stderr(Stdio.Merged).start()!
+    let all = text_of(child.read_all()!)
+    assert(all.contains("out\n"), "out")
+    assert(all.contains("err\n"), "err")
+    child.wait()!
+    child.close()!
+}
+
+test "input is written to a child and its end closed" {
+    let child = command("cat").with_stdin(Stdio.Piped).with_stdout(Stdio.Piped).start()!
+    child.write_string("first\n")!
+    child.write_string("second\n")!
+    child.close_stdin()!
+    assert_eq(text_of(child.read_all()!), "first\nsecond\n")
+    assert(child.wait()!.success(), "cat ended")
+    assert(child.close_stdin().is_err(), "closed twice")
+    child.close()!
+}
+
+test "output_with feeds input while reading a large answer" {
+    let big = "x".repeat(600000)
+    let out = command("cat").output_with(big.bytes())!
+    assert_eq(out.stdout.len(), 600000)
+    assert(out.status.success(), "success")
+}
+
+test "a large output is read whole" {
+    let out = shell("head -c 1000000 /dev/zero").output()!
+    assert_eq(out.stdout.len(), 1000000)
+}
+
+test "the environment is inherited, extended, replaced and cleared" {
+    let own = shell("echo $HOME").output()!.stdout_string()!
+    assert(own.len() > 1, "HOME is inherited")
+    let added = shell("echo $MOTE_PROCESS_TEST:$HOME").set_env("MOTE_PROCESS_TEST", "one").set_env("MOTE_PROCESS_TEST", "two").output()!.stdout_string()!
+    assert_eq(added, "two:" + own)
+    let cleared = command("/usr/bin/env").set_env("ONLY", "this").without_inherited_env().output()!.stdout_string()!
+    assert_eq(cleared, "ONLY=this\n")
+}
+
+test "the working directory can be set" {
+    let out = command("pwd").in_dir("/tmp").output()!
+    assert_eq(out.stdout_string()!, "/tmp\n")
+    assert(command("pwd").in_dir("/no/such/dir").output().is_err(), "a missing directory")
+}
+
+test "a program that is not there is an error" {
+    let missing = command("/no/such/program").start()
+    assert(missing.is_err(), "missing")
+    let error = command("mote-no-such-program-anywhere").output()
+    assert(error.is_err(), "not on PATH")
+    assert(command("").start().is_err(), "empty name")
+}
+
+test "a running child is polled, killed and waited for" {
+    let child = command("sleep").arg("30").start()!
+    assert(child.try_wait()! == null, "still running")
+    child.kill()!
+    let status = child.wait()!
+    assert_eq(status.signal()!, 9)
+    assert(status.code() == null, "no code")
+    assert_eq(child.wait()!.raw, status.raw)
+    assert(child.try_wait()! != null, "known after the wait")
+    child.kill()!
+    child.close()!
+}
+
+test "a stream that is not a pipe cannot be used" {
+    let child = command("true").with_stdout(Stdio.Null).start()!
+    assert(child.read(10).is_err(), "no pipe")
+    assert(child.write_string("x").is_err(), "no input pipe")
+    child.wait()!
+    assert(command("true").with_stdout(Stdio.Merged).start().is_err(), "merged output")
+    child.close()!
+}
+
+test "a write to a child that has gone is an error and not a crash" {
+    let child = command("true").with_stdin(Stdio.Piped).start()!
+    child.wait()!
+    let big: [UInt8] = [0; 200000]
+    assert(child.write(big).is_err(), "broken pipe")
+    child.close()!
+}
+
+test "many children run at the same time while their tasks wait" {
+    var tasks: List<Task<Int>> = []
+    for n in 0..24 {
+        tasks.push(spawn {
+            let out = shell("sleep 0.2; echo ${n}").output()!
+            return out.stdout_string()!.trim().len()
+        })
+    }
+    var total = 0
+    for task in tasks {
+        total = total + task.await()!
+    }
+    assert(total >= 24, "all answered")
+}

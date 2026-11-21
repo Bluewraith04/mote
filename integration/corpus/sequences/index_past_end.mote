@@ -1,0 +1,7 @@
+fn main() {
+    let xs: [Int] = [1, 2, 3]
+    println(xs[2])
+    var i = 2
+    i += 1
+    println(xs[i])
+}

@@ -1,0 +1,33 @@
+// Compressing and decompressing a whole buffer.
+import { Decoder, Encoder, Format } from .stream
+
+
+/// The bytes compressed into one stream.
+pub fn compress(format: Format, data: [UInt8], level: Int = 6) -> Result<[UInt8], Error> {
+    let encoder = Encoder.new(format, level)?
+    let body = encoder.push(data)?
+    let tail = encoder.finish()?
+    encoder.close()?
+    return Ok(join(body, tail))
+}
+
+/// The bytes of one compressed stream; an `Err` for corrupt or cut data, or output over `limit` bytes (-1 for no limit).
+pub fn decompress(format: Format, data: [UInt8], limit: Int = -1) -> Result<[UInt8], Error> {
+    let decoder = Decoder.new(format, limit)
+    let body = decoder.push(data)
+    if body.is_err() {
+        decoder.close()?
+        return body
+    }
+    let tail = decoder.finish()
+    decoder.close()?
+    return Ok(join(body!, tail?))
+}
+
+fn join(parts: [UInt8], more: [UInt8]) -> [UInt8] {
+    var out: [UInt8] = [0; parts.len() + more.len()]
+    for at in 0..parts.len() { out[at] = parts[at] }
+    for at in 0..more.len() { out[parts.len() + at] = more[at] }
+    return out
+}
+

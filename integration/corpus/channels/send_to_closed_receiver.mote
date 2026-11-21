@@ -1,0 +1,10 @@
+import { Channel } from std.sync
+
+fn main() {
+    let (tx, rx) = Channel<Int>(1)
+    rx.close()
+    println(tx.try_send(1))
+    println(rx.is_closed())
+    tx.send(2)
+    println("unreached")
+}

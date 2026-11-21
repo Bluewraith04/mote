@@ -1,0 +1,35 @@
+// The details of a field beyond its name and type.
+
+/// What the fields do not say: a short name, help text, a default and whether the field is positional. Made with `flag(field)`.
+pub struct Flag {
+    pub name: String
+    pub short_name: String
+    pub help_text: String
+    pub default_text: String?
+    pub is_positional: Bool
+
+    /// The one-letter name, used as `-p`.
+    pub fn short(self, letter: String) -> Flag {
+        return Flag { name: self.name, short_name: letter, help_text: self.help_text, default_text: self.default_text, is_positional: self.is_positional }
+    }
+
+    /// The help line; it replaces the `///` doc of the field.
+    pub fn help(self, text: String) -> Flag {
+        return Flag { name: self.name, short_name: self.short_name, help_text: text, default_text: self.default_text, is_positional: self.is_positional }
+    }
+
+    /// The value, as text, when the flag is not given.
+    pub fn default_to(self, text: String) -> Flag {
+        return Flag { name: self.name, short_name: self.short_name, help_text: self.help_text, default_text: text, is_positional: self.is_positional }
+    }
+
+    /// The field is read from the words that are not flags, in order of the fields.
+    pub fn positional(self) -> Flag {
+        return Flag { name: self.name, short_name: self.short_name, help_text: self.help_text, default_text: self.default_text, is_positional: true }
+    }
+}
+
+/// The details of the field with a name.
+pub fn flag(field: String) -> Flag {
+    return Flag { name: field, short_name: "", help_text: "", default_text: null, is_positional: false }
+}

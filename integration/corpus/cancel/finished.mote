@@ -1,0 +1,23 @@
+import { sleep } from std.task
+
+struct Res {
+    var id: Int
+
+    fn close(self) {
+        println("closed ${self.id}")
+    }
+}
+
+fn main() {
+    let h = spawn {
+        with r = Res { id: 1 } {
+            let n = 1
+        }
+        sleep(1000)
+        return 1
+    }
+    sleep(30)
+    h.cancel()
+    println(h.await().is_err())
+    println("end")
+}

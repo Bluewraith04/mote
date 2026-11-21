@@ -1,0 +1,68 @@
+class Node {
+    var value: Int
+    var next: Node?
+    var tags: List<String>
+}
+
+class Holder {
+    var items: List<Int>
+    var label: String
+}
+
+fn main() {
+    var original: List<List<Int>> = [[1, 2], [3]]
+    var copy = original.deep_clone()
+    copy[0].push(9)
+    println(original[0].len())
+    println(copy[0].len())
+    var shallow = original.clone()
+    shallow[1].push(4)
+    println(original[1].len())
+
+    let holders: List<Holder> = [Holder { items: [1, 2, 3], label: "b" }]
+    var moved = holders.deep_clone()
+    moved[0].items.push(4)
+    moved[0].label = "c"
+    println(holders[0].items.len())
+    println(moved[0].items.len())
+    println(holders[0].label)
+    println(moved[0].label)
+
+    let tail = Node { value: 2, next: null, tags: ["t"] }
+    let head = Node { value: 1, next: tail, tags: ["h", "i"] }
+    let nodes: List<Node> = [head, tail]
+    var twins = nodes.deep_clone()
+    twins[0].value = 10
+    twins[0].tags.push("j")
+    println(head.value)
+    println(twins[0].value)
+    println(head.tags.len())
+    println(twins[0].tags.len())
+    println(twins[0].next!.value)
+    println(twins[0].next! == twins[1])
+    println(twins[0].next! == tail)
+    twins[1].value = 20
+    println(tail.value)
+    println(twins[0].next!.value)
+
+    var cycle = Node { value: 7, next: null, tags: [] }
+    cycle.next = cycle
+    let ring: List<Node> = [cycle]
+    let round = ring.deep_clone()
+    println(round[0].next!.value)
+    println(round[0].next! == round[0])
+    println(round[0] == cycle)
+
+    let numbers: [Int] = [1, 2, 3]
+    var more = numbers.deep_clone()
+    more.set(0, 100)
+    println(numbers.get(0))
+    println(more.get(0))
+    let pairs: List<(Int, List<Int>)> = [(1, [2]), (3, [4, 5])]
+    var again = pairs.deep_clone()
+    again[1].1.push(6)
+    println(pairs[1].1.len())
+    println(again[1].1.len())
+    let maybe: List<Int?> = [1, null]
+    println(maybe.deep_clone().len())
+}

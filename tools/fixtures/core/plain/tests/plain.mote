@@ -1,0 +1,6 @@
+import { assert_eq } from std.test
+import { twice } from plain
+
+test "twice doubles" {
+    assert_eq(twice(4), 8)
+}

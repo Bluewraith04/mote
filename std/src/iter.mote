@@ -1,0 +1,137 @@
+// Functions over lists; each returns a new list unless noted.
+import std.traits as traits
+
+pub fn range(n: Int) -> List<Int> {
+    var out: List<Int> = []
+    for i in 0..n { out.push(i) }
+    return out
+}
+
+pub fn map<T, U>(xs: List<T>, change: (T) -> U) -> List<U> {
+    var out: List<U> = []
+    for x in xs { out.push(change(x)) }
+    return out
+}
+
+pub fn flat_map<T, U>(xs: List<T>, change: (T) -> List<U>) -> List<U> {
+    var out: List<U> = []
+    for x in xs {
+        for y in change(x) { out.push(y) }
+    }
+    return out
+}
+
+pub fn filter<T>(xs: List<T>, keep: (T) -> Bool) -> List<T> {
+    var out: List<T> = []
+    for x in xs {
+        if keep(x) { out.push(x) }
+    }
+    return out
+}
+
+pub fn find<T>(xs: List<T>, test: (T) -> Bool) -> T? {
+    for x in xs {
+        if test(x) { return Some(x) }
+    }
+    return None
+}
+
+pub fn find_index<T>(xs: List<T>, test: (T) -> Bool) -> Int? {
+    var i = 0
+    while i < xs.len() {
+        if test(xs[i]) { return Some(i) }
+        i += 1
+    }
+    return None
+}
+
+pub fn any<T>(xs: List<T>, test: (T) -> Bool) -> Bool {
+    for x in xs {
+        if test(x) { return true }
+    }
+    return false
+}
+
+pub fn all<T>(xs: List<T>, test: (T) -> Bool) -> Bool {
+    for x in xs {
+        if !test(x) { return false }
+    }
+    return true
+}
+
+pub fn fold<T, A>(xs: List<T>, start: A, step: (A, T) -> A) -> A {
+    var total = start
+    for x in xs { total = step(total, x) }
+    return total
+}
+
+pub fn sum(xs: List<Int>) -> Int {
+    var total = 0
+    for x in xs { total += x }
+    return total
+}
+
+pub fn reverse<T>(xs: List<T>) -> List<T> {
+    var out: List<T> = []
+    var i = xs.len() - 1
+    while i >= 0 {
+        out.push(xs[i])
+        i -= 1
+    }
+    return out
+}
+
+pub fn take<T>(xs: List<T>, n: Int) -> List<T> {
+    if n >= xs.len() { return xs.clone() }
+    return xs.slice(0, n)
+}
+
+pub fn enumerate<T>(xs: List<T>) -> List<(Int, T)> {
+    var out: List<(Int, T)> = []
+    var i = 0
+    while i < xs.len() {
+        out.push((i, xs[i]))
+        i += 1
+    }
+    return out
+}
+
+pub fn contains<T: traits.Eq>(xs: List<T>, value: T) -> Bool {
+    for x in xs {
+        if x == value { return true }
+    }
+    return false
+}
+
+pub fn sort_by<T>(xs: List<T>, less: (T, T) -> Bool) -> List<T> {
+    let n = xs.len()
+    if n < 2 { return xs.clone() }
+    let mid = n / 2
+    let left = sort_by(xs.slice(0, mid), less)
+    let right = sort_by(xs.slice(mid, n), less)
+    var out: List<T> = []
+    var i = 0
+    var j = 0
+    while i < left.len() && j < right.len() {
+        if less(right[j], left[i]) {
+            out.push(right[j])
+            j += 1
+        } else {
+            out.push(left[i])
+            i += 1
+        }
+    }
+    while i < left.len() {
+        out.push(left[i])
+        i += 1
+    }
+    while j < right.len() {
+        out.push(right[j])
+        j += 1
+    }
+    return out
+}
+
+pub fn sort<T: traits.Ord>(xs: List<T>) -> List<T> {
+    return sort_by(xs, |a, b| a.compare(b) < 0)
+}

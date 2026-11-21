@@ -1,0 +1,24 @@
+fn main() {
+    let a: Int8 = -128
+    let b: UInt8 = 255
+    let c: Int16 = -32768
+    let d: UInt16 = 65535
+    let e: Int32 = -2147483648
+    let f: UInt32 = 4294967295
+    let g: Int = -9223372036854775807 - 1
+    let h: UInt64 = 18446744073709551615
+    println("${a} ${b} ${c} ${d}")
+    println("${e} ${f}")
+    println("${g}")
+    println("${h}")
+    let small: Float32 = 0.1
+    let third: Float32 = 1.0 / 3.0
+    println("${small} ${third}")
+    println("${1.0} ${2.5} ${-0.5} ${1.0 / 3.0}")
+    println("${1e21} ${1e-7} ${123456789.125}")
+    println("${true} ${false} ${1 < 2}")
+    let name = "mote"
+    println("${name}:${name.len()}:${name.to_upper()}")
+    println("${1 + 2} and ${"nested ${name}"}")
+    println("" + "${""}" + "x")
+}

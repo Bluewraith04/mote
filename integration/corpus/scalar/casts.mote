@@ -1,0 +1,60 @@
+fn to_int(x: Float) -> Int {
+    return x as Int
+}
+
+fn to_u8(x: Float) -> UInt8 {
+    return x as UInt8
+}
+
+fn to_i8(x: Float) -> Int8 {
+    return x as Int8
+}
+
+fn to_u64(x: Float) -> UInt64 {
+    return x as UInt64
+}
+
+fn wrap_u8(x: Int) -> UInt8 {
+    return x as UInt8
+}
+
+fn wrap_i8(x: Int) -> Int8 {
+    return x as Int8
+}
+
+fn widen(x: Int8) -> Int {
+    return x as Int
+}
+
+fn widen_u(x: UInt8) -> Int {
+    return x as Int
+}
+
+fn to_float(x: Int) -> Float {
+    return x as Float
+}
+
+fn single(x: Int) -> Float32 {
+    return x as Float32
+}
+
+fn main() {
+    println(to_int(3.99))
+    println(to_int(-3.99))
+    println(to_int(1.0e30))
+    println(to_int(-1.0e30))
+    println(to_int(0.0 / 0.0))
+    println(to_u8(300.5))
+    println(to_u8(-5.0))
+    println(to_i8(200.0))
+    println(to_i8(-200.0))
+    println(to_u64(1.0e30))
+    println(wrap_u8(300))
+    println(wrap_u8(-1))
+    println(wrap_i8(200))
+    println(widen(-5))
+    println(widen_u(250))
+    println(to_float(9007199254740993))
+    println(single(16777217))
+    println(true as Int)
+}

@@ -1,0 +1,82 @@
+// The functions of the native library `net`.
+
+@blocking
+@link("net")
+pub native fn net_connect(host: String, port: Int, timeout_ms: Int) -> Int
+
+@blocking
+@link("net")
+pub native fn net_listen(host: String, port: Int, backlog: Int) -> Int
+
+@blocking
+@link("net")
+pub native fn net_udp_bind(host: String, port: Int) -> Int
+
+@blocking
+@link("net")
+pub native fn net_accept(fd: Int, timeout_ms: Int) -> Int
+
+@blocking
+@link("net")
+pub native fn net_read(fd: Int, buffer: [UInt8], timeout_ms: Int) -> Int
+
+@blocking
+@link("net")
+pub native fn net_write(fd: Int, buffer: [UInt8], count: Int, timeout_ms: Int) -> Int
+
+@blocking
+@link("net")
+pub native fn net_udp_send(fd: Int, host: String, port: Int, buffer: [UInt8], count: Int) -> Int
+
+@blocking
+@link("net")
+pub native fn net_udp_recv(fd: Int, buffer: [UInt8], timeout_ms: Int, peer: [UInt8], sender: [Int]) -> Int
+
+@link("net")
+pub native fn net_shutdown(fd: Int, how: Int) -> Int
+
+@link("net")
+pub native fn net_close(fd: Int) -> Int
+
+@link("net")
+pub native fn net_address(fd: Int, peer: Int, buffer: [UInt8]) -> Int
+
+@link("net")
+pub native fn net_port(fd: Int) -> Int
+
+@link("nettls")
+pub native fn tls_client(host: String, roots: [UInt8]) -> Int
+
+@link("nettls")
+pub native fn tls_server(chain: [UInt8], key: [UInt8]) -> Int
+
+@link("nettls")
+pub native fn tls_incoming(session: Int, data: [UInt8]) -> Int
+
+@link("nettls")
+pub native fn tls_outgoing(session: Int, buffer: [UInt8]) -> Int
+
+@link("nettls")
+pub native fn tls_wants_read(session: Int) -> Int
+
+@link("nettls")
+pub native fn tls_wants_write(session: Int) -> Int
+
+@link("nettls")
+pub native fn tls_handshaking(session: Int) -> Int
+
+@link("nettls")
+pub native fn tls_plain_read(session: Int, buffer: [UInt8]) -> Int
+
+@link("nettls")
+pub native fn tls_plain_write(session: Int, data: [UInt8]) -> Int
+
+@link("nettls")
+pub native fn tls_send_close(session: Int) -> Int
+
+@link("nettls")
+pub native fn tls_message(session: Int, buffer: [UInt8]) -> Int
+
+@link("nettls")
+pub native fn tls_free(session: Int) -> Int
+

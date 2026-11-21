@@ -1,0 +1,19 @@
+// Calls of the native with a buffer for its answer.
+
+pub fn invalid(text: String) -> Error { return Error.new(ErrorKind.InvalidData, text) }
+
+// The text a native call puts in a buffer, asking again with a larger one when it did not fit; an `Err` when the call reports a mistake.
+pub fn call(run: ([UInt8]) -> Int) -> Result<String, Error> {
+    var buffer: [UInt8] = [0; 4096]
+    var result = run(buffer)
+    var size = if result >= 0 { result } else { -result - 1 }
+    if size > buffer.len() {
+        buffer = [0; size]
+        result = run(buffer)
+        size = if result >= 0 { result } else { -result - 1 }
+    }
+    let text = String.from_bytes(buffer.slice(0, size))
+    if text == null { return Err(invalid("toml: the result is not text")) }
+    if result < 0 { return Err(invalid("toml: " + text)) }
+    return Ok(text)
+}

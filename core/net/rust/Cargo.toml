@@ -1,0 +1,21 @@
+[package]
+name = "nettls"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[lib]
+crate-type = ["cdylib", "staticlib"]
+
+[dependencies]
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+webpki-roots = "1"
+
+[profile.release]
+opt-level = 2
+panic = "abort"
+lto = true
+codegen-units = 1
+strip = true
+
+[workspace]

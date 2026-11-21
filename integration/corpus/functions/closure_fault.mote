@@ -1,0 +1,7 @@
+fn main() {
+    let divide = |a: Int, b: Int| a / b
+    println(divide(10, 2))
+    var zero = 0
+    zero += 0
+    println(divide(1, zero))
+}

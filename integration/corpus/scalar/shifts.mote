@@ -1,0 +1,26 @@
+fn shl(a: Int, by: Int) -> Int {
+    return a << by
+}
+
+fn shr(a: Int, by: Int) -> Int {
+    return a >> by
+}
+
+fn shl8(a: Int8, by: Int8) -> Int8 {
+    return a << by
+}
+
+fn shr_u(a: UInt32, by: UInt32) -> UInt32 {
+    return a >> by
+}
+
+fn main() {
+    println(shl(1, 62))
+    println(shl(1, 63))
+    println(shr(-8, 1))
+    println(shr(-1, 63))
+    println(shl8(1, 7))
+    println(shl8(3, 6))
+    println(shr_u(4000000000, 31))
+    println(shr_u(4000000000, 0))
+}

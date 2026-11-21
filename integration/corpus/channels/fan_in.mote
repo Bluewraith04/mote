@@ -1,0 +1,27 @@
+import { Channel } from std.sync
+
+fn main() {
+    let (tx, rx) = Channel<Int>(2)
+    var i = 0
+    while i < 5 {
+        let mine = tx.clone()
+        let base = i
+        spawn {
+            var k = 0
+            while k < 4 {
+                mine.send(base * 10 + k)
+                k += 1
+            }
+        }
+        i += 1
+    }
+    tx.close()
+    var total = 0
+    var count = 0
+    for v in rx {
+        total += v
+        count += 1
+    }
+    println(total)
+    println(count)
+}

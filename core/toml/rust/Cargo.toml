@@ -1,0 +1,22 @@
+[package]
+name = "mote-toml"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[lib]
+name = "toml"
+crate-type = ["cdylib", "staticlib"]
+
+[dependencies]
+toml = { version = "1.1", features = ["preserve_order"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+
+[profile.release]
+opt-level = 2
+panic = "abort"
+lto = true
+codegen-units = 1
+strip = true
+
+[workspace]

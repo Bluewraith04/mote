@@ -1,0 +1,30 @@
+// One record: its level, logger, message and fields.
+import { Level } from .level
+
+// A value written as is, or in quotes when it is empty or holds a space, `=` or `"`.
+fn shown(value: String) -> String {
+    if value == "" || value.contains(" ") || value.contains("=") || value.contains("\"") {
+        return "\"" + value.replace("\"", "\\\"") + "\""
+    }
+    return value
+}
+
+pub class Record {
+    pub level: Level
+    pub logger: String
+    pub message: String
+    pub fields: List<(String, String)>
+
+    /// `LEVEL logger: message key=value`, without `logger: ` when the logger has no name.
+    pub fn format(self) -> String {
+        var line = self.level.to_string() + " "
+        if self.logger != "" {
+            line = line + self.logger + ": "
+        }
+        line = line + self.message
+        for (key, value) in self.fields {
+            line = line + " " + key + "=" + shown(value)
+        }
+        return line
+    }
+}

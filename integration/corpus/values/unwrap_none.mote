@@ -1,0 +1,12 @@
+fn half(n: Int) -> Int? {
+    if n % 2 != 0 {
+        return null
+    }
+    return n / 2
+}
+
+fn main() {
+    println(half(8)!)
+    println(half(7)!)
+    println(1)
+}

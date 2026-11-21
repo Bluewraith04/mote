@@ -1,0 +1,18 @@
+import { Channel } from std.sync
+
+fn main() {
+    let (tx, rx) = Channel<Int>(0)
+    let producer = spawn {
+        var n = 0
+        while n < 100000 {
+            tx.send(n)
+            n += 1
+        }
+    }
+    var sum = 0
+    for n in rx {
+        sum += n
+    }
+    println(sum)
+    println(producer.await().is_ok())
+}

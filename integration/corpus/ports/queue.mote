@@ -1,0 +1,19 @@
+// feed 0 10 1,2,3
+// feed 0 20 4,5
+// feed 0 30 6
+// close 0 40
+import { Port, PortMode } from std.port
+
+fn main() {
+    let (end, rx) = Port.open(PortMode.Queue(8))
+    var count = 0
+    var total = 0
+    for message in rx {
+        count += 1
+        total += message.len() as Int
+        println(message[0])
+    }
+    println(count)
+    println(total)
+    println(rx.is_closed())
+}

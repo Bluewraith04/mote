@@ -1,0 +1,360 @@
+// List, arrays, Map, Set, Range and Stream.
+
+import { fault } from std.option
+import { Key } from std.traits
+
+@intrinsic("list_new")
+native fn list_new<T>() -> List<T>
+@intrinsic("list_len")
+native fn list_len<T>(list: List<T>) -> Int
+@intrinsic("list_push")
+native fn list_push<T>(var list: List<T>, value: T)
+@intrinsic("list_pop")
+native fn list_pop<T>(var list: List<T>) -> T?
+@intrinsic("list_get")
+native fn list_get<T>(list: List<T>, index: Int) -> T
+@intrinsic("list_set")
+native fn list_set<T>(var list: List<T>, index: Int, value: T)
+@intrinsic("list_clear")
+native fn list_clear<T>(var list: List<T>)
+@intrinsic("list_contains")
+native fn list_contains<T>(list: List<T>, value: T) -> Bool
+@intrinsic("list_slice")
+native fn list_slice<T>(list: List<T>, start: Int, end: Int) -> List<T>
+@intrinsic("list_set_slice")
+native fn list_set_slice<T>(var list: List<T>, start: Int, end: Int, values: List<T>)
+@intrinsic("list_clone")
+native fn list_clone<T>(list: List<T>) -> List<T>
+@intrinsic("deep_clone")
+native fn deep_clone_of<T>(value: T) -> T
+@intrinsic("equal_of")
+native fn equal_of<T>(a: T, b: T) -> Bool
+@intrinsic("hash_of")
+native fn hash_of<K: Key>(key: K) -> Int
+@intrinsic("key_eq")
+native fn key_eq<K: Key>(a: K, b: K) -> Bool
+
+@lang("list")
+pub class List<T> {
+    pub fn new() -> List<T> { return list_new() }
+    pub fn len(self) -> Int { return list_len(self) }
+    pub fn is_empty(self) -> Bool { return list_len(self) == 0 }
+    pub fn push(var self, value: T) { list_push(self, value) }
+    pub fn pop(var self) -> T? { return list_pop(self) }
+    pub fn first(self) -> T? {
+        if list_len(self) == 0 { return None }
+        return Some(list_get(self, 0))
+    }
+    pub fn last(self) -> T? {
+        let n = list_len(self)
+        if n == 0 { return None }
+        return Some(list_get(self, n - 1))
+    }
+    pub fn get(self, index: Int) -> T { return list_get(self, index) }
+    pub fn get_or(self, index: Int, fallback: T) -> T {
+        if index < 0 || index >= list_len(self) { return fallback }
+        return list_get(self, index)
+    }
+    pub fn set(var self, index: Int, value: T) { list_set(self, index, value) }
+    pub fn contains(self, value: T) -> Bool { return list_contains(self, value) }
+    pub fn slice(self, start: Int, end: Int) -> List<T> { return list_slice(self, start, end) }
+    pub fn set_slice(var self, start: Int, end: Int, values: List<T>) { list_set_slice(self, start, end, values) }
+    pub fn clear(var self) { list_clear(self) }
+    pub fn clone(self) -> List<T> { return list_clone(self) }
+    pub fn deep_clone(self) -> List<T> { return deep_clone_of(self) }
+    pub fn to_array(self) -> [T] {
+        let count = list_len(self)
+        if count == 0 { return [] }
+        var out = [list_get(self, 0); count]
+        var i = 1
+        while i < count {
+            array_set(out, i, list_get(self, i))
+            i += 1
+        }
+        return out
+    }
+    pub fn stream(self) -> Stream<T> {
+        var i = 0
+        while i < list_len(self) {
+            yield list_get(self, i)
+            i += 1
+        }
+    }
+}
+
+@intrinsic("array_len")
+native fn array_len<T>(array: [T]) -> Int
+@intrinsic("array_get")
+native fn array_get<T>(array: [T], index: Int) -> T
+@intrinsic("array_set")
+native fn array_set<T>(var array: [T], index: Int, value: T)
+@intrinsic("array_contains")
+native fn array_contains<T>(array: [T], value: T) -> Bool
+@intrinsic("array_slice")
+native fn array_slice<T>(array: [T], start: Int, end: Int) -> [T]
+@intrinsic("array_clone")
+native fn array_clone<T>(array: [T]) -> [T]
+
+@lang("array")
+pub class Array<T> {
+    pub fn len(self) -> Int { return array_len(self) }
+    pub fn is_empty(self) -> Bool { return array_len(self) == 0 }
+    pub fn get(self, index: Int) -> T { return array_get(self, index) }
+    pub fn get_or(self, index: Int, fallback: T) -> T {
+        if index < 0 || index >= array_len(self) { return fallback }
+        return array_get(self, index)
+    }
+    pub fn set(var self, index: Int, value: T) { array_set(self, index, value) }
+    pub fn contains(self, value: T) -> Bool { return array_contains(self, value) }
+    pub fn slice(self, start: Int, end: Int) -> [T] { return array_slice(self, start, end) }
+    pub fn clone(self) -> [T] { return array_clone(self) }
+    pub fn deep_clone(self) -> [T] { return deep_clone_of(self) }
+    pub fn to_list(self) -> List<T> {
+        var out: List<T> = []
+        var i = 0
+        while i < array_len(self) {
+            list_push(out, array_get(self, i))
+            i += 1
+        }
+        return out
+    }
+}
+
+// Insertion-ordered open addressing. `held_keys`, `held_values` and `hashes` hold the entries in the order set; `hashes` is -1 once an entry is removed.
+// `slots` is a power-of-two table of entry positions, -1 when empty; a removed entry keeps its slot until the next rebuild.
+@lang("map")
+pub class Map<K: Key, V> {
+    var held_keys: List<K>
+    var held_values: List<V>
+    var hashes: List<Int>
+    var slots: [Int]
+    var count: Int
+
+    pub fn new() -> Map<K, V> { return Map<K, V> { held_keys: [], held_values: [], hashes: [], slots: [-1; 8], count: 0 } }
+    pub fn len(self) -> Int { return self.count }
+    pub fn is_empty(self) -> Bool { return self.count == 0 }
+
+    fn find(self, key: K, hash: Int) -> Int {
+        let mask = self.slots.len() - 1
+        var at = hash & mask
+        while true {
+            let entry = self.slots[at]
+            if entry == -1 { return -1 }
+            if self.hashes[entry] == hash && key_eq(self.held_keys[entry], key) { return entry }
+            at = (at + 1) & mask
+        }
+        return -1
+    }
+
+    fn place(var self, hash: Int, entry: Int) {
+        let mask = self.slots.len() - 1
+        var at = hash & mask
+        while self.slots[at] != -1 { at = (at + 1) & mask }
+        self.slots[at] = entry
+    }
+
+    fn rebuild(var self) {
+        var size = 8
+        while size * 3 < (self.count + 1) * 8 { size *= 2 }
+        var keys: List<K> = []
+        var values: List<V> = []
+        var hashes: List<Int> = []
+        for entry in 0..self.held_keys.len() {
+            if self.hashes[entry] == -1 { continue }
+            keys.push(self.held_keys[entry])
+            values.push(self.held_values[entry])
+            hashes.push(self.hashes[entry])
+        }
+        self.held_keys = keys
+        self.held_values = values
+        self.hashes = hashes
+        self.slots = [-1; size]
+        for entry in 0..hashes.len() { self.place(hashes[entry], entry) }
+    }
+
+    pub fn get(self, key: K) -> V {
+        let entry = self.find(key, hash_of(key))
+        if entry == -1 { return fault("missing key") }
+        return self.held_values[entry]
+    }
+
+    pub fn get_or(self, key: K, fallback: V) -> V {
+        let entry = self.find(key, hash_of(key))
+        if entry == -1 { return fallback }
+        return self.held_values[entry]
+    }
+
+    pub fn set(var self, key: K, value: V) {
+        let hash = hash_of(key)
+        let entry = self.find(key, hash)
+        if entry != -1 {
+            self.held_values[entry] = value
+            return
+        }
+        if (self.held_keys.len() + 1) * 4 > self.slots.len() * 3 { self.rebuild() }
+        self.held_keys.push(key)
+        self.held_values.push(value)
+        self.hashes.push(hash)
+        self.place(hash, self.held_keys.len() - 1)
+        self.count += 1
+    }
+
+    pub fn contains_key(self, key: K) -> Bool { return self.find(key, hash_of(key)) != -1 }
+
+    pub fn remove(var self, key: K) {
+        let entry = self.find(key, hash_of(key))
+        if entry == -1 { return }
+        self.hashes[entry] = -1
+        self.count -= 1
+    }
+
+    pub fn clear(var self) {
+        self.held_keys = []
+        self.held_values = []
+        self.hashes = []
+        self.slots = [-1; 8]
+        self.count = 0
+    }
+
+    pub fn keys(self) -> List<K> {
+        var result: List<K> = []
+        for entry in 0..self.held_keys.len() {
+            if self.hashes[entry] != -1 { result.push(self.held_keys[entry]) }
+        }
+        return result
+    }
+
+    pub fn values(self) -> List<V> {
+        var result: List<V> = []
+        for entry in 0..self.held_keys.len() {
+            if self.hashes[entry] != -1 { result.push(self.held_values[entry]) }
+        }
+        return result
+    }
+
+    pub fn items(self) -> List<(K, V)> {
+        var result: List<(K, V)> = []
+        for entry in 0..self.held_keys.len() {
+            if self.hashes[entry] != -1 { result.push((self.held_keys[entry], self.held_values[entry])) }
+        }
+        return result
+    }
+
+    pub fn equals(self, other: Map<K, V>) -> Bool {
+        if self.count != other.count { return false }
+        for entry in 0..self.held_keys.len() {
+            if self.hashes[entry] == -1 { continue }
+            let found = other.find(self.held_keys[entry], self.hashes[entry])
+            if found == -1 || !equal_of(self.held_values[entry], other.held_values[found]) { return false }
+        }
+        return true
+    }
+
+    pub fn clone(self) -> Map<K, V> {
+        return Map<K, V> { held_keys: self.held_keys.clone(), held_values: self.held_values.clone(), hashes: self.hashes.clone(), slots: self.slots.clone(), count: self.count }
+    }
+
+    pub fn deep_clone(self) -> Map<K, V> {
+        var result = Map<K, V>()
+        for entry in 0..self.held_keys.len() {
+            if self.hashes[entry] != -1 { result.set(deep_clone_of(self.held_keys[entry]), deep_clone_of(self.held_values[entry])) }
+        }
+        return result
+    }
+}
+
+// A `Map` whose values are all `Null`.
+@lang("set")
+pub class Set<T: Key> {
+    var members: Map<T, Null>
+
+    pub fn new() -> Set<T> { return Set<T> { members: Map<T, Null>() } }
+    pub fn len(self) -> Int { return self.members.len() }
+    pub fn is_empty(self) -> Bool { return self.members.is_empty() }
+    pub fn clear(var self) { self.members.clear() }
+    pub fn add(var self, value: T) { self.members.set(value, null) }
+    pub fn remove(var self, value: T) { self.members.remove(value) }
+    pub fn contains(self, value: T) -> Bool { return self.members.contains_key(value) }
+    pub fn items(self) -> List<T> { return self.members.keys() }
+    pub fn equals(self, other: Set<T>) -> Bool { return self.members.equals(other.members) }
+    pub fn clone(self) -> Set<T> { return Set<T> { members: self.members.clone() } }
+    pub fn deep_clone(self) -> Set<T> { return Set<T> { members: self.members.deep_clone() } }
+}
+
+pub fn set_from<T: Key>(items: List<T>) -> Set<T> {
+    var result: Set<T> = Set<T>()
+    for item in items { result.add(item) }
+    return result
+}
+
+pub fn union<T: Key>(a: Set<T>, b: Set<T>) -> Set<T> {
+    var result = a.clone()
+    for item in b.items() { result.add(item) }
+    return result
+}
+
+pub fn intersection<T: Key>(a: Set<T>, b: Set<T>) -> Set<T> {
+    var result: Set<T> = Set<T>()
+    for item in a.items() {
+        if b.contains(item) { result.add(item) }
+    }
+    return result
+}
+
+pub fn difference<T: Key>(a: Set<T>, b: Set<T>) -> Set<T> {
+    var result: Set<T> = Set<T>()
+    for item in a.items() {
+        if !b.contains(item) { result.add(item) }
+    }
+    return result
+}
+
+pub fn map_from<K: Key, V>(pairs: List<(K, V)>) -> Map<K, V> {
+    var result: Map<K, V> = Map<K, V>()
+    for (key, value) in pairs { result.set(key, value) }
+    return result
+}
+
+pub fn merge<K: Key, V>(a: Map<K, V>, b: Map<K, V>) -> Map<K, V> {
+    var result = a.clone()
+    for (key, value) in b.items() { result.set(key, value) }
+    return result
+}
+
+pub fn map_values<K: Key, V, U>(m: Map<K, V>, change: (V) -> U) -> Map<K, U> {
+    var result: Map<K, U> = Map<K, U>()
+    for (key, value) in m.items() { result.set(key, change(value)) }
+    return result
+}
+
+pub fn filter_keys<K: Key, V>(m: Map<K, V>, keep: (K) -> Bool) -> Map<K, V> {
+    var result: Map<K, V> = Map<K, V>()
+    for (key, value) in m.items() {
+        if keep(key) { result.set(key, value) }
+    }
+    return result
+}
+
+@lang("range")
+pub struct Range<T> {
+    pub start: T
+    pub end: T
+    pub inclusive: Bool
+}
+
+@intrinsic("stream_next")
+native fn stream_next<T>(var stream: Stream<T>) -> T?
+
+@lang("stream")
+pub class Stream<T> {
+    pub fn next(var self) -> T? { return stream_next(self) }
+    pub fn collect(var self) -> List<T> {
+        var result: List<T> = List<T>()
+        while true {
+            let item = stream_next(self)
+            if item == null { return result }
+            result.push(item)
+        }
+        return result
+    }
+}

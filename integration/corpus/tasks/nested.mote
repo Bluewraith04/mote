@@ -1,0 +1,21 @@
+fn leaf(n: Int) -> Int {
+    return n + 1
+}
+
+fn branch(depth: Int) -> Int {
+    if depth == 0 {
+        return 1
+    }
+    let left = spawn branch(depth - 1)
+    let right = spawn branch(depth - 1)
+    return left.await().unwrap() + right.await().unwrap()
+}
+
+fn main() {
+    println(branch(6))
+    let outer = spawn {
+        let inner = spawn leaf(41)
+        return inner.await().unwrap()
+    }
+    println(outer.await().unwrap())
+}

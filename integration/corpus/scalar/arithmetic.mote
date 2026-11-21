@@ -1,0 +1,19 @@
+fn main() {
+    let a = 17
+    let b = 5
+    println(a + b)
+    println(a - b)
+    println(a * b)
+    println(a / b)
+    println(a % b)
+    println(-a)
+    println(a << 2)
+    println(a >> 1)
+    println(a & b)
+    println(a | b)
+    println(a ^ b)
+    println(a > b)
+    println(a == b)
+    println(1.5 + 2.25)
+    println(7.0 / 2.0)
+}

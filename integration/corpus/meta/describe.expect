@@ -1,0 +1,24 @@
+ended Returned
+| Int
+| List<Int>
+| true
+| true
+| true
+| String
+| corpus.main.Point
+| A point on the plane.
+| x Int true true false
+| y Int false false true
+| bump true true true
+| peek false true false
+| Empty 0 false Nothing.
+| Circle 1 false 
+| Rect 2 true 
+| 1
+| 5
+| corpus.main.Pair<Int, String>
+| B
+| corpus.main.Point
+| List<String>
+| 2
+| list

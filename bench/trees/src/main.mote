@@ -1,0 +1,33 @@
+class Tree {
+    var left: Tree?
+    var right: Tree?
+}
+
+fn build(depth: Int) -> Tree {
+    if depth == 0 {
+        return Tree { left: null, right: null }
+    }
+    return Tree { left: build(depth - 1), right: build(depth - 1) }
+}
+
+fn count(tree: Tree) -> Int {
+    var total = 1
+    if tree.left != null {
+        total += count(tree.left!)
+    }
+    if tree.right != null {
+        total += count(tree.right!)
+    }
+    return total
+}
+
+fn main() {
+    let long_lived = build(20)
+    var total = 0
+    var round = 0
+    while round < 40 {
+        total += count(build(16))
+        round += 1
+    }
+    println(total + count(long_lived))
+}

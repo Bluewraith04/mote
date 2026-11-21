@@ -1,0 +1,28 @@
+ended Returned
+| add none
+| add ok -127
+| sub none
+| mul none
+| mul ok 127
+| neg none
+| neg ok -127
+| shl -128
+| shl big none
+| shr -1
+| shr neg none
+| uadd none
+| usub none
+| umul none
+| uneg 0
+| uneg2 none
+| add none
+| sub none
+| mul none
+| mul ok 9223372036854775807
+| neg none
+| shl 0
+| shl big none
+| uadd none
+| umul none
+| usub 0
+| uneg none

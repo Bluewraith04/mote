@@ -1,0 +1,39 @@
+fn sum_to(n: Int) -> Int {
+    var total = 0
+    var i = 1
+    while i <= n {
+        total += i
+        i += 1
+    }
+    return total
+}
+
+fn fib(n: Int) -> Int {
+    if n < 2 {
+        return n
+    }
+    return fib(n - 1) + fib(n - 2)
+}
+
+fn collatz(start: Int) -> Int {
+    var n = start
+    var steps = 0
+    while n != 1 {
+        if n % 2 == 0 {
+            n = n / 2
+        } else {
+            n = 3 * n + 1
+        }
+        steps += 1
+    }
+    return steps
+}
+
+fn main() {
+    println(sum_to(100))
+    println(fib(20))
+    println(collatz(27))
+    for k in 1..5 {
+        println(k * k)
+    }
+}

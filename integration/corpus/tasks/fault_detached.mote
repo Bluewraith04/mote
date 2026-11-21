@@ -1,0 +1,7 @@
+fn main() {
+    let zero = 0
+    let h = spawn { return 1 / zero }
+    while !h.is_ready() {
+    }
+    println("done")
+}

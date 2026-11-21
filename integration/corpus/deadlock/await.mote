@@ -1,0 +1,10 @@
+import { Channel } from std.sync
+
+fn main() {
+    let h = spawn {
+        let (tx, rx) = Channel<Int>(1)
+        return rx.recv()!
+    }
+    println("waiting")
+    println(h.await().unwrap())
+}

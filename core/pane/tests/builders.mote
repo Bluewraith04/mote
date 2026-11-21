@@ -1,0 +1,127 @@
+import { assert, assert_eq } from std.test
+import pane
+import { DrawKind, Event, KEY_ESCAPE, KEY_SPACE, Layout, Window } from pane
+
+class Counter {
+    var count: Int
+}
+
+fn bump(var s: Counter) { s.count += 1 }
+
+fn view(s: Counter) -> pane.Element {
+    return pane.vstack([
+        pane.button("-").on_click(|var s: Counter| { s.count -= 1 }),
+        pane.h1("${s.count}"),
+        pane.button("+").on_click(bump)
+    ]).grow().center().gap(16)
+}
+
+fn texts(shown: Layout) -> List<String> {
+    var found: List<String> = []
+    for each in shown.draws {
+        if each.kind == DrawKind.Text { found.push(each.text) }
+    }
+    return found
+}
+
+// A click at the middle of the nth area of a layout.
+fn click_on(window: Window, shown: Layout, at: Int) -> Bool {
+    let area = shown.areas.get(at)
+    return window.inject(Event.Click(null, area.x + area.w / 2, area.y + area.h / 2, 0))
+}
+
+test "builders a view of the state is laid out and shown" {
+    var window = Window.headless(400, 300)
+    let last = pane.App("Counter", Counter { count: 5 }, view).run_in(window)!
+    assert_eq(last.count, 5)
+    assert_eq(window.frames.len(), 1)
+    let shown = texts(window.frames.get(0))
+    assert_eq(shown.len(), 3)
+    assert_eq(shown.get(0), "-")
+    assert_eq(shown.get(1), "5")
+    assert_eq(shown.get(2), "+")
+}
+
+test "builders a click runs the handler of the element and the view is drawn again" {
+    var window = Window.headless(400, 300)
+    let first = pane.lay_out(view(Counter { count: 0 }), 400, 300)!
+    assert(click_on(window, first, 1), "queued")
+    assert(click_on(window, first, 1), "queued")
+    assert(click_on(window, first, 0), "queued")
+    let last = pane.App("Counter", Counter { count: 0 }, view).run_in(window)!
+    assert_eq(last.count, 1)
+    assert_eq(window.frames.len(), 4)
+    assert_eq(texts(window.frames.get(3)).get(1), "1")
+}
+
+test "builders a click outside every handler changes nothing" {
+    var window = Window.headless(400, 300)
+    assert(window.inject(Event.Click(null, 1, 1, 0)), "queued")
+    let last = pane.App("Counter", Counter { count: 3 }, view).run_in(window)!
+    assert_eq(last.count, 3)
+    assert_eq(window.frames.len(), 2)
+}
+
+test "builders keys run their handler and a quit key ends the run" {
+    var window = Window.headless(400, 300)
+    assert(window.inject(Event.Key(KEY_SPACE)), "queued")
+    assert(window.inject(Event.Key(KEY_ESCAPE)), "queued")
+    assert(window.inject(Event.Key(KEY_SPACE)), "queued")
+    let app = pane.App("Counter", Counter { count: 0 }, view).on_key(KEY_SPACE, |var s| { s.count += 10 }).quit_on(KEY_ESCAPE)
+    let last = app.run_in(window)!
+    assert_eq(last.count, 10)
+}
+
+test "builders closing the window ends the run" {
+    var window = Window.headless(400, 300)
+    assert(window.inject(Event.Close), "queued")
+    assert(window.inject(Event.Key(KEY_SPACE)), "queued")
+    let last = pane.App("Counter", Counter { count: 0 }, view).on_key(KEY_SPACE, bump).run_in(window)!
+    assert_eq(last.count, 0)
+}
+
+test "builders the run ends when the state is done" {
+    var window = Window.headless(400, 300)
+    assert(window.inject(Event.Key(KEY_SPACE)), "queued")
+    assert(window.inject(Event.Key(KEY_SPACE)), "queued")
+    assert(window.inject(Event.Key(KEY_SPACE)), "queued")
+    let last = pane.App("Counter", Counter { count: 0 }, view).on_key(KEY_SPACE, bump).quit_when(|s| s.count >= 2).run_in(window)!
+    assert_eq(last.count, 2)
+}
+
+test "builders modifiers set the attributes the layout reads" {
+    let shown = pane.lay_out(pane.box([pane.text("a")]).id("b").width(120).height(40).pad(4).bg(pane.ACCENT), 400, 300)!
+    let area = shown.area("b")!
+    assert_eq(area.w, 120)
+    assert_eq(area.h, 40)
+    assert(shown.draws.get(0).kind == DrawKind.Rect, "the box is painted first")
+    assert_eq(shown.draws.get(0).color, pane.ACCENT)
+}
+
+struct Tally {
+    var taps: Int
+}
+
+fn tap(var s: Tally) { s.taps += 1 }
+
+fn tally_view(s: Tally) -> pane.Element {
+    return pane.box([pane.text("${s.taps}")]).pad(8).on_click(tap)
+}
+
+test "builders a state that is a struct is changed by the handler" {
+    var window = Window.headless(200, 100)
+    let first = pane.lay_out(tally_view(Tally { taps: 0 }), 200, 100)!
+    assert(click_on(window, first, 0), "queued")
+    assert(click_on(window, first, 0), "queued")
+    let last = pane.App("Tally", Tally { taps: 0 }, tally_view).run_in(window)!
+    assert_eq(last.taps, 2)
+}
+
+test "builders grow and margin take the room asked for" {
+    let row = pane.hstack([pane.text("a").id("a"), pane.spacer(), pane.text("b").id("b").margin(10)]).width(300)
+    let shown = pane.lay_out(row, 400, 300)!
+    assert_eq(shown.area("a")!.x, 0)
+    assert_eq(shown.area("b")!.x + shown.area("b")!.w, 290)
+    let grown = pane.lay_out(pane.vstack([pane.text("t").id("t"), pane.box([]).id("fill").grow()]), 400, 300)!
+    assert_eq(grown.area("fill")!.h > 100, true)
+}

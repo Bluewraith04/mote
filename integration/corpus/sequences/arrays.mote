@@ -1,0 +1,63 @@
+struct Point {
+    x: Int
+    y: Int
+}
+
+fn total(xs: [Int]) -> Int {
+    var sum = 0
+    for x in xs {
+        sum += x
+    }
+    return sum
+}
+
+fn count(xs: [String]) -> Int {
+    var n = 0
+    for _ in xs {
+        n += 1
+    }
+    return n
+}
+
+fn main() {
+    var xs: [Int] = [10, 20, 30]
+    println(total(xs))
+    xs[1] = 5
+    println(xs[0])
+    println(xs[1])
+    println(total(xs))
+    let names: [String] = ["ann", "bo", "cy"]
+    println(count(names))
+    println(names[2])
+    var points: [Point] = [Point { x: 1, y: 2 }, Point { x: 3, y: 4 }]
+    println(points[1].y)
+    points[0] = Point { x: 9, y: 8 }
+    println(points[0].x + points[0].y)
+    let zeros: [Int] = [0; 6]
+    println(total(zeros))
+    var fives: [Int] = [5; 4]
+    fives[3] = 1
+    println(total(fives))
+    let words: [String] = ["x"; 3]
+    println(words[2])
+    let empty: [Int] = []
+    println(total(empty))
+    let flags: [Bool] = [true, false, true]
+    var on = 0
+    for f in flags {
+        if f {
+            on += 1
+        }
+    }
+    println(on)
+    let small: [Int8] = [1, 2, 3]
+    var sum8 = 0
+    for s in small {
+        sum8 += s as Int
+    }
+    println(sum8)
+    let floats: [Float] = [1.5, 2.5]
+    println(floats[0] + floats[1])
+    let nested: [[Int]] = [[1, 2], [3, 4, 5]]
+    println(total(nested[1]))
+}

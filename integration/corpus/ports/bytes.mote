@@ -1,0 +1,12 @@
+// feed 0 10 0,127,128,255
+// close 0 30
+import { Port, PortMode } from std.port
+
+fn main() {
+    let (end, rx) = Port.open(PortMode.Queue(2))
+    for message in rx {
+        for byte in message {
+            println(byte)
+        }
+    }
+}

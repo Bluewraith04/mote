@@ -1,0 +1,138 @@
+import { assert, assert_eq } from std.test
+import { Decoder, Encoder, Format, compress, decompress } from compress
+
+// Bytes that repeat in a pattern, so they compress.
+fn sample(count: Int) -> [UInt8] {
+    var out: [UInt8] = [0; count]
+    for at in 0..count {
+        out[at] = ((at * 7 + at / 13) % 251) as UInt8
+    }
+    return out
+}
+
+fn cat(a: [UInt8], b: [UInt8]) -> [UInt8] {
+    var out: [UInt8] = [0; a.len() + b.len()]
+    for at in 0..a.len() { out[at] = a[at] }
+    for at in 0..b.len() { out[a.len() + at] = b[at] }
+    return out
+}
+
+fn same(a: [UInt8], b: [UInt8]) -> Bool {
+    if a.len() != b.len() { return false }
+    for at in 0..a.len() {
+        if a[at] != b[at] { return false }
+    }
+    return true
+}
+
+test "every format round trips" {
+    let data = sample(50000)
+    for format in [Format.Gzip, Format.Zlib, Format.Deflate] {
+        let packed = compress(format, data)!
+        assert(packed.len() < data.len(), "smaller")
+        assert(same(decompress(format, packed)!, data), "round trip")
+    }
+}
+
+test "zlib and raw deflate give the known bytes" {
+    let zlib = compress(Format.Zlib, "hello".bytes())!
+    assert(same(zlib, [0x78, 0x9c, 0xcb, 0x48, 0xcd, 0xc9, 0xc9, 0x07, 0x00, 0x06, 0x2c, 0x02, 0x15]), "zlib")
+    let raw = compress(Format.Deflate, "hello".bytes())!
+    assert(same(raw, [0xcb, 0x48, 0xcd, 0xc9, 0xc9, 0x07, 0x00]), "deflate")
+}
+
+test "gzip has its magic and reads what gzip wrote" {
+    let packed = compress(Format.Gzip, "hello".bytes())!
+    assert_eq(packed[0] as Int, 0x1f)
+    assert_eq(packed[1] as Int, 0x8b)
+    let made: [UInt8] = [0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0xcb, 0x48, 0xcd, 0xc9, 0xc9, 0x57, 0xc8, 0x40, 0x27, 0x01, 0xe3, 0x51, 0x3d, 0x8d, 0x17, 0x00, 0x00, 0x00]
+    assert_eq(String.from_bytes(decompress(Format.Gzip, made)!)!, "hello hello hello hello")
+}
+
+test "empty input round trips" {
+    let empty: [UInt8] = []
+    for format in [Format.Gzip, Format.Zlib, Format.Deflate] {
+        let packed = compress(format, empty)!
+        assert_eq(decompress(format, packed)!.len(), 0)
+    }
+}
+
+test "the level changes the size and a bad level is an error" {
+    let data = sample(100000)
+    let stored = compress(Format.Zlib, data, 0)!
+    let best = compress(Format.Zlib, data, 9)!
+    assert(stored.len() > data.len(), "stored")
+    assert(best.len() < stored.len(), "smaller")
+    assert(same(decompress(Format.Zlib, stored)!, data), "stored round trip")
+    assert(compress(Format.Zlib, data, 10).is_err(), "level 10")
+    assert(compress(Format.Zlib, data, -1).is_err(), "level -1")
+}
+
+test "an encoder and a decoder work in pieces" {
+    let data = sample(30000)
+    let encoder = Encoder.new(Format.Gzip)!
+    var packed: [UInt8] = []
+    var at = 0
+    while at < data.len() {
+        let end = if at + 1000 < data.len() { at + 1000 } else { data.len() }
+        packed = cat(packed, encoder.push(data.slice(at, end))!)
+        at = end
+    }
+    packed = cat(packed, encoder.finish()!)
+    encoder.close()!
+    let decoder = Decoder.new(Format.Gzip)
+    var back: [UInt8] = []
+    var start = 0
+    while start < packed.len() {
+        let end = if start + 100 < packed.len() { start + 100 } else { packed.len() }
+        back = cat(back, decoder.push(packed.slice(start, end))!)
+        start = end
+    }
+    back = cat(back, decoder.finish()!)
+    decoder.close()!
+    assert(same(back, data), "pieces")
+}
+
+test "cut data is an error for every format" {
+    let data = sample(5000)
+    for format in [Format.Gzip, Format.Zlib, Format.Deflate] {
+        let packed = compress(format, data)!
+        let cut = packed.slice(0, packed.len() - 3)
+        assert(decompress(format, cut).is_err(), "cut")
+    }
+}
+
+test "corrupt data is an error" {
+    let junk: [UInt8] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    assert(decompress(Format.Gzip, junk).is_err(), "gzip")
+    assert(decompress(Format.Zlib, junk).is_err(), "zlib")
+    var packed = compress(Format.Gzip, sample(2000))!
+    packed[packed.len() - 6] = (packed[packed.len() - 6] as Int + 1) as UInt8
+    assert(decompress(Format.Gzip, packed).is_err(), "checksum")
+}
+
+test "bytes after the end of a zlib stream are an error" {
+    let packed = compress(Format.Zlib, "hello".bytes())!
+    assert(decompress(Format.Zlib, cat(packed, [0])).is_err(), "trailing")
+}
+
+test "gzip members one after the other are read as one" {
+    let a = compress(Format.Gzip, "one ".bytes())!
+    let b = compress(Format.Gzip, "two".bytes())!
+    assert_eq(String.from_bytes(decompress(Format.Gzip, cat(a, b))!)!, "one two")
+}
+
+test "a limit stops output that is too big" {
+    let packed = compress(Format.Gzip, [0; 1000000])!
+    assert(packed.len() < 5000, "small input")
+    assert(decompress(Format.Gzip, packed, 1000).is_err(), "over")
+    assert_eq(decompress(Format.Gzip, packed, 1000000)!.len(), 1000000)
+    let zlib = compress(Format.Zlib, [0; 1000000])!
+    assert(decompress(Format.Zlib, zlib, 1000).is_err(), "zlib over")
+}
+
+test "a closed coder is closed once" {
+    let encoder = Encoder.new(Format.Zlib)!
+    assert(encoder.close().is_ok(), "first")
+    assert(encoder.close().is_err(), "second")
+}

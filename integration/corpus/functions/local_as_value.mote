@@ -1,0 +1,12 @@
+fn main() {
+    var n = 0
+    fn bump() {
+        n += 1
+    }
+    bump()
+    bump()
+    println(n)
+    let f = bump
+    f()
+    println(n)
+}

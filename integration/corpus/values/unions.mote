@@ -1,0 +1,47 @@
+fn describe(v: Int | Float | Bool) -> Int {
+    return match v {
+        n: Int => n
+        f: Float => f as Int
+        b: Bool => 100
+    }
+}
+
+fn kind(v: Int | Float | Bool | Null) -> Int {
+    match v {
+        _: Int => return 1
+        _: Float => return 2
+        _: Bool => return 3
+        _ => return 4
+    }
+}
+
+fn pass(v: Int | Float) -> Int | Float {
+    return v
+}
+
+fn main() {
+    println(describe(5))
+    println(describe(2.9))
+    println(describe(true))
+    println(kind(5))
+    println(kind(2.5))
+    println(kind(false))
+    println(kind(null))
+    let x: Int | Float = 3
+    if x is Int {
+        println(1)
+    }
+    let y = pass(1.25)
+    if y is Float {
+        println(2)
+    }
+    if y is Int {
+        println(3)
+    }
+    let byte: UInt8 = 200
+    let w: Int8 | UInt8 = byte
+    match w {
+        a: Int8 => println(a)
+        b: UInt8 => println(b)
+    }
+}

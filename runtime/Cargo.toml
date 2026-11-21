@@ -1,0 +1,18 @@
+[package]
+name = "mote-runtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["staticlib", "rlib"]
+
+[features]
+# Adds the `main` of an executable, which runs the program in the object file it is linked with.
+executable = []
+
+[dependencies]
+mote-base.workspace = true
+mote-abi.workspace = true
+mote-heap.workspace = true
+mote-scheduler.workspace = true

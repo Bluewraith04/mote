@@ -1,0 +1,26 @@
+import { Mutex } from std.sync
+
+fn main() {
+    var xs = [1]
+    let m = Mutex(xs)
+    xs.push(2)
+    println(m.lock(|v| { return v.len() }))
+    var zeros: [Int] = [0; 2]
+    let z = Mutex(zeros)
+    var out = z.lock(|v| { return v })
+    out[0] = 9
+    println(z.lock(|v| { return v[0] }))
+    let list = Mutex([1, 2])
+    var copy = list.get()
+    copy.push(3)
+    println(list.get().len())
+    var fresh = [7, 8, 9]
+    list.set(fresh)
+    fresh.push(10)
+    println(list.get().len())
+    println(list.lock(|items| { return items[0] }))
+    let text = Mutex("one")
+    println(text.lock(|s| { return s }))
+    text.set("two")
+    println(text.get())
+}

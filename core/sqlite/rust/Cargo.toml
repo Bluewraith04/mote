@@ -1,0 +1,21 @@
+[package]
+name = "mote-sqlite"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[lib]
+name = "sqlite"
+crate-type = ["cdylib", "staticlib"]
+
+[dependencies]
+rusqlite = { version = "0.40", default-features = false, features = ["bundled"] }
+
+[profile.release]
+opt-level = 2
+panic = "abort"
+lto = true
+codegen-units = 1
+strip = true
+
+[workspace]

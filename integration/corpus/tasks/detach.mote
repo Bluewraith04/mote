@@ -1,0 +1,22 @@
+fn total(xs: [Int]) -> Int {
+    var sum = 0
+    for x in xs {
+        sum += x
+    }
+    return sum
+}
+
+fn main() {
+    let base: [Int] = [1, 2, 3]
+    let h = spawn {
+        var mine = base
+        mine[0] = 99
+        return mine
+    }
+    let got = h.await().unwrap()
+    println(got[0])
+    println(base[0])
+    println(total(got))
+    let k = spawn total(base)
+    println(k.await().unwrap())
+}

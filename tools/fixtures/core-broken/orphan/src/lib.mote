@@ -1,0 +1,6 @@
+@link("orphan")
+native fn orphan_value() -> Int32
+
+pub fn value() -> Int32 {
+    return orphan_value()
+}

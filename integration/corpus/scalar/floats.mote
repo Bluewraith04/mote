@@ -1,0 +1,33 @@
+fn mean(a: Float, b: Float) -> Float {
+    return (a + b) / 2.0
+}
+
+fn rem(a: Float, b: Float) -> Float {
+    return a % b
+}
+
+fn main() {
+    println(mean(1.0, 2.0))
+    println(mean(0.1, 0.2))
+    println(rem(7.5, 2.0))
+    println(rem(-7.5, 2.0))
+    let zero = 0.0
+    println(1.0 / zero)
+    println(-1.0 / zero)
+    println(zero / zero)
+    println(zero / zero == zero / zero)
+    println(zero / zero != zero / zero)
+    println(zero / zero < 1.0)
+    println(1.0 <= 1.0)
+    var small: Float32 = 0.1
+    small = small + 0.2
+    println(small)
+    var total = 0.0
+    var i = 1
+    while i <= 10 {
+        total += 1.0 / 3.0
+        i += 1
+    }
+    println(total)
+    println(-total)
+}

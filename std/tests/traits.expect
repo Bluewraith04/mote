@@ -1,0 +1,17 @@
+start
+test "a written to_string drives interpolation and bounds"
+passed
+test "assert_eq and assert_ne take any Display and Eq type"
+passed
+test "a failed assertion is a fault that says why"
+passed
+test "Eq works through a bound"
+passed
+test "Ord works through a bound"
+passed
+test "with closes a resource on every way out"
+passed
+test "print uses the to_string a type writes"
+passed
+| (3, 4)
+| red

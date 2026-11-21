@@ -1,0 +1,59 @@
+struct Pair {
+    a: Int
+    b: Int
+}
+
+fn sum(xs: List<Int>) -> Int {
+    var total = 0
+    var i = 0
+    while i < xs.len() {
+        total += xs[i]
+        i += 1
+    }
+    return total
+}
+
+fn main() {
+    var xs: List<Int> = List.new()
+    println(xs.len())
+    var i = 0
+    while i < 100 {
+        xs.push(i * 2)
+        i += 1
+    }
+    println(xs.len())
+    println(sum(xs))
+    xs[50] = 1
+    println(xs[50])
+    println(xs[99])
+    let alias = xs
+    xs.push(7)
+    println(alias.len())
+    let literal: List<Int> = [1, 2, 3]
+    println(sum(literal))
+    var names: List<String> = List.new()
+    names.push("a")
+    names.push("b" + "c")
+    names.push("d")
+    names.push("e")
+    names.push("f")
+    println(names[1])
+    println(names[4])
+    var pairs: List<Pair> = List.new()
+    var k = 0
+    while k < 10 {
+        pairs.push(Pair { a: k, b: k * k })
+        k += 1
+    }
+    println(pairs[9].b)
+    pairs[3] = Pair { a: 0, b: 0 }
+    println(pairs[3].a + pairs[3].b)
+    for p in pairs {
+        k += p.a
+    }
+    println(k)
+    var bytes: List<UInt8> = List.new()
+    bytes.push(250)
+    bytes.push(5)
+    println(bytes[0] as Int + bytes[1] as Int)
+}

@@ -1,0 +1,9 @@
+import { Channel } from std.sync
+
+fn main() {
+    let (tx, rx) = Channel<Int>(1)
+    println("before")
+    tx.close()
+    tx.send(1)
+    println(rx.recv())
+}

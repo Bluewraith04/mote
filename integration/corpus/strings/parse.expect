@@ -1,0 +1,31 @@
+ended Returned
+| [42] true 42
+| [-7] true -7
+| [+5] true 5
+| [0] true 0
+| [-0] true 0
+| [007] true 7
+| [9223372036854775807] true 9223372036854775807
+| [-9223372036854775808] true -9223372036854775808
+| [9223372036854775808] false 0
+| [ 1] false 0
+| [1 ] false 0
+| [] false 0
+| [1_000] false 0
+| [0x10] false 0
+| [1.5] false 0
+| [ten] false 0
+| [2.5] true 2.5
+| [-0.125] true -0.125
+| [1e3] true 1000.0
+| [1E-2] true 0.01
+| [5.] true 5.0
+| [.5] true 0.5
+| [inf] true inf
+| [-infinity] true -inf
+| [NaN] true NaN
+| [42] true 42.0
+| [] false 0.0
+| [1.2.3] false 0.0
+| [abc] false 0.0
+| [ 1.0] false 0.0

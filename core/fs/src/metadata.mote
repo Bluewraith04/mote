@@ -1,0 +1,42 @@
+// What the file system knows of a path.
+import { FileKind, Metadata, failure, metadata_of } from ._support
+import { fs_stat } from ._native
+
+/// The metadata of a path, looking through a symbolic link.
+pub fn metadata(path: String) -> Result<Metadata, Error> {
+    let fields: [Int] = [0; 4]
+    let code = fs_stat(path, fields, 1)
+    if code < 0 { return Err(failure(code, path)) }
+    return Ok(metadata_of(fields))
+}
+
+/// The metadata of a path itself: a symbolic link is described, not followed.
+pub fn link_metadata(path: String) -> Result<Metadata, Error> {
+    let fields: [Int] = [0; 4]
+    let code = fs_stat(path, fields, 0)
+    if code < 0 { return Err(failure(code, path)) }
+    return Ok(metadata_of(fields))
+}
+
+/// Whether the path names anything.
+pub fn exists(path: String) -> Bool {
+    let fields: [Int] = [0; 4]
+    return fs_stat(path, fields, 1) >= 0
+}
+
+/// Whether the path names a file.
+pub fn is_file(path: String) -> Bool {
+    return match metadata(path) {
+        Ok(found) => found.is_file()
+        Err(_) => false
+    }
+}
+
+/// Whether the path names a directory.
+pub fn is_dir(path: String) -> Bool {
+    return match metadata(path) {
+        Ok(found) => found.is_dir()
+        Err(_) => false
+    }
+}
+

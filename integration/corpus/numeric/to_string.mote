@@ -1,0 +1,19 @@
+fn main() {
+    let a: Int8 = -128
+    let b: UInt8 = 255
+    let c: Int16 = -32768
+    let d: UInt32 = 4294967295
+    let e: Int = -9223372036854775807 - 1
+    let f: UInt64 = 18446744073709551615
+    println(a.to_string())
+    println(b.to_string())
+    println(c.to_string())
+    println(d.to_string())
+    println(e.to_string())
+    println(f.to_string())
+    println(0.to_string() + "|" + 42.to_string())
+    println((1.0 / 3.0).to_string())
+    println(1e21.to_string())
+    println(1e-7.to_string())
+    println(true.to_string())
+}

@@ -1,0 +1,22 @@
+// Escape sequences for the cursor, the screen and the mouse.
+import { ESC } from ._support
+
+/// The text that clears the screen and puts the cursor at the top left.
+pub fn clear_screen() -> String { return ESC + "[2J" + ESC + "[H" }
+
+/// The text that clears the line the cursor is on.
+pub fn clear_line() -> String { return ESC + "[2K" }
+
+/// The text that moves the cursor to a row and a column counted from 0.
+pub fn move_to(row: Int, col: Int) -> String { return "${ESC}[${row + 1};${col + 1}H" }
+
+pub fn hide_cursor() -> String { return ESC + "[?25l" }
+pub fn show_cursor() -> String { return ESC + "[?25h" }
+
+/// The text that switches to the alternate screen, which a program leaves with `leave_alternate_screen` and the user's screen intact.
+pub fn enter_alternate_screen() -> String { return ESC + "[?1049h" }
+pub fn leave_alternate_screen() -> String { return ESC + "[?1049l" }
+
+/// The text that asks the terminal to report mouse presses, releases, drags and the wheel; `disable_mouse` stops it.
+pub fn enable_mouse() -> String { return ESC + "[?1000h" + ESC + "[?1002h" + ESC + "[?1006h" }
+pub fn disable_mouse() -> String { return ESC + "[?1006l" + ESC + "[?1002l" + ESC + "[?1000l" }

@@ -1,0 +1,14 @@
+fn power(base: Int, times: Int) -> Int {
+    var result = 1
+    var i = 0
+    while i < times {
+        result *= base
+        i += 1
+    }
+    return result
+}
+
+fn main() {
+    println(power(2, 62))
+    println(power(2, 63))
+}

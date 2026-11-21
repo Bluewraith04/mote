@@ -1,0 +1,5 @@
+import { add } from ping
+
+pub fn triple(n: Int32) -> Int32 {
+    return add(add(n, n), n)
+}

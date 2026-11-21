@@ -1,0 +1,27 @@
+import { Channel } from std.sync
+import { sleep } from std.task
+
+fn main() {
+    let (tx, rx) = Channel<Int>(2)
+    println(rx.recv_timeout(30) == null)
+    println(rx.recv_timeout(0) == null)
+    tx.send(5)
+    println(rx.recv_timeout(0)!)
+    let sender = tx.clone()
+    scope {
+        spawn {
+            sleep(60)
+            sender.send(7)
+        }
+        println(rx.recv_timeout(10) == null)
+        println(rx.recv_timeout(2000)!)
+    }
+    tx.send(8)
+    tx.close()
+    println(rx.recv_timeout(100)!)
+    println(rx.recv_timeout(100) == null)
+    let (words, taken) = Channel<String>(1)
+    words.send("hello")
+    println(taken.recv_timeout(50)!)
+    println(taken.recv_timeout(20) == null)
+}

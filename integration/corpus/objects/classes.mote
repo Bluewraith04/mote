@@ -1,0 +1,53 @@
+class Counter {
+    var count: Int
+    var step: Int32
+    label: String
+}
+
+class Node {
+    var value: Int
+    var next: Node?
+}
+
+class Pair {
+    var left: Counter
+    var right: Counter
+}
+
+fn bump(var c: Counter) {
+    c.count += c.step as Int
+}
+
+fn total(n: Node?) -> Int {
+    var sum = 0
+    var at = n
+    while at != null {
+        sum += at!.value
+        at = at!.next
+    }
+    return sum
+}
+
+fn main() {
+    var a = Counter { count: 1, step: 5, label: "a" }
+    var b = a
+    bump(a)
+    bump(b)
+    println(a.count)
+    println(b.count)
+    println(a.label)
+    var p = Pair { left: a, right: Counter { count: 100, step: 1, label: "r" } }
+    bump(p.left)
+    bump(p.right)
+    println(a.count)
+    println(p.right.count)
+    println(p.right.label)
+    var list: Node? = null
+    var i = 1
+    while i <= 5 {
+        list = Node { value: i, next: list }
+        i += 1
+    }
+    println(total(list))
+    println(total(null))
+}

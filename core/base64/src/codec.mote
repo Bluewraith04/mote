@@ -1,0 +1,95 @@
+// Encoding bytes as text and decoding text to bytes.
+import { Alphabet, letter, sextet } from ._alphabet
+
+/// The text of the bytes, padded with `=` unless `padded` is false.
+pub fn encode(bytes: [UInt8], alphabet: Alphabet = Alphabet.Standard, padded: Bool = true) -> String {
+    var out: List<UInt8> = []
+    let count = bytes.len()
+    var at = 0
+    while at + 2 < count {
+        let v = (bytes.get(at) as Int) * 65536 + (bytes.get(at + 1) as Int) * 256 + (bytes.get(at + 2) as Int)
+        out.push(letter(v / 262144, alphabet))
+        out.push(letter(v / 4096 % 64, alphabet))
+        out.push(letter(v / 64 % 64, alphabet))
+        out.push(letter(v % 64, alphabet))
+        at += 3
+    }
+    let left = count - at
+    if left == 1 {
+        let v = bytes.get(at) as Int
+        out.push(letter(v / 4, alphabet))
+        out.push(letter(v % 4 * 16, alphabet))
+        if padded {
+            out.push(61)
+            out.push(61)
+        }
+    } else if left == 2 {
+        let v = (bytes.get(at) as Int) * 256 + (bytes.get(at + 1) as Int)
+        out.push(letter(v / 1024, alphabet))
+        out.push(letter(v / 16 % 64, alphabet))
+        out.push(letter(v % 16 * 4, alphabet))
+        if padded {
+            out.push(61)
+        }
+    }
+    return String.from_bytes(out.to_array())!
+}
+
+/// The text of a string's UTF-8 bytes.
+pub fn encode_string(text: String, alphabet: Alphabet = Alphabet.Standard, padded: Bool = true) -> String {
+    return encode(text.bytes(), alphabet, padded)
+}
+
+/// The bytes of the text; the padding may be left out, but a padding that is there must be right.
+pub fn decode(text: String, alphabet: Alphabet = Alphabet.Standard) -> Result<[UInt8], Error> {
+    let codes = text.bytes()
+    var end = codes.len()
+    var padding = 0
+    while end > 0 && padding < 2 && codes.get(end - 1) == 61 {
+        end -= 1
+        padding += 1
+    }
+    if padding > 0 && codes.len() % 4 != 0 {
+        return Err(Error.new(ErrorKind.InvalidData, "base64 padding is misplaced"))
+    }
+    if end % 4 == 1 {
+        return Err(Error.new(ErrorKind.InvalidData, "base64 text has a lone character"))
+    }
+    var values: List<Int> = []
+    var at = 0
+    while at < end {
+        let value = sextet(codes.get(at) as Int, alphabet)
+        if value < 0 {
+            return Err(Error.new(ErrorKind.InvalidData, "not a base64 character at ${at}"))
+        }
+        values.push(value)
+        at += 1
+    }
+    var out: List<UInt8> = []
+    var group = 0
+    while group + 3 < values.len() {
+        let v = values.get(group) * 262144 + values.get(group + 1) * 4096 + values.get(group + 2) * 64 + values.get(group + 3)
+        out.push((v / 65536) as UInt8)
+        out.push((v / 256 % 256) as UInt8)
+        out.push((v % 256) as UInt8)
+        group += 4
+    }
+    let left = values.len() - group
+    if left == 2 {
+        let v = values.get(group) * 64 + values.get(group + 1)
+        out.push((v / 16) as UInt8)
+    } else if left == 3 {
+        let v = values.get(group) * 4096 + values.get(group + 1) * 64 + values.get(group + 2)
+        out.push((v / 1024) as UInt8)
+        out.push((v / 4 % 256) as UInt8)
+    }
+    return Ok(out.to_array())
+}
+
+/// The string the text decodes to, an `Err` when the bytes are not UTF-8.
+pub fn decode_string(text: String, alphabet: Alphabet = Alphabet.Standard) -> Result<String, Error> {
+    let bytes = decode(text, alphabet)?
+    let made = String.from_bytes(bytes)
+    if made == null { return Err(Error.new(ErrorKind.InvalidData, "base64 text is not UTF-8")) }
+    return Ok(made)
+}

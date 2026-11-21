@@ -1,0 +1,26 @@
+import { Mutex } from std.sync
+
+fn main() {
+    let counter = Mutex(0)
+    scope {
+        for i in 0..8 {
+            spawn {
+                for step in 0..50 {
+                    counter.lock(|n| { n += 1 })
+                }
+            }
+        }
+    }
+    println(counter.get())
+    let seen = Mutex([0])
+    scope {
+        for i in 1..4 {
+            spawn {
+                counter.lock(|n| { n += i })
+                seen.set([counter.get(), i])
+            }
+        }
+    }
+    println(counter.get())
+    println(seen.get().len())
+}

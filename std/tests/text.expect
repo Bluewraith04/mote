@@ -1,0 +1,29 @@
+start
+test "length counts bytes"
+passed
+test "concat and plus join text"
+passed
+test "slice takes a byte range"
+passed
+test "case and trim"
+passed
+test "repeat and replace"
+passed
+test "find, contains, starts_with and ends_with"
+passed
+test "split cuts at every separator"
+passed
+test "comparison is by bytes"
+passed
+test "bytes gives the UTF-8 bytes"
+passed
+test "join puts the separator between parts"
+passed
+test "lines splits on newlines and drops carriage returns"
+passed
+test "is_blank and pad_start"
+passed
+test "parse_int and parse_float read numbers"
+passed
+test "a parse error says what was wrong"
+passed

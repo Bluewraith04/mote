@@ -1,0 +1,17 @@
+// Ports carry bytes from a library's own threads to a Receiver.
+import { Receiver } from std.sync
+
+pub enum PortMode {
+    Queue(Int)
+    Latest
+}
+
+@lang("port_end")
+pub class PortEnd {}
+
+@intrinsic("port_open")
+native fn port_open(mode: PortMode) -> (PortEnd, Receiver<[UInt8]>)
+
+pub struct Port {
+    pub fn open(mode: PortMode) -> (PortEnd, Receiver<[UInt8]>) { return port_open(mode) }
+}

@@ -1,0 +1,110 @@
+// What one field is, for parsing and for the usage text.
+import { Kind, Type } from std.meta
+import { parse_float } from std.string
+import { Flag, flag } from .flag
+
+pub struct Spec {
+    pub index: Int
+    pub long: String
+    pub short_name: String
+    pub help: String
+    pub default_text: String?
+    pub positional: Bool
+    pub ty: Type
+    pub is_switch: Bool
+    pub is_list: Bool
+    pub is_optional: Bool
+}
+
+// The words given for a field.
+pub class Slot {
+    pub var values: List<String>
+
+    pub fn add(var self, text: String) { self.values.push(text) }
+}
+
+// A field or variant name as a flag writes it: `max_depth` and `MaxDepth` are `max-depth`.
+pub fn kebab(name: String) -> String {
+    var out: List<UInt8> = []
+    let codes = name.bytes()
+    for at in 0..codes.len() {
+        let code = codes[at] as Int
+        if code == 95 {
+            out.push(45)
+        } else if code >= 65 && code <= 90 {
+            if at > 0 { out.push(45) }
+            out.push((code + 32) as UInt8)
+        } else {
+            out.push(codes[at])
+        }
+    }
+    return String.from_bytes(out.to_array())!
+}
+
+pub fn unit_enum(ty: Type) -> Bool {
+    if ty.kind() != Kind.Enum { return false }
+    for variant in ty.variants() {
+        if variant.fields.len() > 0 { return false }
+    }
+    return true
+}
+
+pub fn scalar_kind(ty: Type) -> Bool {
+    let kind = ty.kind()
+    return kind == Kind.Bool || kind == Kind.Int || kind == Kind.Float || kind == Kind.String || unit_enum(ty)
+}
+
+pub fn specs_of(ty: Type, flags: List<Flag>) -> Result<List<Spec>, Error> {
+    var specs: List<Spec> = []
+    let fields = ty.fields()
+    for index in 0..fields.len() {
+        let field = fields[index]
+        var details = flag(field.name)
+        for each in flags {
+            if each.name == field.name { details = each }
+        }
+        var inner = field.ty
+        let kind = field.ty.kind()
+        let is_optional = kind == Kind.Optional
+        let is_list = kind == Kind.List
+        if is_optional || is_list { inner = field.ty.args()[0] }
+        if !scalar_kind(inner) {
+            return Err(Error.new(ErrorKind.InvalidData, "args: ${ty.name()}.${field.name} is a ${field.ty.name()}, which a flag cannot hold"))
+        }
+        specs.push(Spec {
+            index: index,
+            long: kebab(field.name),
+            short_name: details.short_name,
+            help: if details.help_text != "" { details.help_text } else { field.doc },
+            default_text: details.default_text,
+            positional: details.is_positional,
+            ty: field.ty,
+            is_switch: kind == Kind.Bool,
+            is_list: is_list,
+            is_optional: is_optional
+        })
+    }
+    return Ok(specs)
+}
+
+pub fn is_number(word: String) -> Bool {
+    return parse_float(word).is_ok()
+}
+
+pub fn by_long(specs: List<Spec>, name: String) -> Spec? {
+    for spec in specs {
+        if spec.long == name && !spec.positional { return spec }
+    }
+    return null
+}
+
+pub fn by_short(specs: List<Spec>, letter: String) -> Spec? {
+    for spec in specs {
+        if spec.short_name == letter && !spec.positional { return spec }
+    }
+    return null
+}
+
+pub fn label(spec: Spec) -> String {
+    return if spec.positional { spec.long } else { "--" + spec.long }
+}

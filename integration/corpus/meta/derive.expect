@@ -1,0 +1,25 @@
+ended Returned
+| Point(x: 3, y: 4)
+| Point(x: 1, y: 2)
+| Account(owner: "ann", balance: 5)
+| Empty
+| Circle(1.5)
+| Rect(width: 2.0, height: 3.0)
+| Point { x: 3, y: 4 }
+| Account { owner: "ann", balance: 5 }
+| Rect { width: 2.0, height: 3.0 }
+| Circle(1.5)
+| Empty
+| Quiet()
+| Quiet
+| Wrapper(name: "w", inner: Point(x: 1, y: 2), tags: ["a", "b"], maybe: 7, pair: (1, "p"), shape: Circle(0.5))
+| Wrapper { name: "w", inner: Point { x: 1, y: 2 }, tags: ["a", "b"], maybe: 7, pair: (1, "p"), shape: Circle(0.5) }
+| Pair(first: 1, second: "x")
+| Pair { first: true, second: 2.5 }
+| custom 3
+| Point(x: 5, y: 6)
+| Circle(2.5)
+| 3
+| 5
+| ann
+| Rect(width: 1.0, height: 2.0)

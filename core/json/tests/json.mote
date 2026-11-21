@@ -1,0 +1,294 @@
+import { assert, assert_eq } from std.test
+import { Set } from std.collections
+import { FromJson, Json, ToJson, decode, encode, parse } from json
+
+struct Point: (ToJson, FromJson) {
+    x: Int
+    y: Int
+}
+
+class Person: (ToJson, FromJson) {
+    name: String
+    age: Int
+    nick: String?
+    tags: List<String>
+}
+
+class Team: (ToJson, FromJson) {
+    name: String
+    lead: Person
+    members: List<Point>
+    pair: (Int, String)
+}
+
+enum Shape: (ToJson, FromJson) {
+    Dot
+    Circle(Int)
+    Rect(Int, Int)
+    Named { label: String, sides: Int }
+}
+
+fn text(source: String) -> String {
+    return parse(source)!.to_string()
+}
+
+fn failure(source: String) -> String {
+    return match parse(source) {
+        Ok(_) => "ok"
+        Err(error) => error.to_string()
+    }
+}
+
+test "the values of JSON parse" {
+    assert(parse("null")!.is_null(), "null")
+    assert_eq(parse("true")!.as_bool()!, true)
+    assert_eq(parse("-12")!.as_int()!, -12)
+    assert_eq(parse("0")!.as_int()!, 0)
+    assert_eq(parse("2.5")!.as_float()!, 2.5)
+    assert_eq(parse("1e3")!.as_float()!, 1000.0)
+    assert_eq(parse("\"hi\"")!.as_text()!, "hi")
+}
+
+test "an integer too large for Int is a real" {
+    assert(parse("123456789012345678901234567890")!.as_int() == null, "not an int")
+    assert(parse("123456789012345678901234567890")!.as_float() != null, "a float")
+}
+
+test "arrays and objects parse and are read by position and name" {
+    let value = parse(" { \"a\" : [1, 2, {\"b\": null}], \"c\": \"d\" } ")!
+    assert_eq(value.get("c")!.as_text()!, "d")
+    assert_eq(value.get("a")!.at(1)!.as_int()!, 2)
+    assert(value.get("a")!.at(2)!.get("b")!.is_null(), "b")
+    assert(value.get("missing") == null, "missing")
+    assert(value.get("a")!.at(3) == null, "past the end")
+    assert(value.at(0) == null, "an object has no positions")
+}
+
+test "an empty array and an empty object parse" {
+    assert_eq(text("[]"), "[]")
+    assert_eq(text(" { } "), "{}")
+    assert_eq(text("[[],{}]"), "[[],{}]")
+}
+
+test "text prints compactly and parses back" {
+    let source = "{\"a\":[1,2.5,true,null,\"x\"],\"b\":{\"c\":-3}}"
+    assert_eq(text(source), source)
+}
+
+test "pretty prints one element to a line" {
+    let value = parse("{\"a\":[1,2],\"b\":{},\"c\":\"x\"}")!
+    assert_eq(value.pretty(), "{\n  \"a\": [\n    1,\n    2\n  ],\n  \"b\": {},\n  \"c\": \"x\"\n}")
+}
+
+test "strings escape and unescape" {
+    assert_eq(parse("\"a\\nb\\t\\\"q\\\" \\\\ \\/\"")!.as_text()!, "a\nb\t\"q\" \\ /")
+    assert_eq(Json.Text("a\nb\"c\\").to_string(), "\"a\\nb\\\"c\\\\\"")
+    assert_eq(Json.Text("\u{1}").to_string(), "\"\\u0001\"")
+}
+
+test "unicode escapes become UTF-8" {
+    assert_eq(parse("\"\\u00e9\"")!.as_text()!, "é")
+    assert_eq(parse("\"\\ud83d\\ude00\"")!.as_text()!, "😀")
+    assert_eq(parse("\"é😀\"")!.as_text()!, "é😀")
+}
+
+test "text that is not JSON is an error that names the place" {
+    assert(parse("").is_err(), "empty")
+    assert(parse("[1,]").is_err(), "trailing comma")
+    assert(parse("{\"a\" 1}").is_err(), "no colon")
+    assert(parse("{a: 1}").is_err(), "bare key")
+    assert(parse("[1 2]").is_err(), "no comma")
+    assert(parse("01").is_err(), "leading zero")
+    assert(parse("1.").is_err(), "bare point")
+    assert(parse("\"abc").is_err(), "unterminated")
+    assert(parse("\"\\x\"").is_err(), "bad escape")
+    assert(parse("\"\\ud83d\"").is_err(), "lone surrogate")
+    assert(parse("tru").is_err(), "short word")
+    assert(parse("1 2").is_err(), "two values")
+    assert(parse("\"a\nb\"").is_err(), "raw newline")
+    assert_eq(failure("[1,]"), "unexpected character at 3")
+    assert_eq(failure("{\"a\" 1}"), "expected : at 5")
+}
+
+test "nesting is limited" {
+    var deep = ""
+    var closing = ""
+    for _ in 0..300 {
+        deep = deep + "["
+        closing = closing + "]"
+    }
+    assert(parse(deep + closing).is_err(), "300 deep")
+}
+
+test "a struct encodes as an object of its fields" {
+    assert_eq(Point { x: 1, y: -2 }.to_json()!.to_string(), "{\"x\":1,\"y\":-2}")
+}
+
+test "a class encodes its optional, list and text fields" {
+    let ann = Person { name: "Ann", age: 30, nick: null, tags: ["a", "b"] }
+    assert_eq(ann.to_json()!.to_string(), "{\"name\":\"Ann\",\"age\":30,\"nick\":null,\"tags\":[\"a\",\"b\"]}")
+    let bob = Person { name: "Bob", age: 5, nick: "B", tags: [] }
+    assert_eq(bob.to_json()!.get("nick")!.as_text()!, "B")
+}
+
+test "an enum encodes by variant" {
+    assert_eq(Shape.Dot.to_json()!.to_string(), "\"Dot\"")
+    assert_eq(Shape.Circle(3).to_json()!.to_string(), "{\"Circle\":3}")
+    assert_eq(Shape.Rect(1, 2).to_json()!.to_string(), "{\"Rect\":[1,2]}")
+    assert_eq(Shape.Named { label: "q", sides: 4 }.to_json()!.to_string(), "{\"Named\":{\"label\":\"q\",\"sides\":4}}")
+}
+
+test "other types encode through encode" {
+    assert_eq(encode(5)!.to_string(), "5")
+    assert_eq(encode(2.5)!.to_string(), "2.5")
+    assert_eq(encode("s")!.to_string(), "\"s\"")
+    assert_eq(encode(true)!.to_string(), "true")
+    assert_eq(encode([1, 2, 3])!.to_string(), "[1,2,3]")
+    assert_eq(encode((1, "a"))!.to_string(), "[1,\"a\"]")
+    let none: Int? = null
+    assert_eq(encode(none)!.to_string(), "null")
+    assert_eq(encode(Some(4))!.to_string(), "4")
+}
+
+test "integers of each width encode" {
+    let small: Int8 = -5
+    let byte: UInt8 = 200
+    let wide: UInt32 = 4000000000
+    assert_eq(encode(small)!.to_string(), "-5")
+    assert_eq(encode(byte)!.to_string(), "200")
+    assert_eq(encode(wide)!.to_string(), "4000000000")
+}
+
+test "a value JSON cannot hold is an error" {
+    let by: Map<Int, String> = Map.new()
+    assert(encode(by).is_err(), "map with Int keys")
+    assert(encode(1.0 / 0.0).is_err(), "infinity")
+    assert(encode(0.0 / 0.0).is_err(), "nan")
+}
+
+test "encoded text parses back to the same text" {
+    let ann = Person { name: "Ann \"A\"", age: 30, nick: null, tags: ["x\ny"] }
+    let first = ann.to_json()!.pretty()
+    assert_eq(parse(first)!.pretty(), first)
+}
+
+fn decode_failure<T>(source: String) -> String {
+    return match decode<T>(parse(source)!) {
+        Ok(_) => "ok"
+        Err(error) => error.to_string()
+    }
+}
+
+test "scalars decode from JSON" {
+    assert_eq(decode<Int>(parse("42")!)!, 42)
+    assert_eq(decode<Float>(parse("2.5")!)!, 2.5)
+    assert_eq(decode<Float>(parse("3")!)!, 3.0)
+    assert_eq(decode<Bool>(parse("true")!)!, true)
+    assert_eq(decode<String>(parse("\"hi\"")!)!, "hi")
+}
+
+test "integers decode into the width they are asked for" {
+    assert_eq(decode<Int8>(parse("-128")!)! as Int, -128)
+    assert_eq(decode<UInt8>(parse("255")!)! as Int, 255)
+    assert_eq(decode<UInt32>(parse("4000000000")!)! as Int, 4000000000)
+    assert_eq(decode_failure<UInt8>("256"), "expected UInt8 at $")
+    assert_eq(decode_failure<UInt8>("-1"), "expected UInt8 at $")
+    assert_eq(decode_failure<Int>("1.5"), "expected an integer at $")
+}
+
+test "a struct decodes from an object and ignores extra members" {
+    let point = decode<Point>(parse("{\"y\": 2, \"x\": 1, \"z\": 9}")!)!
+    assert_eq(point.x, 1)
+    assert_eq(point.y, 2)
+    assert_eq(Point.from_json(parse("{\"x\":5,\"y\":6}")!)!.y, 6)
+}
+
+test "an optional field may be left out or null" {
+    let a = decode<Person>(parse("{\"name\":\"Ann\",\"age\":3,\"tags\":[]}")!)!
+    assert(a.nick == null, "left out")
+    let b = decode<Person>(parse("{\"name\":\"Bob\",\"age\":4,\"nick\":\"B\",\"tags\":[\"x\",\"y\"]}")!)!
+    assert_eq(b.nick!, "B")
+    assert_eq(b.tags.len(), 2)
+    assert_eq(b.tags.get(1), "y")
+    let c = decode<Person>(parse("{\"name\":\"Cy\",\"age\":5,\"nick\":null,\"tags\":[]}")!)!
+    assert(c.nick == null, "null")
+}
+
+test "nested records, lists and tuples decode" {
+    let source = "{\"name\":\"core\",\"lead\":{\"name\":\"Ann\",\"age\":30,\"tags\":[\"a\"]},\"members\":[{\"x\":1,\"y\":2},{\"x\":3,\"y\":4}],\"pair\":[7,\"seven\"]}"
+    let team = Team.from_json(parse(source)!)!
+    assert_eq(team.name, "core")
+    assert_eq(team.lead.name, "Ann")
+    assert_eq(team.lead.tags.get(0), "a")
+    assert_eq(team.members.len(), 2)
+    assert_eq(team.members.get(1).y, 4)
+    assert_eq(team.pair.0, 7)
+    assert_eq(team.pair.1, "seven")
+}
+
+test "a list and an array decode at the top" {
+    let ints = decode<List<Int>>(parse("[1,2,3]")!)!
+    assert_eq(ints.len(), 3)
+    assert_eq(ints.get(2), 3)
+    let words = decode<[String]>(parse("[\"a\"]")!)!
+    assert_eq(words.get(0), "a")
+    let nothing = decode<List<Int>>(parse("[]")!)!
+    assert_eq(nothing.len(), 0)
+    let maybe = decode<Int?>(parse("null")!)!
+    assert(maybe == null, "null")
+    assert_eq(decode<Int?>(parse("5")!)!!, 5)
+}
+
+test "an enum decodes from its name or its one-key object" {
+    assert_eq(decode<Shape>(parse("\"Dot\"")!)!.to_json()!.to_string(), "\"Dot\"")
+    assert_eq(decode<Shape>(parse("{\"Circle\":3}")!)!.to_json()!.to_string(), "{\"Circle\":3}")
+    assert_eq(decode<Shape>(parse("{\"Rect\":[1,2]}")!)!.to_json()!.to_string(), "{\"Rect\":[1,2]}")
+    assert_eq(decode<Shape>(parse("{\"Named\":{\"label\":\"q\",\"sides\":4}}")!)!.to_json()!.to_string(), "{\"Named\":{\"label\":\"q\",\"sides\":4}}")
+}
+
+test "what encode writes decode reads back" {
+    let team = Team { name: "t", lead: Person { name: "L", age: 1, nick: "l", tags: ["a", "b"] }, members: [Point { x: 1, y: 2 }], pair: (3, "p") }
+    let again = decode<Team>(team.to_json()!)!
+    assert_eq(again.to_json()!.to_string(), team.to_json()!.to_string())
+}
+
+test "a mismatch is an error that names the place" {
+    assert_eq(decode_failure<Point>("{\"x\":1}"), "missing y at $")
+    assert_eq(decode_failure<Point>("[1,2]"), "expected an object at $")
+    assert_eq(decode_failure<Point>("{\"x\":\"a\",\"y\":2}"), "expected an integer at $.x")
+    assert_eq(decode_failure<List<Point>>("[{\"x\":1,\"y\":2},{\"x\":1,\"y\":true}]"), "expected an integer at $[1].y")
+    assert_eq(decode_failure<(Int, String)>("[1]"), "expected 2 elements at $")
+    assert_eq(decode_failure<Shape>("\"Nope\""), "no variant Nope at $")
+    assert_eq(decode_failure<Shape>("{\"A\":1,\"B\":2}"), "expected a variant name or an object with one at $")
+    assert_eq(decode_failure<Shape>("{\"Circle\":\"x\"}"), "expected an integer at $.Circle")
+    assert_eq(decode_failure<Map<Int, String>>("{}"), "Map<Int, String> cannot be decoded from JSON")
+    assert_eq(decode_failure<Map<String, Int>>("[1]"), "expected an object at $")
+    assert_eq(decode_failure<Map<String, Int>>("{\"a\":1,\"b\":\"x\"}"), "expected an integer at $.b")
+    assert_eq(decode_failure<Set<Int>>("{}"), "expected an array at $")
+}
+
+test "a map with String keys is an object and a set is an array" {
+    var scores: Map<String, Int> = Map.new()
+    scores.set("ann", 3)
+    scores.set("bo", 5)
+    assert_eq(encode(scores)!.to_string(), "{\"ann\":3,\"bo\":5}")
+    var seen: Set<String> = Set.new()
+    seen.add("x")
+    seen.add("y")
+    seen.add("x")
+    assert_eq(encode(seen)!.to_string(), "[\"x\",\"y\"]")
+}
+
+test "an object decodes into a map and an array into a set" {
+    let scores = decode<Map<String, Int>>(parse("{\"ann\":3,\"bo\":5,\"ann\":4}")!)!
+    assert_eq(scores.len(), 2)
+    assert_eq(scores.get("ann"), 4)
+    assert_eq(scores.get("bo"), 5)
+    let seen = decode<Set<Int>>(parse("[1,2,2,3]")!)!
+    assert_eq(seen.len(), 3)
+    assert(seen.contains(2), "two")
+    let nested = decode<Map<String, List<Point>>>(parse("{\"a\":[{\"x\":1,\"y\":2}],\"b\":[]}")!)!
+    assert_eq(nested.get("a").get(0).y, 2)
+    assert_eq(nested.get("b").len(), 0)
+    assert_eq(decode<Map<String, Int>>(parse("{}")!)!.len(), 0)
+}

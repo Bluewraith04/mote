@@ -1,0 +1,8 @@
+fn drop(start: UInt32, by: UInt32) -> UInt32 {
+    return start - by
+}
+
+fn main() {
+    println(drop(5, 5))
+    println(drop(5, 6))
+}

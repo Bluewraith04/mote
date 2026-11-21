@@ -1,0 +1,29 @@
+# Statements of CLAUDE.md with no proof form. Each line is `hash | start of the text`; the ledger test fails on an unproven statement that is not listed and on a listed one that is proven, so this list only shrinks.
+e873ad75 | | Folder | Owns | Depends on |
+bc9049a5 | | `base/` | spans, source map, interner, diagnostics | none |
+1d7d1189 | | `syntax/` | lexer, parser, expansion; outputs the AST | base |
+2a52db34 | | `semantics/` | name resolution, type checking; outputs the typed tre
+6ece9e20 | | `abi/` | value layout, object header, type descriptors, runtime cont
+97662c00 | | `ir/` | typed tree to analyzed and optimized IR | base, semantics, a
+ca29e956 | | `codegen/` | all Cranelift: JIT and AOT | ir, abi |
+421ede73 | | `heap/` | non-moving Immix collector | abi |
+dfee123c | | `scheduler/` | vthreads, context switch, netpoller, timer wheel, wor
+39984307 | | `runtime/` | functions compiled code calls; `staticlib` and `rlib` |
+20c4bda3 | | `packages/` | manifests, the module graph, std injection, native loo
+fcb33318 | | `mote/` | the driver library and the `mote` command | the crates abo
+a85ff68b | | `integration/` | tests across crates | mote |
+a783ed4c | | Folder | Holds | Rust |
+14fe90c7 | | `std/` | the standard library: one Mote package (`mote.toml`, `src/`
+09a79fab | | `core/<name>/` | the core libraries, one Mote package each, with a `
+8894f55d | The compiler and runtime fix only the lang items and the runtime's int
+adb1e80d | `std/` and `core/` ship together as one release asset, separate from t
+3ee1daa1 | Natives are built by a script, never committed.
+7caf88c1 | | Ask before | Why |
+e33b22f3 | | any `gh` command | the public repository is the user's to change |
+84598373 | | a syntax change | needs sign-off |
+75534bfb | | a new crate or a split | the layout is the user's |
+f15a312a | | starting a large program | the user picks what is built |
+cfdff486 | | deleting anything outside the task | look at it, then ask |
+f8dae60d | Answer the question asked first, in plain short statements.
+8e631524 | Report faithfully: failing tests with their output, skipped steps, thi
+62464255 | Use they/them for anyone whose pronouns are not stated.

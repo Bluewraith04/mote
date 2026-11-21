@@ -1,0 +1,6 @@
+fn main() {
+    let text = "hello"
+    var count = 1
+    count -= 2
+    println(text.repeat(count))
+}

@@ -1,0 +1,107 @@
+// Generators and Stream.
+import { assert, assert_eq } from std.test
+import { Stream } from std.collections
+
+fn count(n: Int) -> Stream<Int> {
+    var i = 0
+    while i < n {
+        yield i
+        i += 1
+    }
+}
+
+fn forever() -> Stream<Int> {
+    var i = 0
+    while true {
+        yield i
+        i += 1
+    }
+}
+
+fn evens(limit: Int) -> Stream<Int> {
+    for x in count(limit) {
+        if x % 2 == 0 { yield x }
+    }
+}
+
+fn words() -> Stream<String> {
+    yield "a"
+    yield "b"
+}
+
+fn stops_early() -> Stream<Int> {
+    yield 1
+    yield 2
+    return
+}
+
+test "a generator yields on demand" {
+    var total = 0
+    for x in count(5) { total += x }
+    assert_eq(total, 10)
+}
+
+test "next steps one value at a time and ends with null" {
+    var s = count(2)
+    assert_eq(s.next()!, 0)
+    assert_eq(s.next()!, 1)
+    assert(s.next() == null, "ended")
+    assert(s.next() == null, "stays ended")
+}
+
+test "collect gathers the rest" {
+    assert(count(4).collect() == [0, 1, 2, 3], "four")
+    var s = count(5)
+    let first = s.next()
+    assert(s.collect() == [1, 2, 3, 4], "the rest")
+    assert(first == 0, "the first went already")
+}
+
+test "a generator that never ends can be left early" {
+    var seen: List<Int> = []
+    for x in forever() {
+        if x == 3 { break }
+        seen.push(x)
+    }
+    assert(seen == [0, 1, 2], "stopped at 3")
+}
+
+test "a generator can read another" {
+    assert(evens(7).collect() == [0, 2, 4, 6], "evens")
+}
+
+test "a generator over text" {
+    var out = ""
+    for w in words() { out = out + w }
+    assert_eq(out, "ab")
+}
+
+test "return ends the stream" {
+    assert(stops_early().collect() == [1, 2], "two")
+}
+
+test "two streams from one generator are independent" {
+    var a = count(3)
+    var b = count(3)
+    assert_eq(a.next()!, 0)
+    assert_eq(a.next()!, 1)
+    assert_eq(b.next()!, 0)
+}
+
+test "a stream widens to a stream of optionals" {
+    let wide: Stream<Int?> = count(2)
+    var total = 0
+    for x in wide {
+        if x != null { total += x }
+    }
+    assert_eq(total, 1)
+}
+
+test "a generator runs on the reader's task" {
+    let h = spawn {
+        var sum = 0
+        for x in count(4) { sum += x }
+        return sum
+    }
+    assert_eq(h.await().unwrap(), 6)
+}

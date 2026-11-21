@@ -1,0 +1,23 @@
+fn main() {
+    let limit = 20000000
+    var composite: List<Bool> = List.new()
+    var i = 0
+    while i <= limit {
+        composite.push(false)
+        i += 1
+    }
+    var count = 0
+    i = 2
+    while i <= limit {
+        if !composite.get(i) {
+            count += 1
+            var j = i * i
+            while j <= limit {
+                composite.set(j, true)
+                j += i
+            }
+        }
+        i += 1
+    }
+    println(count)
+}

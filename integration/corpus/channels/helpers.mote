@@ -1,0 +1,38 @@
+import { Channel, broadcast, merge } from std.sync
+
+fn main() {
+    let (atx, arx) = Channel<Int>(2)
+    let (btx, brx) = Channel<Int>(2)
+    atx.send(1)
+    atx.send(2)
+    atx.close()
+    btx.send(30)
+    btx.close()
+    var sum = 0
+    for v in merge([arx, brx]) {
+        sum += v
+    }
+    println(sum)
+    let (tx, rx) = Channel<Int>(4)
+    let outs = broadcast(rx, 2)
+    let first = outs[0]
+    let second = outs[1]
+    let a = spawn {
+        var s = 0
+        for v in first {
+            s += v
+        }
+        return s
+    }
+    let b = spawn {
+        var s = 0
+        for v in second {
+            s += v * 10
+        }
+        return s
+    }
+    tx.send(1)
+    tx.send(2)
+    tx.close()
+    println(a.await().unwrap() + b.await().unwrap())
+}

@@ -1,0 +1,33 @@
+import { typeof } from std.io
+
+struct Point {
+    x: Int
+    y: Int
+}
+
+class Counter {
+    var count: Int
+}
+
+enum Shape {
+    Dot
+    Circle(Int)
+}
+
+fn main() {
+    let small: Int8 = 1
+    let words: List<String> = ["a"]
+    let maybe: Int? = null
+    println(typeof(1))
+    println(typeof(small))
+    println(typeof(2.5))
+    println(typeof(true))
+    println(typeof("text"))
+    println(typeof(words))
+    println(typeof(maybe))
+    println(typeof(Point { x: 1, y: 2 }))
+    println(typeof(Counter { count: 0 }))
+    println(typeof(Shape.Dot))
+    println(typeof((1, "two")))
+    println(typeof([1, 2]))
+}

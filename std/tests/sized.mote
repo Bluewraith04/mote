@@ -1,0 +1,96 @@
+// The sized integers, Float32, unions and typeof.
+import { assert, assert_eq } from std.test
+
+test "each signed width wraps at its own edge" {
+    let a: Int8 = 127
+    let b: Int16 = 32767
+    let c: Int32 = 2147483647
+    assert_eq(a.wrapping_add(1) as Int, -128)
+    assert_eq(b.wrapping_add(1) as Int, -32768)
+    assert_eq(c.wrapping_add(1) as Int, -2147483648)
+    assert(a.checked_add(1) == null, "Int8 overflow")
+    assert(b.checked_add(1) == null, "Int16 overflow")
+    assert(c.checked_add(1) == null, "Int32 overflow")
+    assert_eq(a.saturating_add(5) as Int, 127)
+    assert_eq(b.saturating_add(5) as Int, 32767)
+    assert_eq(c.saturating_add(5) as Int, 2147483647)
+}
+
+test "each unsigned width wraps at its own edge" {
+    let a: UInt8 = 255
+    let b: UInt16 = 65535
+    let c: UInt32 = 4294967295
+    let d: UInt64 = 18446744073709551615
+    assert_eq(a.wrapping_add(1) as Int, 0)
+    assert_eq(b.wrapping_add(1) as Int, 0)
+    assert_eq(c.wrapping_add(1) as Int, 0)
+    assert(d.checked_add(1) == null, "UInt64 overflow")
+    assert_eq(d.wrapping_add(2).to_string(), "1")
+    assert(d.saturating_add(9) == d, "UInt64 saturates")
+    assert_eq(d.to_string(), "18446744073709551615")
+}
+
+test "unsigned subtraction below zero is a fault or a report" {
+    let a: UInt8 = 3
+    assert(a.checked_sub(4) == null, "checked")
+    assert_eq(a.saturating_sub(4) as Int, 0)
+    let (wrapped, flag) = a.overflowing_sub(4)
+    assert_eq(wrapped as Int, 255)
+    assert(flag, "reported")
+    let h = spawn { return a - 4 }
+    assert(h.await().is_err(), "plain subtraction faults")
+}
+
+test "compare, min and max exist on every width" {
+    let a: Int16 = -3
+    let b: Int16 = 4
+    assert_eq(a.compare(b), -1)
+    assert_eq(a.min(b) as Int, -3)
+    assert_eq(a.max(b) as Int, 4)
+    let c: UInt32 = 9
+    assert_eq(c.compare(c), 0)
+    assert_eq(c.max(10) as Int, 10)
+}
+
+test "a cast moves between widths" {
+    let wide = 70000
+    assert_eq((wide as UInt16) as Int, 4464)
+    assert_eq((wide as Int16) as Int, 4464)
+    let neg = -1
+    assert_eq((neg as UInt8) as Int, 255)
+    assert_eq((neg as UInt64).to_string(), "18446744073709551615")
+}
+
+test "Float32 rounds to single precision" {
+    let x: Float32 = 16777217.0
+    assert_eq(x.to_string(), "16777216.0")
+    let third: Float32 = 1.0 / 3.0
+    assert((third as Float) != (1.0 / 3.0), "less precise than Float")
+    assert_eq(Float32.from(0.5).max(0.25).to_string(), "0.5")
+}
+
+test "typeof names the static type" {
+    assert_eq(typeof(1), "Int")
+    assert_eq(typeof("s"), "String")
+    assert_eq(typeof([1]), "List<Int>")
+    assert_eq(typeof((1, true)), "(Int, Bool)")
+    let small: Int8 = 1
+    assert_eq(typeof(small), "Int8")
+}
+
+test "a union holds a value with the type it entered with" {
+    let a: Int | String | Float = 5
+    let b: Int | String | Float = "five"
+    let c: Int | String | Float = 5.5
+    assert(a is Int, "an Int")
+    assert(!(a is String), "not a String")
+    assert(b is String, "a String")
+    assert(c is Float, "a Float")
+    if a is Int { assert_eq(a + 1, 6) }
+    let small: Int8 = 5
+    let tagged: Int | Int8 = small
+    let plain: Int | Int8 = 5
+    assert(plain is Int, "Int stays Int")
+    assert(tagged is Int8, "Int8 stays Int8")
+    assert(!(tagged is Int), "Int8 is not Int")
+}

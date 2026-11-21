@@ -1,0 +1,84 @@
+struct Point {
+    x: Int
+    y: Int
+}
+
+class Tag {
+    var label: String
+}
+
+fn show(xs: List<Int>) {
+    var line = "${xs.len()}:"
+    var i = 0
+    while i < xs.len() {
+        line = line + " ${xs.get(i)}"
+        i += 1
+    }
+    println(line)
+}
+
+fn main() {
+    var xs: List<Int> = [10, 20, 30, 40, 50]
+    show(xs)
+    println(xs.first().unwrap_or(-1))
+    println(xs.last().unwrap_or(-1))
+    println(xs.get(2))
+    println(xs.get_or(9, -1))
+    println(xs.get_or(-1, -2))
+    xs.set(2, 99)
+    show(xs)
+    println(xs.contains(99))
+    println(xs.contains(30))
+    show(xs.slice(1, 4))
+    show(xs.slice(2, 2))
+    var copy = xs.clone()
+    copy.push(60)
+    show(xs)
+    show(copy)
+    xs.set_slice(1, 3, [7, 8])
+    show(xs)
+    println(xs.pop().unwrap_or(-1))
+    println(xs.pop().unwrap_or(-1))
+    show(xs)
+    xs.clear()
+    show(xs)
+    println(xs.pop().unwrap_or(-1))
+    println(xs.first().unwrap_or(-1))
+    println(xs.is_empty())
+
+    var words: List<String> = ["a", "bb", "ccc"]
+    println(words.pop().unwrap_or("none"))
+    println(words.contains("bb"))
+    println(words.contains("zz"))
+    words.set(0, "first")
+    println(words.get(0) + "!" + words.get(1))
+    var empty: List<String> = []
+    println(empty.pop().unwrap_or("none"))
+
+    var points: List<Point> = [Point { x: 1, y: 2 }, Point { x: 3, y: 4 }]
+    println(points.contains(Point { x: 3, y: 4 }))
+    println(points.contains(Point { x: 4, y: 3 }))
+    let last = points.pop()
+    println(last!.x)
+    let top = points.get(0)
+    println(top.x + top.y)
+    points.set(0, Point { x: 5, y: 6 })
+    println(points.get(0).y)
+    var moved: List<Point> = []
+    println(moved.pop() == null)
+
+    let one = Tag { label: "one" }
+    let two = Tag { label: "two" }
+    var tags: List<Tag> = [one, two]
+    println(tags.contains(one))
+    println(tags.contains(Tag { label: "one" }))
+    let popped = tags.pop()
+    println(popped!.label)
+    println(tags.len())
+    var flags: List<Bool> = [true, false]
+    println(flags.pop().unwrap_or(false))
+    println(flags.contains(true))
+    var floats: List<Float> = [1.5, 2.5]
+    println(floats.contains(2.5))
+    println(floats.pop().unwrap_or(0.0))
+}

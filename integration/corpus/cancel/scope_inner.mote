@@ -1,0 +1,23 @@
+import { sleep } from std.task
+
+fn work() -> Result<Int, Error> {
+    let n = 0
+    scope {
+        spawn {
+            sleep(50)
+            println("slow done")
+        }
+        scope {
+            spawn { return 1 / n }
+        }
+        println("not reached")
+    }
+    return Ok(1)
+}
+
+fn main() {
+    match work() {
+        Ok(value) => println(value)
+        Err(error) => println(error.message)
+    }
+}

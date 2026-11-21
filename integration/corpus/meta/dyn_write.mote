@@ -1,0 +1,34 @@
+import { Dyn, downcast } from std.meta
+
+struct Point {
+    x: Int
+    y: Int
+}
+
+class Counter {
+    var count: Int
+    var label: String
+}
+
+fn main() {
+    let p = Point { x: 3, y: 4 }
+    let d = Dyn.of(p)
+    d.set(0, Dyn.of(30))
+    println(downcast<Int>(d.get(0)) ?? 0)
+    println(downcast<Point>(d)?.x ?? 0)
+    println(p.x)
+    let c = Counter { count: 1, label: "a" }
+    let e = Dyn.of(c)
+    e.set(0, Dyn.of(7))
+    e.set(1, Dyn.of("b"))
+    println(c.count)
+    println(c.label)
+    var xs = [10, 20, 30]
+    let l = Dyn.of(xs)
+    l.set(1, Dyn.of(99))
+    println(xs[1])
+    let present: Int? = 5
+    let o = Dyn.of(present)
+    o.set(0, Dyn.of(6))
+    println(downcast<Int?>(o) ?? 0)
+}

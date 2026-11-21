@@ -1,0 +1,15 @@
+// feed 0 10 1
+// feed 0 20 2,2
+// feed 0 30 3,3,3
+// feed 0 40 4,4,4,4
+// close 0 50
+import { Port, PortMode } from std.port
+import { sleep } from std.task
+
+fn main() {
+    let (end, rx) = Port.open(PortMode.Queue(2))
+    sleep(150)
+    for message in rx {
+        println(message.len())
+    }
+}

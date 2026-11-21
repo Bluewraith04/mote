@@ -1,0 +1,2 @@
+// Stream is declared with the collections it converts to and from.
+pub import { Stream } from std.collections

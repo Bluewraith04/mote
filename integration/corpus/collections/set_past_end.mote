@@ -1,0 +1,4 @@
+fn main() {
+    var xs: List<Int> = [1, 2]
+    xs.set(2, 0)
+}

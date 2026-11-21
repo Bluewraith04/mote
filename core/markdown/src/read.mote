@@ -1,0 +1,54 @@
+// Reading Markdown into a tree, and its HTML.
+import { Doc } from doc
+import { markdown_bytes, markdown_free, markdown_parse } from ._native
+
+/// The syntax beyond CommonMark that `parse_with` reads.
+pub struct Extensions {
+    pub tables: Bool
+    pub strikethrough: Bool
+    pub tasklists: Bool
+    pub smart_punctuation: Bool
+}
+
+/// CommonMark alone.
+pub fn commonmark() -> Extensions {
+    return Extensions { tables: false, strikethrough: false, tasklists: false, smart_punctuation: false }
+}
+
+/// CommonMark with tables, strikethrough and task lists.
+pub fn github() -> Extensions {
+    return Extensions { tables: true, strikethrough: true, tasklists: true, smart_punctuation: false }
+}
+
+/// CommonMark text as a tree; an `Err` for text that is not UTF-8.
+pub fn parse(text: String) -> Result<Doc, Error> { return parse_with(text, commonmark()) }
+
+/// Text as a tree with the extensions that are on. Raw HTML in the text becomes raw nodes.
+pub fn parse_with(text: String, extensions: Extensions) -> Result<Doc, Error> {
+    var flags = 0
+    if extensions.tables { flags = flags + 1 }
+    if extensions.strikethrough { flags = flags + 2 }
+    if extensions.tasklists { flags = flags + 4 }
+    if extensions.smart_punctuation { flags = flags + 8 }
+    let handle = markdown_parse(text.bytes(), flags)
+    if handle < 0 { return Err(Error.new(ErrorKind.InvalidData, "markdown: not UTF-8")) }
+    var buffer: [UInt8] = [0; 4096]
+    var size = markdown_bytes(handle, buffer)
+    if size > buffer.len() {
+        buffer = [0; size]
+        size = markdown_bytes(handle, buffer)
+    }
+    markdown_free(handle)
+    return Doc.from_bytes(buffer.slice(0, size))
+}
+
+/// The HTML of CommonMark text.
+pub fn render(text: String) -> Result<String, Error> { return render_with(text, commonmark()) }
+
+/// The HTML of text read with the extensions that are on.
+pub fn render_with(text: String, extensions: Extensions) -> Result<String, Error> {
+    let doc = parse_with(text, extensions)?
+    let html = doc.root().to_html()
+    doc.close()?
+    return Ok(html)
+}

@@ -1,0 +1,8 @@
+fn shr(a: Int, by: Int) -> Int {
+    return a >> by
+}
+
+fn main() {
+    println(shr(8, 2))
+    println(shr(8, -1))
+}

@@ -1,0 +1,70 @@
+import { Map, Set } from std.collections
+
+class Tag {
+    var n: Int
+}
+
+enum Held {
+    Nothing
+    Table(Map<String, Int>)
+}
+
+fn table(first: Int, second: Int) -> Map<String, Int> {
+    var made: Map<String, Int> = Map.new()
+    made.set("a", first)
+    made.set("b", second)
+    return made
+}
+
+fn main() {
+    let one = table(1, 2)
+    let two = table(1, 2)
+    let other = table(1, 3)
+    println(one == two)
+    println(one != other)
+    println([one] == [two])
+    println([one] == [other])
+    println([one, other].contains(two))
+    println([other].contains(two))
+
+    var backwards: Map<String, Int> = Map.new()
+    backwards.set("b", 2)
+    backwards.set("a", 1)
+    println([one] == [backwards])
+
+    var small: Set<Int> = Set.new()
+    small.add(1)
+    small.add(2)
+    var same: Set<Int> = Set.new()
+    same.add(2)
+    same.add(1)
+    println(small == same)
+    println([small] == [same])
+    same.add(3)
+    println([small] == [same])
+
+    let held: Held = Table(one)
+    let again: Held = Table(two)
+    println(held == again)
+    let none: Map<String, Int>? = one
+    let none_again: Map<String, Int>? = two
+    println(none == none_again)
+    println([none] == [null])
+
+    let tag = Tag { n: 1 }
+    var keyed: Map<Tag, Int> = Map.new()
+    keyed.set(tag, 5)
+    let direct = keyed.deep_clone()
+    let nested = [keyed].deep_clone()
+    let copied = nested[0].keys()[0]
+    println(direct.len())
+    println(direct.contains_key(tag))
+    println(nested[0].contains_key(copied))
+    println(nested[0].contains_key(tag))
+    var texts: Set<String> = Set.new()
+    texts.add("x")
+    let grown = [texts].deep_clone()
+    texts.add("y")
+    println(grown[0].len())
+    println(texts.len())
+}

@@ -1,0 +1,8 @@
+// A part of the text that matched.
+
+/// A part of the text that matched, by byte offsets: `start` is the first byte and `end` the one after the last.
+pub struct Match {
+    pub start: Int
+    pub end: Int
+    pub text: String
+}

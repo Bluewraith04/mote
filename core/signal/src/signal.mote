@@ -1,0 +1,31 @@
+// The signals a program can catch.
+
+/// The signals a program can catch.
+pub enum Signal {
+    Hangup
+    Interrupt
+    Quit
+    User1
+    User2
+    Alarm
+    Terminate
+    Child
+    Continue
+    WindowChange
+
+    /// The Linux number of the signal.
+    pub fn number(self) -> Int {
+        return match self {
+            Signal.Hangup => 1
+            Signal.Interrupt => 2
+            Signal.Quit => 3
+            Signal.User1 => 10
+            Signal.User2 => 12
+            Signal.Alarm => 14
+            Signal.Terminate => 15
+            Signal.Child => 17
+            Signal.Continue => 18
+            Signal.WindowChange => 28
+        }
+    }
+}

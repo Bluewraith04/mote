@@ -1,0 +1,184 @@
+// TCP streams and listeners and UDP sockets over blocking natives, each wait on a helper thread so other tasks run.
+import { Closeable } from std.traits
+import { Int64 } from std.atomic
+import { net_connect, net_listen, net_udp_bind, net_accept, net_read, net_write, net_udp_send, net_udp_recv, net_shutdown, net_close, net_address, net_port } from ._native
+import { failure } from ._error
+
+// Closes a descriptor once; a second call is an `Err`.
+fn close_fd(fd: Int64) -> Result<Null, Error> {
+    let taken = fd.swap(-1)
+    if taken < 0 { return Err(Error.new(ErrorKind.Other, "already closed")) }
+    let code = net_close(taken)
+    if code < 0 { return Err(failure(code, "close")) }
+    return Ok(null)
+}
+
+fn port_of(fd: Int64) -> Result<Int, Error> {
+    let port = net_port(fd.load())
+    if port < 0 { return Err(failure(port, "port")) }
+    return Ok(port)
+}
+
+fn address_of(fd: Int, peer: Int, what: String) -> Result<String, Error> {
+    let buffer: [UInt8] = [0; 64]
+    let length = net_address(fd, peer, buffer)
+    if length < 0 { return Err(failure(length, what)) }
+    let text = String.from_bytes(buffer.slice(0, length))
+    if text == null { return Err(Error.new(ErrorKind.InvalidData, "${what}: not an address")) }
+    return Ok(text)
+}
+
+/// A connected TCP stream. A time limit set with `set_timeout` applies to each read and write; closing twice is an error.
+pub class TcpStream: (Closeable) {
+    fd: Int64
+    timeout: Int64
+
+    /// Connects to a host name or address and a port, waiting as long as the system does.
+    pub fn connect(host: String, port: Int) -> Result<TcpStream, Error> { return TcpStream.connect_within(host, port, -1) }
+
+    /// Connects, giving up on each address after `timeout_ms`.
+    pub fn connect_within(host: String, port: Int, timeout_ms: Int) -> Result<TcpStream, Error> {
+        let fd = net_connect(host, port, timeout_ms)
+        if fd < 0 { return Err(failure(fd, "${host}:${port}")) }
+        return Ok(TcpStream.from_fd(fd))
+    }
+
+    /// A stream over a connected descriptor, which it now owns.
+    pub fn from_fd(fd: Int) -> TcpStream { return TcpStream { fd: Int64.new(fd), timeout: Int64.new(-1) } }
+
+    /// The descriptor, or -1 once closed.
+    pub fn descriptor(self) -> Int { return self.fd.load() }
+
+    /// Limits each read and write to `ms` milliseconds; a negative time waits for ever.
+    pub fn set_timeout(self, ms: Int) { self.timeout.store(ms) }
+
+    /// Reads up to `buffer.len()` bytes into the start of `buffer` as soon as some arrive: the count, and 0 at the end of the stream.
+    pub fn read_into(self, buffer: [UInt8]) -> Result<Int, Error> {
+        let count = net_read(self.fd.load(), buffer, self.timeout.load())
+        if count < 0 { return Err(failure(count, "read")) }
+        return Ok(count)
+    }
+
+    /// Up to `count` bytes as soon as some arrive; none at the end of the stream.
+    pub fn read(self, count: Int) -> Result<[UInt8], Error> {
+        let buffer: [UInt8] = [0; count]
+        let got = self.read_into(buffer)?
+        return Ok(buffer.slice(0, got))
+    }
+
+    /// Every byte until the peer closes its side.
+    pub fn read_all(self) -> Result<[UInt8], Error> {
+        var all: List<UInt8> = []
+        let buffer: [UInt8] = [0; 16384]
+        while true {
+            let got = self.read_into(buffer)?
+            if got == 0 { break }
+            for at in 0..got {
+                all.push(buffer[at])
+            }
+        }
+        return Ok(all.to_array())
+    }
+
+    /// Writes all of `bytes`.
+    pub fn write(self, bytes: [UInt8]) -> Result<Null, Error> {
+        let code = net_write(self.fd.load(), bytes, bytes.len(), self.timeout.load())
+        if code < 0 { return Err(failure(code, "write")) }
+        return Ok(null)
+    }
+
+    /// Writes the text.
+    pub fn write_string(self, text: String) -> Result<Null, Error> { return self.write(text.bytes()) }
+
+    /// Tells the peer no more bytes come, and still reads what it sends.
+    pub fn shutdown_write(self) -> Result<Null, Error> {
+        let code = net_shutdown(self.fd.load(), 1)
+        if code < 0 { return Err(failure(code, "shutdown")) }
+        return Ok(null)
+    }
+
+    /// The address and port of the other end, as `127.0.0.1:80`; an IPv6 address is in brackets.
+    pub fn peer_addr(self) -> Result<String, Error> { return address_of(self.fd.load(), 1, "peer address") }
+
+    /// The address and port of this end.
+    pub fn local_addr(self) -> Result<String, Error> { return address_of(self.fd.load(), 0, "local address") }
+
+    /// Closes the stream; a second `close` is an `Err`.
+    pub fn close(self) -> Result<Null, Error> { return close_fd(self.fd) }
+}
+
+/// A socket accepting TCP connections.
+pub class TcpListener: (Closeable) {
+    fd: Int64
+    timeout: Int64
+
+    /// Listens on an address and a port; port 0 picks a free one, and an empty host is every address.
+    pub fn bind(host: String, port: Int) -> Result<TcpListener, Error> {
+        let fd = net_listen(host, port, 128)
+        if fd < 0 { return Err(failure(fd, "${host}:${port}")) }
+        return Ok(TcpListener { fd: Int64.new(fd), timeout: Int64.new(-1) })
+    }
+
+    /// The port it listens on.
+    pub fn port(self) -> Result<Int, Error> { return port_of(self.fd) }
+
+    /// Limits each `accept` to `ms` milliseconds; a negative time waits for ever.
+    pub fn set_timeout(self, ms: Int) { self.timeout.store(ms) }
+
+    /// Waits for a connection.
+    pub fn accept(self) -> Result<TcpStream, Error> {
+        let fd = net_accept(self.fd.load(), self.timeout.load())
+        if fd < 0 { return Err(failure(fd, "accept")) }
+        return Ok(TcpStream.from_fd(fd))
+    }
+
+    /// Closes the listener; a second `close` is an `Err`.
+    pub fn close(self) -> Result<Null, Error> { return close_fd(self.fd) }
+}
+
+/// A datagram that arrived: how many bytes it put in the buffer and where it came from.
+pub struct Datagram {
+    pub size: Int
+    pub sender: String
+}
+
+/// A UDP socket.
+pub class UdpSocket: (Closeable) {
+    fd: Int64
+    timeout: Int64
+
+    /// Binds to an address and a port; port 0 picks a free one.
+    pub fn bind(host: String, port: Int) -> Result<UdpSocket, Error> {
+        let fd = net_udp_bind(host, port)
+        if fd < 0 { return Err(failure(fd, "${host}:${port}")) }
+        return Ok(UdpSocket { fd: Int64.new(fd), timeout: Int64.new(-1) })
+    }
+
+    /// The port it is bound to.
+    pub fn port(self) -> Result<Int, Error> { return port_of(self.fd) }
+
+    /// Limits each `recv_from` to `ms` milliseconds; a negative time waits for ever.
+    pub fn set_timeout(self, ms: Int) { self.timeout.store(ms) }
+
+    /// Sends one datagram and gives the bytes sent.
+    pub fn send_to(self, host: String, port: Int, bytes: [UInt8]) -> Result<Int, Error> {
+        let count = net_udp_send(self.fd.load(), host, port, bytes, bytes.len())
+        if count < 0 { return Err(failure(count, "${host}:${port}")) }
+        return Ok(count)
+    }
+
+    /// Waits for a datagram and puts it at the start of `buffer`; one longer than the buffer is cut.
+    pub fn recv_from(self, buffer: [UInt8]) -> Result<Datagram, Error> {
+        let peer: [UInt8] = [0; 64]
+        let sender: [Int] = [0; 1]
+        let count = net_udp_recv(self.fd.load(), buffer, self.timeout.load(), peer, sender)
+        if count < 0 { return Err(failure(count, "receive")) }
+        let text = String.from_bytes(peer.slice(0, max(sender[0], 0)))
+        return Ok(Datagram { size: count, sender: if text == null { "" } else { text } })
+    }
+
+    /// Closes the socket; a second `close` is an `Err`.
+    pub fn close(self) -> Result<Null, Error> { return close_fd(self.fd) }
+}
+
+fn max(a: Int, b: Int) -> Int { return if a > b { a } else { b } }

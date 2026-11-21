@@ -1,0 +1,5 @@
+# Statements of core/CORE.md with no proof form. Each line is `hash | start of the text`; the ledger test fails on an unproven statement that is not listed and on a listed one that is proven, so this list only shrinks.
+3ace2ba2 | A requirement is met when its `Done when` command passes. Each library
+2b154332 | The runtime holds the language's needs only (rule 9 of `tasks.md`). An
+5c132b9c | `core/` stays in this repository until the language is stable, then mo
+19bca39e | A new library needs the user's go for its scope.

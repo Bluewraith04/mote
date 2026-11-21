@@ -1,0 +1,49 @@
+start
+test "a buffered channel carries messages in order"
+passed
+test "a closed channel gives null once drained"
+passed
+test "try_send and try_recv never wait"
+passed
+test "a rendezvous channel hands a message over"
+passed
+test "send faults on a closed sender"
+passed
+test "a channel closes when its last sender is gone"
+passed
+test "recv_timeout gives null when nothing comes"
+passed
+test "a request carries its own reply channel"
+passed
+test "merge forwards every message of its inputs"
+passed
+test "broadcast gives every receiver every message"
+passed
+test "a mutex serializes the updates of many tasks"
+passed
+test "a mutex owns a copy of what it is given"
+passed
+test "what lock returns is a copy"
+passed
+test "get gives a copy of the whole list and set replaces it"
+passed
+test "tasks fill a mutex and the main task reads it whole"
+passed
+test "lock inside lock of the same mutex faults"
+passed
+test "a once runs its initializer one time"
+passed
+test "tasks that ask a once at the same time share one initialization"
+passed
+test "a failed initializer leaves the once empty"
+passed
+test "an atomic integer reads, writes and steps"
+passed
+test "an atomic integer faults on overflow"
+passed
+test "an atomic counter is exact across tasks"
+passed
+test "an atomic flag reads, writes and swaps"
+passed
+test "a cloned receiver shares the channel and a receiver reads as a stream"
+passed

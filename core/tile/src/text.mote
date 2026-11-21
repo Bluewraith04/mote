@@ -1,0 +1,11 @@
+// The width of text in terminal columns.
+import { glyphs, width_of } from ._glyphs
+
+/// The columns the text takes in a terminal, counting wide glyphs as two and combining marks as none.
+pub fn text_width(text: String) -> Int {
+    var total = 0
+    for glyph in glyphs(text) {
+        total += width_of(glyph)
+    }
+    return total
+}

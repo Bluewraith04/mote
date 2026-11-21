@@ -1,0 +1,27 @@
+start
+test "the built in types have their kind and name"
+passed
+test "a container names the types it holds"
+passed
+test "a struct lists its fields in order"
+passed
+test "a class is a class"
+passed
+test "methods carry their name, visibility and receiver"
+passed
+test "an enum lists its variants with their shape"
+passed
+test "a variant with a value reports it"
+passed
+test "a doc is the lines written before the type"
+passed
+test "attributes name what was written"
+passed
+test "a generic type is described at the arguments it is used with"
+passed
+test "a generic function describes the type it was called with"
+passed
+test "a type that holds itself is described once"
+passed
+test "a type lists no traits it does not declare"
+passed

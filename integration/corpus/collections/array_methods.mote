@@ -1,0 +1,30 @@
+fn main() {
+    let xs: [Int] = [10, 20, 30, 40]
+    println(xs.len())
+    println(xs.is_empty())
+    println(xs.get(1))
+    println(xs.get_or(7, -1))
+    println(xs.contains(30))
+    println(xs.contains(31))
+    let part = xs.slice(1, 3)
+    println(part.len())
+    println(part.get(0) + part.get(1))
+    var copy = xs.clone()
+    copy.set(0, 99)
+    println(xs.get(0))
+    println(copy.get(0))
+    let words: [String] = ["x", "y", "z"]
+    println(words.contains("y"))
+    println(words.slice(0, 2).len())
+    let empty: [Int] = []
+    println(empty.is_empty())
+    println(empty.slice(0, 0).len())
+    let bytes = "héllo".bytes()
+    println(bytes.len())
+    var total = 0
+    for byte in bytes {
+        total += byte as Int
+    }
+    println(total)
+    println(bytes.contains(195))
+}

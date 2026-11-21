@@ -1,0 +1,255 @@
+# Syntax
+
+## Tokens ↔ text
+
+- `Whitespace` ↔ `/[ \t\r]+/`
+- `LineComment` ↔ `/\/\/([^\/\n][^\n]*)?/`
+- `LineComment` ↔ `/\/\/\/\/[^\n]*/`
+- `DocComment` ↔ `/\/\/\/([^\/\n][^\n]*)?/` when only whitespace precedes it on the line
+- `LineComment` ↔ `/\/\/\/([^\/\n][^\n]*)?/` otherwise
+- `BlockComment` ↔ `/*` (`BlockComment` | any character)* `*/`
+- `Newline` ↔ `\n` when depth = 0 and the previous token is one of `Ident` `Int` `Float` `String` `InterpEnd` `true` `false` `null` `return` `break` `continue` `yield` `)` `]` `}` `?` `!` and the next token after whitespace and comments is not `.` or `?.`
+- `Eof` ↔ end of input
+
+- `Ident` ↔ `/[a-zA-Z_][a-zA-Z0-9_]*/`
+- `Int` ↔ `/0x[0-9a-fA-F_]+(_?[ui](8|16|32|64))?/`
+- `Int` ↔ `/0b[01_]+(_?[ui](8|16|32|64))?/`
+- `Int` ↔ `/0o[0-7_]+(_?[ui](8|16|32|64))?/`
+- `Int` ↔ `/[0-9][0-9_]*(_?[ui](8|16|32|64))?/`
+- `Float` ↔ `/[0-9][0-9_]*\.[0-9][0-9_]*([eE][+-]?[0-9_]+)?(_?f(32|64))?/`
+- `Float` ↔ `/[0-9][0-9_]*[eE][+-]?[0-9_]+(_?f(32|64))?/`
+- `Int` `Dot` `Int` ↔ `/[0-9]+\.[0-9]+/` when the previous token is `Dot`
+- `String` ↔ `/"([^"\\$]|\\.|\$(?!\{))*"/`
+- `InterpStart` ↔ `/"([^"\\$]|\\.|\$(?!\{))*\$\{/`
+- `InterpMid` ↔ `/\}([^"\\$]|\\.|\$(?!\{))*\$\{/` closing a hole
+- `InterpEnd` ↔ `/\}([^"\\$]|\\.|\$(?!\{))*"/` closing a hole
+
+- `Let` ↔ `let`
+- `Var` ↔ `var`
+- `Fn` ↔ `fn`
+- `Struct` ↔ `struct`
+- `Class` ↔ `class`
+- `Enum` ↔ `enum`
+- `Trait` ↔ `trait`
+- `Type` ↔ `type`
+- `Pub` ↔ `pub`
+- `Import` ↔ `import`
+- `From` ↔ `from`
+- `As` ↔ `as`
+- `Native` ↔ `native`
+- `Scope` ↔ `scope`
+- `Spawn` ↔ `spawn`
+- `With` ↔ `with`
+- `Return` ↔ `return`
+- `If` ↔ `if`
+- `Else` ↔ `else`
+- `Match` ↔ `match`
+- `While` ↔ `while`
+- `For` ↔ `for`
+- `In` ↔ `in`
+- `Break` ↔ `break`
+- `Continue` ↔ `continue`
+- `Yield` ↔ `yield`
+- `SelfLower` ↔ `self`
+- `SelfUpper` ↔ `Self`
+- `True` ↔ `true`
+- `False` ↔ `false`
+- `Null` ↔ `null`
+- `Super` ↔ `super`
+- `Is` ↔ `is`
+
+- `Plus` ↔ `+`
+- `Minus` ↔ `-`
+- `Star` ↔ `*`
+- `Slash` ↔ `/`
+- `Percent` ↔ `%`
+- `Caret` ↔ `^`
+- `Ampersand` ↔ `&`
+- `Pipe` ↔ `|`
+- `Tilde` ↔ `~`
+- `Bang` ↔ `!`
+- `EqEq` ↔ `==`
+- `NotEq` ↔ `!=`
+- `Lt` ↔ `<`
+- `LtEq` ↔ `<=`
+- `Gt` ↔ `>`
+- `GtEq` ↔ `>=`
+- `AndAnd` ↔ `&&`
+- `OrOr` ↔ `||`
+- `Shl` ↔ `<<`
+- `Shr` ↔ `>>`
+- `Eq` ↔ `=`
+- `PlusEq` ↔ `+=`
+- `MinusEq` ↔ `-=`
+- `StarEq` ↔ `*=`
+- `SlashEq` ↔ `/=`
+- `PercentEq` ↔ `%=`
+- `AmpEq` ↔ `&=`
+- `PipeEq` ↔ `|=`
+- `CaretEq` ↔ `^=`
+- `ShlEq` ↔ `<<=`
+- `ShrEq` ↔ `>>=`
+- `NullCoalesceEq` ↔ `??=`
+- `Arrow` ↔ `->`
+- `FatArrow` ↔ `=>`
+- `ColonColon` ↔ `::`
+- `DotDotEq` ↔ `..=`
+- `DotDotDot` ↔ `...`
+- `DotDot` ↔ `..`
+- `Question` ↔ `?`
+- `QuestionDot` ↔ `?.`
+- `QuestionQuestion` ↔ `??`
+- `OpenParen` ↔ `(`
+- `CloseParen` ↔ `)`
+- `OpenBrace` ↔ `{`
+- `CloseBrace` ↔ `}`
+- `OpenBracket` ↔ `[`
+- `CloseBracket` ↔ `]`
+- `Comma` ↔ `,`
+- `Colon` ↔ `:`
+- `Dot` ↔ `.`
+- `Semicolon` ↔ `;`
+- `At` ↔ `@`
+
+## Nodes ↔ tokens
+
+- `Name` ↔ `Ident`
+- `MemberName` ↔ `Ident` | `from`
+- `Path` ↔ `Name` (`.` `Name`)*
+- `Doc` ↔ `DocComment`+
+- `Separator` ↔ `Newline` | `;`
+- `Block` ↔ `{` (`Stmt` | `;`)* `}`
+
+- `Program` ↔ (`Item` | `Separator`)*
+- `Item` ↔ `Doc`? `Attribute`* (`Function` | `NativeFunction` | `Test` | `Record` | `Enum` | `Trait` | `TypeAlias` | `Import` | `TopLevelStmt`)
+- `ErrorItem` ↔ any tokens up to the next token that starts an `Item`
+- `Attribute` ↔ `@` `Name` (`(` (`AttributeArg` (`,` `AttributeArg`)* `,`?)? `)`)?
+- `AttributeArg` ↔ (`Path` `=`)? `AttributeValue`
+- `AttributeValue` ↔ `Path` | `String` | `Int` | `Float` | `true` | `false`
+
+- `Function` ↔ `pub`? `fn` `MemberName` `Generics`? `(` `Params` `)` (`->` `Type`)? `Block`
+- `NativeFunction` ↔ `pub`? `native` `fn` `Name` `Generics`? `(` `Params` `)` (`->` `Type`)?
+- `Test` ↔ `test` `String` `Block`
+- `Record` ↔ `pub`? (`struct` | `class`) `Name` `Generics`? `Traits`? `{` (`Field` | `Function`)* `}`
+- `Enum` ↔ `pub`? `enum` `Name` `Generics`? `Traits`? `{` (`Variant` `,`?)* `Function`* `}`
+- `Trait` ↔ `pub`? `trait` `Name` `Generics`? `{` `TraitMember`* `}`
+- `TypeAlias` ↔ `pub`? `type` `Name` `Generics`? `=` `Type`
+- `Import` ↔ `pub`? `import` `ModulePath` (`as` `Name`)?
+- `Import` ↔ `pub`? `import` `{` (`ImportName` (`,` `ImportName`)* `,`? | `*`) `}` `from` `ModulePath`
+- `ImportName` ↔ `Name` (`as` `Name`)?
+- `ModulePath` ↔ (`.` | `..`)* (`super` `.`)* `Name` (`.` `Name`)*
+- `TopLevelStmt` ↔ `pub` `Binding` | `Stmt`
+
+- `Generics` ↔ `<` `GenericParam` (`,` `GenericParam`)* `,`? `>`
+- `GenericParam` ↔ `Name` (`:` `Type` (`+` `Type`)*)?
+- `Traits` ↔ `:` `(` `Type` (`,` `Type`)* `,`? `)`
+- `Params` ↔ (`Param` (`,` `Param`)* `,`?)?
+- `Param` ↔ `SelfParam` | `VariadicParam` | `NamedParam`
+- `SelfParam` ↔ `var`? `self`
+- `VariadicParam` ↔ `...` `Name` (`:` `Type`)?
+- `NamedParam` ↔ `var`? `Name` (`:` `Type`)? (`=` `Expr`)?
+- `Field` ↔ `Doc`? `pub`? (`var` | `let`)? `Name` `:` `Type` (`=` `Expr`)?
+- `Variant` ↔ `Doc`? `Attribute`* `Name` (`(` (`Type` (`,` `Type`)* `,`?)? `)` | `{` (`Field` `,`?)* `}` | `=` `Expr`)?
+- `TraitMember` ↔ `fn` `Name` `Generics`? `(` `Params` `)` (`->` `Type`)? `Block`?
+
+- `NamedType` ↔ `Path`
+- `GenericType` ↔ `Path` `<` `Type` (`,` `Type`)* `,`? `>`
+- `NullableType` ↔ `Type` `?`
+- `NullableType` of `NullableType` ↔ `Type` `??`
+- `TupleType` ↔ `(` `)` | `(` `Type` `,` `)` | `(` `Type` (`,` `Type`)+ `,`? `)`
+- `FunctionType` ↔ `Send`? `(` (`var`? `Type` (`,` `var`? `Type`)* `,`?)? `)` `->` `Type`
+- `ArrayType` ↔ `[` `Type` (`;` `Expr`)? `]`
+- `UnionType` ↔ `Type` (`|` `Type`)+
+- `SelfType` ↔ `Self`
+- `GroupedType` ↔ `(` `Type` `)`
+
+- `Binding` ↔ (`let` | `var`) `Pattern` (`:` `Type`)? `=` `Expr`
+- `Assign` ↔ `Expr` (`=` | `+=` | `-=` | `*=` | `/=` | `%=` | `&=` | `|=` | `^=` | `<<=` | `>>=` | `??=`) `Expr`
+- `If` ↔ `if` `Condition` `Block` (`else` (`If` | `Block`))?
+- `While` ↔ `while` `Condition` `Block`
+- `For` ↔ `for` `Pattern` `in` `Expr` `Block`
+- `Match` ↔ `match` `Expr` `{` (`MatchArm` `,`?)* `}`
+- `MatchArm` ↔ `Pattern` (`if` `Expr`)? `=>` (`Block` | `Stmt`)
+- `Condition` ↔ `let` `Pattern` `=` `Expr` | `Expr`
+- `Scope` ↔ `scope` `Block`
+- `With` ↔ `with` `Name` `=` `Expr` `Block`
+- `SpawnStmt` ↔ `spawn` (`Block` | `Expr`)
+- `Return` ↔ `return` `Expr`?
+- `Break` ↔ `break` `Expr`?
+- `Continue` ↔ `continue`
+- `Yield` ↔ `yield` `Expr`
+- `ExprStmt` ↔ `Expr`
+- `Stmt` ↔ `Binding` | `Assign` | `If` | `While` | `For` | `Match` | `Scope` | `With` | `SpawnStmt` | `Return` | `Break` | `Continue` | `Yield` | `Function` | `ExprStmt` | `ErrorStmt`
+- `ErrorStmt` ↔ any tokens up to the next token that starts a `Stmt` or `}`
+
+- `WildcardPattern` ↔ `_`
+- `LiteralPattern` ↔ `Int` | `-` `Int` | `String` | `true` | `false` | `null`
+- `RangePattern` ↔ `Pattern` (`..` | `..=`) `Pattern`
+- `BindingPattern` ↔ `Name`
+- `AtPattern` ↔ `Name` `@` `Pattern`
+- `OrPattern` ↔ `Pattern` (`|` `Pattern`)+
+- `TuplePattern` ↔ `(` (`Pattern` (`,` `Pattern`)* `,`?)? `)`
+- `PathPattern` ↔ `Name` (`.` `Name`)+
+- `TupleStructPattern` ↔ `Path` `(` (`Pattern` (`,` `Pattern`)* `,`?)? `)`
+- `StructPattern` ↔ `Path` `{` (`FieldPattern` `,`?)* `..`? `}`
+- `FieldPattern` ↔ `Name` (`:` `Pattern`)?
+- `TypePattern` ↔ (`Name` | `_`) `:` `Type`
+
+- `IntLiteral` ↔ `Int`
+- `FloatLiteral` ↔ `Float`
+- `StringLiteral` ↔ `String`
+- `InterpolatedString` ↔ `InterpStart` `Expr` (`InterpMid` `Expr`)* `InterpEnd`
+- `BoolLiteral` ↔ `true` | `false`
+- `NullLiteral` ↔ `null`
+- `Ident` ↔ `Name`
+- `SelfValue` ↔ `self`
+- `Grouped` ↔ `(` `Expr` `)`
+- `TupleLiteral` ↔ `(` `)` | `(` `Expr` `,` (`Expr` (`,` `Expr`)* `,`?)? `)`
+- `ListLiteral` ↔ `[` (`Expr` (`,` `Expr`)* `,`?)? `]`
+- `ArrayRepeat` ↔ `[` `Expr` `;` `Expr` `]`
+- `MapLiteral` ↔ `{` (`Expr` `:` `Expr` (`,` `Expr` `:` `Expr`)* `,`?)? `}`
+- `StructInit` ↔ `Path` `{` (`FieldInit` `,`?)* `}`
+- `FieldInit` ↔ `Name` `:` `Expr` | `Name` | `..` `Expr`
+- `Lambda` ↔ (`|` (`LambdaParam` (`,` `LambdaParam`)* `,`?)? `|` | `||`) (`->` `Type`)? (`Block` | `Expr`)
+- `LambdaParam` ↔ `var`? `Name` (`:` `Type`)?
+- `Call` ↔ `Expr` `(` (`Arg` (`,` `Arg`)* `,`?)? `)`
+- `Arg` ↔ (`Name` `=`)? `Expr`
+- `Member` ↔ `Expr` `.` `MemberName`
+- `TupleIndex` ↔ `Expr` `.` `Int`
+- `OptionalMember` ↔ `Expr` `?.` `MemberName`
+- `Index` ↔ `Expr` `[` `Expr` `]`
+- `Slice` ↔ `Expr` `[` `Expr`? (`..` | `..=`) `Expr`? (`..` `Expr`)? `]`
+- `TypeApply` ↔ `Path` `<` `Type` (`,` `Type`)* `,`? `>`
+- `Unwrap` ↔ `Expr` `!`
+- `Propagate` ↔ `Expr` `?`
+- `Unary` ↔ (`-` | `!` | `~`) `Expr`
+- `Binary` ↔ `Expr` (`*` | `/` | `%` | `+` | `-` | `<<` | `>>` | `<` | `<=` | `>` | `>=` | `==` | `!=` | `&` | `^` | `|` | `&&` | `||` | `??`) `Expr`
+- `TypeTest` ↔ `Expr` `is` `Type`
+- `Cast` ↔ `Expr` `as` `Type`
+- `Range` ↔ `Expr` (`..` | `..=`) `Expr`
+- `SpawnExpr` ↔ `spawn` (`Block` | `Expr`)
+- `IfExpr` ↔ `if` `Condition` `{` `Expr` `}` `else` (`IfExpr` | `{` `Expr` `}`)
+- `MatchExpr` ↔ `match` `Expr` `{` (`ValueArm` `,`?)* `}`
+- `ValueArm` ↔ `Pattern` (`if` `Expr`)? `=>` `Expr`
+- `Expr` ↔ `IntLiteral` | `FloatLiteral` | `StringLiteral` | `InterpolatedString` | `BoolLiteral` | `NullLiteral` | `Ident` | `SelfValue` | `Grouped` | `TupleLiteral` | `ListLiteral` | `ArrayRepeat` | `MapLiteral` | `StructInit` | `Lambda` | `Call` | `Member` | `TupleIndex` | `OptionalMember` | `Index` | `Slice` | `TypeApply` | `Unwrap` | `Propagate` | `Unary` | `Binary` | `TypeTest` | `Cast` | `Range` | `SpawnExpr` | `IfExpr` | `MatchExpr`
+- `Pattern` ↔ `WildcardPattern` | `LiteralPattern` | `RangePattern` | `BindingPattern` | `AtPattern` | `OrPattern` | `TuplePattern` | `PathPattern` | `TupleStructPattern` | `StructPattern` | `TypePattern`
+- `Type` ↔ `NamedType` | `GenericType` | `NullableType` | `TupleType` | `ArrayType` | `FunctionType` | `UnionType` | `SelfType` | `GroupedType`
+
+- `Precedence 1` ↔ `??`
+- `Precedence 2` ↔ `||`
+- `Precedence 3` ↔ `&&`
+- `Precedence 4` ↔ `|`
+- `Precedence 5` ↔ `^`
+- `Precedence 6` ↔ `&`
+- `Precedence 7` ↔ `==` `!=`
+- `Precedence 8` ↔ `<` `<=` `>` `>=`
+- `Precedence 9` ↔ `is`
+- `Precedence 10` ↔ `<<` `>>`
+- `Precedence 11` ↔ `..` `..=`
+- `Precedence 12` ↔ `+` `-`
+- `Precedence 13` ↔ `*` `/` `%`
+- `Precedence 14` ↔ `as`
+- `Precedence 15` ↔ prefix `-` `!` `~`
+- `Precedence 16` ↔ postfix `.` `?.` `(` `[` `!` `?`
+
+- `Contextual word` ↔ `Ident` with text `test` | `Send` | `_`

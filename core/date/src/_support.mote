@@ -1,0 +1,59 @@
+// Number helpers and the day count of the calendar, which the date types share.
+import { pad_start, parse_int } from std.string
+
+pub fn modulo(a: Int, b: Int) -> Int {
+    let r = a % b
+    if r < 0 { return r + b }
+    return r
+}
+
+pub fn bad(what: String, text: String) -> Error {
+    return Error.new(ErrorKind.InvalidData, "not ${what}: ${text}")
+}
+
+pub fn all_digits(text: String) -> Bool {
+    for b in text.bytes() {
+        if b < 48 || b > 57 { return false }
+    }
+    return true
+}
+
+// The digits of a part of fixed width.
+pub fn digits(text: String, width: Int, what: String) -> Result<Int, Error> {
+    if text.len() != width || !all_digits(text) { return Err(bad(what, text)) }
+    return parse_int(text)
+}
+
+pub fn two(n: Int) -> String { return pad_start(n.to_string(), 2, "0") }
+
+
+// The days from 1970-01-01 to a date of the proleptic Gregorian calendar.
+pub fn civil_to_days(year: Int, month: Int, day: Int) -> Int {
+    var y = year
+    if month <= 2 { y -= 1 }
+    var era = y / 400
+    if y < 0 { era = (y - 399) / 400 }
+    let yoe = y - era * 400
+    var shifted = month - 3
+    if month <= 2 { shifted = month + 9 }
+    let doy = (153 * shifted + 2) / 5 + day - 1
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy
+    return era * 146097 + doe - 719468
+}
+
+pub fn days_to_civil(days: Int) -> (Int, Int, Int) {
+    let z = days + 719468
+    var era = z / 146097
+    if z < 0 { era = (z - 146096) / 146097 }
+    let doe = z - era * 146097
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100)
+    let mp = (5 * doy + 2) / 153
+    let day = doy - (153 * mp + 2) / 5 + 1
+    var month = mp + 3
+    if mp >= 10 { month = mp - 9 }
+    var year = yoe + era * 400
+    if month <= 2 { year += 1 }
+    return (year, month, day)
+}
+

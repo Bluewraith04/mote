@@ -1,0 +1,17 @@
+start
+test "a list becomes an array and back"
+passed
+test "an empty list and an empty array convert"
+passed
+test "a converted array is a copy"
+passed
+test "a string is made from valid bytes only"
+passed
+test "bytes grow and read back"
+passed
+test "bytes are made from an array or a string and extended"
+passed
+test "a clone of bytes is a copy"
+passed
+test "bytes that are not text give none"
+passed

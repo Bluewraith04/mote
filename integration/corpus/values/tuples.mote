@@ -1,0 +1,23 @@
+fn pair(a: Int, b: Float) -> (Int, Float) {
+    return (a, b)
+}
+
+fn swap(t: (Int, Int)) -> (Int, Int) {
+    return (t.1, t.0)
+}
+
+fn main() {
+    let t = pair(2, 1.5)
+    println(t.0)
+    println(t.1)
+    let (a, b) = swap((7, 9))
+    println(a)
+    println(b)
+    var u = (1, true, 3)
+    u.2 = 30
+    println(u.0)
+    println(u.1)
+    println(u.2)
+    let nested = ((1, 2), (3, 4))
+    println(nested.1.0 + nested.0.1)
+}

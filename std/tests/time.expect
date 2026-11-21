@@ -1,0 +1,11 @@
+start
+test "a duration is made in each unit and read back"
+passed
+test "durations add, subtract and multiply"
+passed
+test "durations compare and show their unit"
+passed
+test "an instant moves by a duration and measures the span"
+passed
+test "a sleep moves the clock by at least its duration"
+passed

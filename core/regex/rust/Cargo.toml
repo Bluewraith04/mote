@@ -1,0 +1,21 @@
+[package]
+name = "mote-regex"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[lib]
+name = "regex"
+crate-type = ["cdylib", "staticlib"]
+
+[dependencies]
+regex = "1"
+
+[profile.release]
+opt-level = 2
+panic = "abort"
+lto = true
+codegen-units = 1
+strip = true
+
+[workspace]

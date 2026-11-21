@@ -1,0 +1,23 @@
+[package]
+name = "mote-yaml"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[lib]
+name = "yaml"
+crate-type = ["cdylib", "staticlib"]
+
+[dependencies]
+serde = "1"
+serde_yaml_ng = "0.10"
+serde_json = { version = "1", features = ["preserve_order"] }
+
+[profile.release]
+opt-level = 2
+panic = "abort"
+lto = true
+codegen-units = 1
+strip = true
+
+[workspace]

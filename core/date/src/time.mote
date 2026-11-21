@@ -1,0 +1,43 @@
+// A time of day.
+import { Display, Eq, Ord } from std.traits
+import { pad_start, parse_int } from std.string
+import { all_digits, bad, digits, modulo, two } from ._support
+
+pub struct TimeOfDay: (Eq, Ord, Display) {
+    h: Int
+    m: Int
+    s: Int
+
+    /// The time, or `null` when an hour, minute or second is out of range.
+    pub fn new(hour: Int, minute: Int, second: Int) -> TimeOfDay? {
+        if hour < 0 || hour > 23 || minute < 0 || minute > 59 || second < 0 || second > 59 { return null }
+        return TimeOfDay { h: hour, m: minute, s: second }
+    }
+
+    /// The time `seconds` after midnight, wrapping at a day.
+    pub fn from_seconds(seconds: Int) -> TimeOfDay {
+        let n = modulo(seconds, 86400)
+        return TimeOfDay { h: n / 3600, m: n % 3600 / 60, s: n % 60 }
+    }
+
+    /// `HH:MM:SS`.
+    pub fn parse(text: String) -> Result<TimeOfDay, Error> {
+        let parts = text.split(":")
+        if parts.len() != 3 { return Err(bad("a time", text)) }
+        let hour = digits(parts.get(0), 2, "an hour")?
+        let minute = digits(parts.get(1), 2, "a minute")?
+        let second = digits(parts.get(2), 2, "a second")?
+        let made = TimeOfDay.new(hour, minute, second)
+        if made == null { return Err(bad("a time", text)) }
+        return Ok(made)
+    }
+
+    pub fn hour(self) -> Int { return self.h }
+    pub fn minute(self) -> Int { return self.m }
+    pub fn second(self) -> Int { return self.s }
+    pub fn seconds(self) -> Int { return self.h * 3600 + self.m * 60 + self.s }
+    pub fn eq(self, other: TimeOfDay) -> Bool { return self.seconds() == other.seconds() }
+    pub fn compare(self, other: TimeOfDay) -> Int { return self.seconds() - other.seconds() }
+    pub fn to_string(self) -> String { return "${two(self.h)}:${two(self.m)}:${two(self.s)}" }
+}
+

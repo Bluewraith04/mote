@@ -1,0 +1,24 @@
+let greeting = "hi " + "there"
+var calls = 0
+calls += 1
+let table = build()
+let doubler: (Int) -> Int = |n| n * 2
+let twelve = doubler(6)
+
+fn build() -> Int {
+    return 7 * 6
+}
+
+fn bump() -> Int {
+    return calls + 1
+}
+
+fn main() {
+    println(greeting)
+    println(table)
+    println(twelve)
+    println(bump())
+    let f = bump
+    println(f())
+    println(calls)
+}

@@ -1,0 +1,27 @@
+fn checked(n: Int) -> Result<Int, Int> {
+    if n < 0 {
+        return Err(n)
+    }
+    return Ok(n * 2)
+}
+
+fn chain(n: Int) -> Result<Int, Int> {
+    let a = checked(n)?
+    let b = checked(a - 10)?
+    return Ok(a + b)
+}
+
+fn show(r: Result<Int, Int>) {
+    match r {
+        Ok(v) => println(v)
+        Err(e) => println(e)
+    }
+}
+
+fn main() {
+    show(chain(7))
+    show(chain(2))
+    show(chain(-1))
+    println(checked(21)!)
+    println(chain(8).is_ok())
+}

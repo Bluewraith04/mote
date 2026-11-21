@@ -1,0 +1,40 @@
+import { Stream } from std.collections
+
+fn count(n: Int) -> Stream<Int> {
+    var i = 0
+    while i < n {
+        yield i
+        i += 1
+    }
+}
+
+fn words() -> Stream<String> {
+    yield "a"
+    yield "b"
+}
+
+fn show(items: Stream<Int | String>) {
+    for item in items {
+        println(item)
+    }
+}
+
+fn main() {
+    let wide: Stream<Int?> = count(3)
+    for x in wide {
+        println(x)
+    }
+    let mixed: Stream<Int | String> = count(2)
+    show(mixed)
+    let texts: Stream<Int | String> = words()
+    show(texts)
+    let twice: Stream<Int | String | Float> = mixed2()
+    for x in twice {
+        println(x)
+    }
+}
+
+fn mixed2() -> Stream<Int | String> {
+    yield 7
+    yield "seven"
+}

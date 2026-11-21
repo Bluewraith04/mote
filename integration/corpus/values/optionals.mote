@@ -1,0 +1,53 @@
+fn find(xs: [Int; 4], n: Int) -> Int? {
+    for i in 0..4 {
+        if xs[i] == n {
+            return i
+        }
+    }
+    return null
+}
+
+fn half(n: Int) -> Int? {
+    if n % 2 != 0 {
+        return null
+    }
+    return n / 2
+}
+
+fn quarter(n: Int) -> Int? {
+    let h = half(n)?
+    return half(h)
+}
+
+fn score(o: Float32?) -> Float32 {
+    if o == null {
+        return 0.0
+    }
+    return o
+}
+
+fn maybe_pair(flag: Bool) -> (Int, Int)? {
+    if flag {
+        return (1, 2)
+    }
+    return null
+}
+
+fn main() {
+    let xs: [Int; 4] = [4, 5, 6, 7]
+    let a = find(xs, 6)
+    let b = find(xs, 9)
+    println(a == null)
+    println(b == null)
+    println(a!)
+    println(quarter(8)!)
+    println(quarter(6) == null)
+    println(quarter(3) == null)
+    println(score(2.5))
+    println(score(null))
+    let p = maybe_pair(true)
+    if p != null {
+        println(p.0 + p.1)
+    }
+    println(maybe_pair(false) == null)
+}

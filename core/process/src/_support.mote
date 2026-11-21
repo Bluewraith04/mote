@@ -1,0 +1,81 @@
+// The pieces that commands and children share.
+import { Stdio } from .stdio
+import { process_read } from ._native
+
+pub fn failure(code: Int, what: String) -> Error {
+    let errno = -code
+    var kind = ErrorKind.Other
+    var text = "error ${errno}"
+    if errno == 1 {
+        kind = ErrorKind.PermissionDenied
+        text = "operation not permitted"
+    } else if errno == 2 {
+        kind = ErrorKind.NotFound
+        text = "no such file or directory"
+    } else if errno == 3 {
+        text = "no such process"
+    } else if errno == 7 {
+        text = "argument list too long"
+    } else if errno == 8 {
+        text = "exec format error"
+    } else if errno == 9 {
+        text = "bad file descriptor"
+    } else if errno == 10 {
+        text = "no child process"
+    } else if errno == 12 {
+        text = "out of memory"
+    } else if errno == 13 {
+        kind = ErrorKind.PermissionDenied
+        text = "permission denied"
+    } else if errno == 20 {
+        text = "not a directory"
+    } else if errno == 24 {
+        text = "too many open files"
+    } else if errno == 32 {
+        text = "broken pipe"
+    } else if errno == 36 {
+        text = "file name too long"
+    }
+    return Error.new(kind, "${what}: ${text}")
+}
+
+pub fn mode_of(stdio: Stdio) -> Int {
+    return match stdio {
+        Stdio.Inherit => 0
+        Stdio.Piped => 1
+        Stdio.Null => 2
+        Stdio.Merged => 3
+    }
+}
+
+pub fn block_of(items: List<String>) -> [UInt8] {
+    var bytes: List<UInt8> = []
+    for item in items {
+        for byte in item.bytes() {
+            bytes.push(byte)
+        }
+        bytes.push(0)
+    }
+    return bytes.to_array()
+}
+
+pub fn descriptor(bytes: [UInt8], index: Int) -> Int {
+    let at = index * 4
+    let value = bytes[at] as Int + bytes[at + 1] as Int * 256 + bytes[at + 2] as Int * 65536 + bytes[at + 3] as Int * 16777216
+    return if value >= 2147483648 { value - 4294967296 } else { value }
+}
+
+// Every byte a descriptor gives until its end.
+pub fn read_all_from(fd: Int) -> Result<[UInt8], Error> {
+    var all: List<UInt8> = []
+    let buffer: [UInt8] = [0; 65536]
+    while true {
+        let count = process_read(fd, buffer, buffer.len())
+        if count < 0 { return Err(failure(count, "read")) }
+        if count == 0 { break }
+        for at in 0..count {
+            all.push(buffer[at])
+        }
+    }
+    return Ok(all.to_array())
+}

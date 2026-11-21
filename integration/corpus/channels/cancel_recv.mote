@@ -1,0 +1,16 @@
+import { Channel } from std.sync
+
+fn main() {
+    let (tx, rx) = Channel<Int>(1)
+    let (ready_tx, ready_rx) = Channel<Int>(1)
+    let waiter = spawn {
+        ready_tx.send(1)
+        let v = rx.recv()
+        return v == null
+    }
+    println(ready_rx.recv()!)
+    waiter.cancel()
+    println(waiter.await().is_err())
+    println(waiter.is_ready())
+    println(tx.try_send(2))
+}

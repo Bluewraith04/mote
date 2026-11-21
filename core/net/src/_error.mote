@@ -1,0 +1,45 @@
+// The error a failed call of the native library turns into.
+
+let TIMED_OUT = -4097
+
+/// The error for a negated errno or resolver code, naming what was asked.
+pub fn failure(code: Int, what: String) -> Error {
+    if code == TIMED_OUT { return Error.new(ErrorKind.TimedOut, "${what}: timed out") }
+    if code <= -10000 { return Error.new(ErrorKind.NotFound, "${what}: the name does not resolve") }
+    let errno = -code
+    var kind = ErrorKind.Other
+    var text = "error ${errno}"
+    if errno == 4 {
+        kind = ErrorKind.Interrupted
+        text = "interrupted"
+    } else if errno == 9 {
+        text = "bad file descriptor"
+    } else if errno == 13 {
+        kind = ErrorKind.PermissionDenied
+        text = "permission denied"
+    } else if errno == 22 {
+        kind = ErrorKind.InvalidData
+        text = "invalid argument"
+    } else if errno == 32 {
+        text = "broken pipe"
+    } else if errno == 98 {
+        kind = ErrorKind.AlreadyExists
+        text = "address already in use"
+    } else if errno == 99 {
+        text = "address not available"
+    } else if errno == 101 {
+        text = "network unreachable"
+    } else if errno == 104 {
+        text = "connection reset"
+    } else if errno == 107 {
+        text = "not connected"
+    } else if errno == 110 {
+        kind = ErrorKind.TimedOut
+        text = "timed out"
+    } else if errno == 111 {
+        text = "connection refused"
+    } else if errno == 113 {
+        text = "host unreachable"
+    }
+    return Error.new(kind, "${what}: ${text}")
+}

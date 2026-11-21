@@ -1,0 +1,23 @@
+start
+test "abs, min and max"
+passed
+test "compare orders two numbers"
+passed
+test "to_string writes digits"
+passed
+test "from converts between Int, Float and Bool"
+passed
+test "checked arithmetic gives null on overflow"
+passed
+test "wrapping arithmetic wraps at the width"
+passed
+test "saturating arithmetic stops at the ends"
+passed
+test "overflowing arithmetic reports the wrap"
+passed
+test "shifts take the amount modulo the width or report it"
+passed
+test "casts wrap, saturate and round"
+passed
+test "an overflow is a fault in a task"
+passed

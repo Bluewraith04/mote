@@ -1,0 +1,21 @@
+class C {
+    var a: Int
+}
+
+struct P {
+    var x: Int
+}
+
+fn main() {
+    let c = C { a: 1 }
+    println(typeof(c))
+    println(typeof(P { x: 1 }))
+    println(typeof([1, 2]))
+    let u: Int | String = 4
+    println(typeof(u))
+    println(c)
+    println(P { x: 2 })
+    var xs: List<C> = [C { a: 1 }, C { a: 2 }, C { a: 3 }]
+    xs[0..2] = [C { a: 9 }, C { a: 8 }]
+    println(xs)
+}

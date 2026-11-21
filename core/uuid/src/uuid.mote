@@ -1,0 +1,164 @@
+// A 128-bit identifier of version 4 or 7.
+import { Display, Eq, Ord } from std.traits
+import { Random, system_bytes } from random
+import { Alphabet, decode, encode } from base64
+
+let HEX = "0123456789abcdef"
+
+fn invalid(text: String) -> Error { return Error.new(ErrorKind.InvalidData, text) }
+
+fn hex_value(code: Int) -> Int {
+    if code >= 48 && code <= 57 { return code - 48 }
+    if code >= 97 && code <= 102 { return code - 87 }
+    if code >= 65 && code <= 70 { return code - 55 }
+    return -1
+}
+
+// Four bytes starting at `at` as one number.
+fn word(bytes: [UInt8], at: Int) -> Int {
+    return (bytes[at] as Int) * 16777216 + (bytes[at + 1] as Int) * 65536 + (bytes[at + 2] as Int) * 256 + (bytes[at + 3] as Int)
+}
+
+/// A 128-bit identifier. The order is that of the bytes, so version 7 values sort by their time.
+pub struct Uuid: (Eq, Ord, Display) {
+    a: Int
+    b: Int
+    c: Int
+    d: Int
+
+    /// The identifier of 16 zero bytes.
+    pub fn nil() -> Uuid { return Uuid { a: 0, b: 0, c: 0, d: 0 } }
+
+    /// An identifier from 16 bytes, which are taken as they are.
+    pub fn from_bytes(bytes: [UInt8]) -> Result<Uuid, Error> {
+        if bytes.len() != 16 { return Err(invalid("uuid: ${bytes.len()} bytes, not 16")) }
+        return Ok(Uuid { a: word(bytes, 0), b: word(bytes, 4), c: word(bytes, 8), d: word(bytes, 12) })
+    }
+
+    // The 16 bytes with the version and the variant bits set.
+    fn marked(var bytes: [UInt8], version: Int) -> Uuid {
+        bytes[6] = (((bytes[6] as Int) % 16) + version * 16) as UInt8
+        bytes[8] = (((bytes[8] as Int) % 64) + 128) as UInt8
+        return Uuid.from_bytes(bytes)!
+    }
+
+    /// A random identifier (version 4) from the system's source.
+    pub fn v4() -> Result<Uuid, Error> {
+        var bytes = system_bytes(16)?
+        return Ok(Uuid.marked(bytes, 4))
+    }
+
+    /// A random identifier from a seeded generator, for tests and replays.
+    pub fn v4_from(var random: Random) -> Uuid {
+        var bytes = random.bytes(16)
+        return Uuid.marked(bytes, 4)
+    }
+
+    /// A time-ordered identifier (version 7): the 48 bits of the Unix time in milliseconds, then random bits from the system's source.
+    pub fn v7(unix_millis: Int) -> Result<Uuid, Error> {
+        var bytes = system_bytes(16)?
+        return Uuid.stamped(unix_millis, bytes)
+    }
+
+    /// Like `v7` with the random bits from a seeded generator.
+    pub fn v7_from(unix_millis: Int, var random: Random) -> Result<Uuid, Error> {
+        var bytes = random.bytes(16)
+        return Uuid.stamped(unix_millis, bytes)
+    }
+
+    fn stamped(unix_millis: Int, var bytes: [UInt8]) -> Result<Uuid, Error> {
+        if unix_millis < 0 || unix_millis >= 281474976710656 { return Err(invalid("uuid: ${unix_millis} does not fit 48 bits")) }
+        var rest = unix_millis
+        var at = 5
+        while at >= 0 {
+            bytes[at] = (rest % 256) as UInt8
+            rest = rest / 256
+            at = at - 1
+        }
+        return Ok(Uuid.marked(bytes, 7))
+    }
+
+    /// An identifier from `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx` or from the 32 digits alone, in either case.
+    pub fn parse(text: String) -> Result<Uuid, Error> {
+        let codes = text.bytes()
+        let hyphenated = codes.len() == 36
+        if !hyphenated && codes.len() != 32 { return Err(invalid("uuid: ${text}: not 32 digits or 36 characters")) }
+        var bytes: [UInt8] = [0; 16]
+        var digits = 0
+        for at in 0..codes.len() {
+            let code = codes[at] as Int
+            if hyphenated && (at == 8 || at == 13 || at == 18 || at == 23) {
+                if code != 45 { return Err(invalid("uuid: ${text}: a hyphen is missing at ${at}")) }
+                continue
+            }
+            let value = hex_value(code)
+            if value < 0 { return Err(invalid("uuid: ${text}: not a hex digit at ${at}")) }
+            if digits % 2 == 0 {
+                bytes[digits / 2] = (value * 16) as UInt8
+            } else {
+                bytes[digits / 2] = ((bytes[digits / 2] as Int) + value) as UInt8
+            }
+            digits = digits + 1
+        }
+        return Uuid.from_bytes(bytes)
+    }
+
+    /// An identifier from 22 URL-safe base64 characters, as `to_base64` writes them.
+    pub fn from_base64(text: String) -> Result<Uuid, Error> {
+        return Uuid.from_bytes(decode(text, Alphabet.UrlSafe)?)
+    }
+
+    /// The 16 bytes.
+    pub fn bytes(self) -> [UInt8] {
+        var out: [UInt8] = [0; 16]
+        let words = [self.a, self.b, self.c, self.d]
+        for index in 0..4 {
+            var rest = words[index]
+            for step in 0..4 {
+                out[index * 4 + 3 - step] = (rest % 256) as UInt8
+                rest = rest / 256
+            }
+        }
+        return out
+    }
+
+    /// The version number, the first hex digit of the third group.
+    pub fn version(self) -> Int { return (self.b / 4096) % 16 }
+
+    pub fn is_nil(self) -> Bool { return self.a == 0 && self.b == 0 && self.c == 0 && self.d == 0 }
+
+    /// The Unix time in milliseconds of a version 7 identifier; null for another version.
+    pub fn unix_millis(self) -> Int? {
+        if self.version() != 7 { return null }
+        return self.a * 65536 + self.b / 65536
+    }
+
+    /// The 22 characters of the bytes in URL-safe base64 without padding.
+    pub fn to_base64(self) -> String { return encode(self.bytes(), Alphabet.UrlSafe, false) }
+
+    /// The 32 hex digits with no hyphens.
+    pub fn to_simple(self) -> String {
+        var out = ""
+        for byte in self.bytes() {
+            let value = byte as Int
+            out = out + HEX.slice(value / 16, value / 16 + 1) + HEX.slice(value % 16, value % 16 + 1)
+        }
+        return out
+    }
+
+    /// The lowercase text `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`.
+    pub fn to_string(self) -> String {
+        let simple = self.to_simple()
+        return simple.slice(0, 8) + "-" + simple.slice(8, 12) + "-" + simple.slice(12, 16) + "-" + simple.slice(16, 20) + "-" + simple.slice(20, 32)
+    }
+
+    pub fn eq(self, other: Uuid) -> Bool { return self.compare(other) == 0 }
+
+    pub fn compare(self, other: Uuid) -> Int {
+        if self.a != other.a { return if self.a < other.a { -1 } else { 1 } }
+        if self.b != other.b { return if self.b < other.b { -1 } else { 1 } }
+        if self.c != other.c { return if self.c < other.c { -1 } else { 1 } }
+        if self.d != other.d { return if self.d < other.d { -1 } else { 1 } }
+        return 0
+    }
+}

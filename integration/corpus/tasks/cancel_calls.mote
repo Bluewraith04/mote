@@ -1,0 +1,27 @@
+fn bump(n: Int) -> Int {
+    return n + 1
+}
+
+fn main() {
+    let h = spawn {
+        var n = 0
+        while true {
+            n = bump(n)
+        }
+        return n
+    }
+    h.cancel()
+    println(h.await().is_ok())
+    println(h.is_ready())
+    let g = spawn {
+        var n = 0
+        while true {
+            n = bump(n)
+        }
+        return n
+    }
+    while !g.is_ready() {
+        g.cancel()
+    }
+    println(g.await().is_err())
+}

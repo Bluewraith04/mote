@@ -1,0 +1,23 @@
+// The functions of the native library `compress`.
+
+@link("compress")
+pub native fn compress_encoder_new(format: Int, level: Int) -> Int
+
+@link("compress")
+pub native fn compress_decoder_new(format: Int, limit: Int) -> Int
+
+@link("compress")
+pub native fn compress_push(handle: Int, data: [UInt8], error: [UInt8]) -> Int
+
+@link("compress")
+pub native fn compress_finish(handle: Int, error: [UInt8]) -> Int
+
+@link("compress")
+pub native fn compress_pending(handle: Int) -> Int
+
+@link("compress")
+pub native fn compress_take(handle: Int, out: [UInt8]) -> Int
+
+@link("compress")
+pub native fn compress_free(handle: Int) -> Int
+

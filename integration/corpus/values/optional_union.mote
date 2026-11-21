@@ -1,0 +1,40 @@
+fn pick(n: Int) -> (Int | String)? {
+    if n == 0 {
+        return null
+    }
+    if n == 1 {
+        return 7
+    }
+    return "seven"
+}
+
+fn describe(value: (Int | String)?) -> String {
+    match value {
+        n: Int => return "int ${n}"
+        s: String => return "string ${s}"
+        _ => return "null"
+    }
+}
+
+fn main() {
+    println(describe(pick(0)))
+    println(describe(pick(1)))
+    println(describe(pick(2)))
+    println(describe(null))
+    println(describe(3))
+    let value = pick(1)
+    if value is Int {
+        println("is int")
+    }
+    println(value is String)
+    println(value == null)
+    println(pick(0) is Int)
+    println(pick(0) == null)
+    let wide: (Int | String)? = pick(2)
+    if wide is String {
+        println("wide string")
+    }
+    if wide is Int | String {
+        println("some")
+    }
+}

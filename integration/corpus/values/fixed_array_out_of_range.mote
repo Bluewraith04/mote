@@ -1,0 +1,9 @@
+fn at(a: [Int; 3], i: Int) -> Int {
+    return a[i]
+}
+
+fn main() {
+    println(at([1, 2, 3], 2))
+    println(at([1, 2, 3], 3))
+    println(0)
+}

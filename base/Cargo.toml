@@ -1,0 +1,5 @@
+[package]
+name = "mote-base"
+version.workspace = true
+edition.workspace = true
+license.workspace = true

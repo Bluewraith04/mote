@@ -1,0 +1,70 @@
+fn show8(label: String, value: Int8?) {
+    if value == null {
+        println(label + " none")
+    } else {
+        println(label + " " + value.to_string())
+    }
+}
+
+fn showu8(label: String, value: UInt8?) {
+    if value == null {
+        println(label + " none")
+    } else {
+        println(label + " " + value.to_string())
+    }
+}
+
+fn show(label: String, value: Int?) {
+    if value == null {
+        println(label + " none")
+    } else {
+        println(label + " " + value.to_string())
+    }
+}
+
+fn showu(label: String, value: UInt64?) {
+    if value == null {
+        println(label + " none")
+    } else {
+        println(label + " " + value.to_string())
+    }
+}
+
+fn main() {
+    let hi: Int8 = 127
+    let lo: Int8 = -128
+    let one: Int8 = 1
+    show8("add", hi.checked_add(one))
+    show8("add ok", lo.checked_add(one))
+    show8("sub", lo.checked_sub(one))
+    show8("mul", hi.checked_mul(2))
+    show8("mul ok", hi.checked_mul(1))
+    show8("neg", lo.checked_neg())
+    show8("neg ok", hi.checked_neg())
+    show8("shl", one.checked_shl(7))
+    show8("shl big", one.checked_shl(8))
+    show8("shr", lo.checked_shr(7))
+    show8("shr neg", lo.checked_shr(-2))
+    let top: UInt8 = 255
+    showu8("uadd", top.checked_add(1))
+    let small: UInt8 = 1
+    showu8("usub", small.checked_sub(2))
+    showu8("umul", top.checked_mul(2))
+    let zero: UInt8 = 0
+    showu8("uneg", zero.checked_neg())
+    showu8("uneg2", top.checked_neg())
+    let big: Int = 9223372036854775807
+    show("add", big.checked_add(1))
+    show("sub", big.checked_sub(-1))
+    show("mul", big.checked_mul(2))
+    show("mul ok", big.checked_mul(1))
+    let least: Int = -9223372036854775807 - 1
+    show("neg", least.checked_neg())
+    show("shl", least.checked_shl(63))
+    show("shl big", least.checked_shl(64))
+    let ubig: UInt64 = 18446744073709551615
+    showu("uadd", ubig.checked_add(1))
+    showu("umul", ubig.checked_mul(ubig))
+    showu("usub", ubig.checked_sub(ubig))
+    showu("uneg", ubig.checked_neg())
+}

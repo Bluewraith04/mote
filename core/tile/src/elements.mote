@@ -1,0 +1,25 @@
+// The constructors of elements: text, buttons and the rows and columns that hold them.
+import { Style } from term
+import { Element, ElementKind } from .element
+
+fn make(kind: ElementKind, label: String, kids: List<Element>) -> Element {
+    return Element { kind: kind, label: label, kids: kids, style: Style {}, tag: "", wide: -1, tall: -1, weight: 0, padding: 0, spacing: 0, framed: false, title: "", click: null }
+}
+
+/// Lines of text; a line break starts a line and a line too long for the room is cut.
+pub fn text(label: String) -> Element { return make(ElementKind.Text, label, []) }
+
+/// A label with a space on each side, drawn reversed.
+pub fn button(label: String) -> Element { return text(" ${label} ").reverse() }
+
+/// Children one under the other.
+pub fn vstack(kids: List<Element>) -> Element { return make(ElementKind.Column, "", kids) }
+
+/// Children side by side.
+pub fn hstack(kids: List<Element>) -> Element { return make(ElementKind.Row, "", kids) }
+
+/// Empty space that takes what the parent leaves, to push its siblings apart.
+pub fn spacer() -> Element { return make(ElementKind.Spacer, "", []).grow() }
+
+/// The glyph repeated over the whole room.
+pub fn fill(glyph: String) -> Element { return make(ElementKind.Fill, glyph, []) }

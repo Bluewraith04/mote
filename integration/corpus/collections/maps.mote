@@ -1,0 +1,61 @@
+import { Map, Set } from std.collections
+
+fn main() {
+    var ages: Map<String, Int> = Map.new()
+    ages.set("ana", 31)
+    ages.set("bo", 27)
+    ages.set("cy", 45)
+    println(ages.len())
+    println(ages.get("bo"))
+    println(ages.get_or("zed", -1))
+    println(ages.contains_key("cy"))
+    ages.set("bo", 28)
+    println(ages.get("bo"))
+    ages.remove("ana")
+    println(ages.len())
+    println(ages.contains_key("ana"))
+    var order = ""
+    for key in ages.keys() {
+        order = order + key + ","
+    }
+    println(order)
+    var sum = 0
+    for value in ages.values() {
+        sum += value
+    }
+    println(sum)
+    var grid: Map<Int, String> = Map.new()
+    var i = 0
+    while i < 50 {
+        grid.set(i * 7, "n${i}")
+        i += 1
+    }
+    println(grid.len())
+    println(grid.get(7 * 33))
+    println(grid.contains_key(8))
+    i = 0
+    while i < 50 {
+        if i % 2 == 0 {
+            grid.remove(i * 7)
+        }
+        i += 1
+    }
+    println(grid.len())
+    var pairs: Map<(Int, Int), String> = Map.new()
+    pairs.set((1, 2), "a")
+    pairs.set((2, 1), "b")
+    println(pairs.get((2, 1)))
+    println(pairs.contains_key((1, 1)))
+    var seen: Set<String> = Set.new()
+    seen.add("x")
+    seen.add("y")
+    seen.add("x")
+    println(seen.len())
+    println(seen.contains("y"))
+    println(seen.contains("z"))
+    let other = ages.clone()
+    ages.set("dee", 1)
+    println(other.len())
+    println(ages.len())
+    println(other.equals(ages))
+}

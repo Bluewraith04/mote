@@ -1,0 +1,54 @@
+fn pick(n: Int) -> Int? {
+    if n == 0 {
+        return null
+    }
+    return n
+}
+
+struct Pair {
+    left: Int
+    right: Int
+}
+
+struct Wide {
+    a: Int
+    b: Float
+    c: Pair
+    d: String
+    e: Bool
+}
+
+enum Shape {
+    Dot
+    Line(Int)
+}
+
+fn main() {
+    let float = spawn { return 1.5 + 2.25 }
+    let flag = spawn { return 3 > 2 }
+    let text = spawn { return "built in a task" }
+    let pair = spawn { return Pair { left: 4, right: 5 } }
+    let tuple = spawn { return (1, "one", 2.5) }
+    let wide = spawn { return Wide { a: 1, b: 2.5, c: Pair { left: 3, right: 4 }, d: "wide", e: true } }
+    let shape = spawn { return Shape.Line(12) }
+    let nothing = spawn { println("side effect") }
+    nothing.await()
+    let maybe = spawn pick(7)
+    let none = spawn pick(0)
+    println(float.await().unwrap())
+    println(flag.await().unwrap())
+    println(text.await().unwrap())
+    let p = pair.await().unwrap()
+    println(p.left + p.right)
+    let t = tuple.await().unwrap()
+    println(t.1)
+    let w = wide.await().unwrap()
+    println(w.a + w.c.right)
+    println(w.d)
+    match shape.await().unwrap() {
+        Dot => println("dot")
+        Line(n) => println(n)
+    }
+    println(maybe.await().unwrap())
+    println(none.await().unwrap() == null)
+}

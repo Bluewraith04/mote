@@ -1,0 +1,48 @@
+import { join } from std.string
+
+// A test authority and a certificate it signed for localhost and 127.0.0.1; neither is used anywhere else.
+pub fn authority() -> String {
+    return join([
+        "-----BEGIN CERTIFICATE-----",
+        "MIIBljCCATugAwIBAgIUXpnTLcgFP2kM4Ex8ZQ406L3mFFowCgYIKoZIzj0EAwIw",
+        "FzEVMBMGA1UEAwwMTW90ZSBUZXN0IENBMCAXDTI2MTAzMDE4MzAzNFoYDzIxMjYx",
+        "MDA2MTgzMDM0WjAXMRUwEwYDVQQDDAxNb3RlIFRlc3QgQ0EwWTATBgcqhkjOPQIB",
+        "BggqhkjOPQMBBwNCAAQjUQogNhIn9XO9M6CFB9sgEhudK2X84tYyihOgrfig7e1X",
+        "q9QuFePIc1B2/dN9cHwUWSZP4yg8CjFWSSzXgVuMo2MwYTAdBgNVHQ4EFgQURIPQ",
+        "l1oz5eF1lV9pbZth47r31UwwHwYDVR0jBBgwFoAURIPQl1oz5eF1lV9pbZth47r3",
+        "1UwwDwYDVR0TAQH/BAUwAwEB/zAOBgNVHQ8BAf8EBAMCAgQwCgYIKoZIzj0EAwID",
+        "SQAwRgIhAKthkxRwh9UyVqz5WVwwC0zKvBE0l2TdJ8V2ILoRiaOaAiEAoylQol2m",
+        "whfSGnONVg5Rr5L0Hpwi/y+WdPF4RRKfm2A=",
+        "-----END CERTIFICATE-----",
+        ""
+    ], "\n")
+}
+
+pub fn certificate() -> String {
+    return join([
+        "-----BEGIN CERTIFICATE-----",
+        "MIIBvDCCAWKgAwIBAgIUMNp69cDa3kfV+v/tUmxgCc5e5ZkwCgYIKoZIzj0EAwIw",
+        "FzEVMBMGA1UEAwwMTW90ZSBUZXN0IENBMCAXDTI2MTAzMDE4MzA1MloYDzIxMjYx",
+        "MDA2MTgzMDUyWjAUMRIwEAYDVQQDDAlsb2NhbGhvc3QwWTATBgcqhkjOPQIBBggq",
+        "hkjOPQMBBwNCAAS3XTogrna0md+83M7QFQRoPPr81W6N46IsdD7L4myKBf2Eby3p",
+        "2EEKyUKKxd++w+GckGm8jq5fMs0Qo3J0SV51o4GMMIGJMAkGA1UdEwQCMAAwCwYD",
+        "VR0PBAQDAgeAMBMGA1UdJQQMMAoGCCsGAQUFBwMBMBoGA1UdEQQTMBGCCWxvY2Fs",
+        "aG9zdIcEfwAAATAdBgNVHQ4EFgQU2pxHx3bDshXil7cUZ4AGwG11VNAwHwYDVR0j",
+        "BBgwFoAURIPQl1oz5eF1lV9pbZth47r31UwwCgYIKoZIzj0EAwIDSAAwRQIgFm1U",
+        "29eGIWNy8l6xA1qfK/SOnAdTkRmH8oN0r2vzo4ICIQDZhLS0ZttyWQ6ZqFIOooU5",
+        "WXVY7gP396w5Q7heu0DOWA==",
+        "-----END CERTIFICATE-----",
+        ""
+    ], "\n")
+}
+
+pub fn private_key() -> String {
+    return join([
+        "-----BEGIN PRIVATE KEY-----",
+        "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgeQu3FoBRziLfM5Nm",
+        "vHoPjVNXaW1ieGXIDIQ40luRSG6hRANCAAS3XTogrna0md+83M7QFQRoPPr81W6N",
+        "46IsdD7L4myKBf2Eby3p2EEKyUKKxd++w+GckGm8jq5fMs0Qo3J0SV51",
+        "-----END PRIVATE KEY-----",
+        ""
+    ], "\n")
+}

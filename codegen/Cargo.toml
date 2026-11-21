@@ -1,0 +1,28 @@
+[package]
+name = "mote-codegen"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+mote-base.workspace = true
+mote-semantics.workspace = true
+mote-ir.workspace = true
+mote-abi.workspace = true
+mote-runtime.workspace = true
+mote-scheduler.workspace = true
+cranelift-codegen = "=0.116.1"
+cranelift-frontend = "=0.116.1"
+cranelift-module = "=0.116.1"
+cranelift-jit = "=0.116.1"
+cranelift-native = "=0.116.1"
+cranelift-object = "=0.116.1"
+gimli = { version = "0.31", default-features = false, features = ["write", "std"] }
+object = { version = "0.36", default-features = false, features = ["write"] }
+
+[dev-dependencies]
+gimli = { version = "0.31", default-features = false, features = ["read"] }
+object = { version = "0.36", default-features = false, features = ["read"] }
+mote.workspace = true
+mote-semantics = { workspace = true, features = ["testing"] }
+mote-packages = { workspace = true, features = ["testing"] }

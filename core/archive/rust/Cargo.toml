@@ -1,0 +1,23 @@
+[package]
+name = "mote-archive"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[lib]
+name = "archive"
+crate-type = ["cdylib", "staticlib"]
+
+[dependencies]
+tar = { version = "0.4", default-features = false }
+zip = { version = "8", default-features = false, features = ["deflate-flate2"] }
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+
+[profile.release]
+opt-level = 2
+panic = "abort"
+lto = true
+codegen-units = 1
+strip = true
+
+[workspace]

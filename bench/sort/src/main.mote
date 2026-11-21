@@ -1,0 +1,48 @@
+fn sort(var xs: List<Int>, low: Int, high: Int) {
+    if low >= high {
+        return
+    }
+    let pivot = xs.get((low + high) / 2)
+    var i = low
+    var j = high
+    while i <= j {
+        while xs.get(i) < pivot {
+            i += 1
+        }
+        while xs.get(j) > pivot {
+            j -= 1
+        }
+        if i <= j {
+            let held = xs.get(i)
+            xs.set(i, xs.get(j))
+            xs.set(j, held)
+            i += 1
+            j -= 1
+        }
+    }
+    sort(xs, low, j)
+    sort(xs, i, high)
+}
+
+fn main() {
+    var xs: List<Int> = List.new()
+    var seed = 12345
+    var i = 0
+    while i < 2000000 {
+        seed = (seed * 1103515245 + 12345) % 2147483648
+        xs.push(seed)
+        i += 1
+    }
+    sort(xs, 0, xs.len() - 1)
+    var ordered = true
+    i = 1
+    while i < xs.len() {
+        if xs.get(i - 1) > xs.get(i) {
+            ordered = false
+        }
+        i += 1
+    }
+    println(ordered)
+    println(xs.get(0))
+    println(xs.get(xs.len() - 1))
+}

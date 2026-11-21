@@ -1,0 +1,7 @@
+fn main() {
+    var xs: List<Int> = [1, 2, 3, 4]
+    xs[0..2] = [9, 9]
+    println(xs[1])
+    xs[0..2] = [1]
+    println(xs[1])
+}

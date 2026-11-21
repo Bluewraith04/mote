@@ -1,0 +1,89 @@
+import { assert, assert_eq } from std.test
+import { Signal, Subscription, pid, send, subscribe } from signal
+
+test "a signal sent to this program arrives as a value" {
+    let sub = subscribe([Signal.User1])!
+    send(pid(), Signal.User1)!
+    assert(sub.next()! == Signal.User1, "user1")
+    sub.close()!
+    assert(sub.next() == null, "ended")
+}
+
+test "signals arrive in the order they were caught" {
+    let sub = subscribe([Signal.User1, Signal.User2])!
+    send(pid(), Signal.User2)!
+    send(pid(), Signal.User1)!
+    send(pid(), Signal.User2)!
+    assert(sub.next()! == Signal.User2, "first")
+    assert(sub.next()! == Signal.User1, "second")
+    assert(sub.next()! == Signal.User2, "third")
+    sub.close()!
+}
+
+test "a signal that is not watched by a subscription does not reach it" {
+    let sub = subscribe([Signal.User1])!
+    let other = subscribe([Signal.User2])!
+    send(pid(), Signal.User2)!
+    assert(other.next()! == Signal.User2, "other")
+    assert(sub.signals.recv_timeout(150) == null, "nothing for the first")
+    sub.close()!
+    other.close()!
+}
+
+test "every subscription to a signal receives it" {
+    let first = subscribe([Signal.Hangup])!
+    let second = subscribe([Signal.Hangup, Signal.Alarm])!
+    send(pid(), Signal.Hangup)!
+    assert(first.next()! == Signal.Hangup, "first")
+    assert(second.next()! == Signal.Hangup, "second")
+    first.close()!
+    send(pid(), Signal.Hangup)!
+    assert(second.next()! == Signal.Hangup, "second again")
+    assert(first.next() == null, "the closed one is finished")
+    second.close()!
+}
+
+test "a closed subscription reads the signals already caught, then ends" {
+    let sub = subscribe([Signal.User1])!
+    let keep = subscribe([Signal.User1])!
+    send(pid(), Signal.User1)!
+    assert(keep.next()! == Signal.User1, "caught")
+    sub.close()!
+    var count = 0
+    while sub.next() != null {
+        count = count + 1
+    }
+    assert(count <= 1, "at most the one caught before the close")
+    assert(sub.close().is_err(), "closed twice")
+    keep.close()!
+}
+
+test "a task waits for a signal while others run" {
+    let sub = subscribe([Signal.User2])!
+    let waiter = spawn {
+        let got = sub.next()
+        return if got == null { 0 } else { got.number() }
+    }
+    send(pid(), Signal.User2)!
+    assert_eq(waiter.await()!, 12)
+    sub.close()!
+}
+
+test "an empty list and a missing process are errors" {
+    assert(subscribe([]).is_err(), "empty")
+    assert(send(2000000000, Signal.User1).is_err(), "no such process")
+}
+
+test "many subscriptions can be open together" {
+    var subs: List<Subscription> = []
+    for n in 0..20 {
+        subs.push(subscribe([Signal.User1])!)
+    }
+    send(pid(), Signal.User1)!
+    for sub in subs {
+        assert(sub.next()! == Signal.User1, "each one")
+    }
+    for sub in subs {
+        sub.close()!
+    }
+}

@@ -1,0 +1,324 @@
+// An open database.
+import { Stream } from std.collections
+import { Bool as AtomicBool, Int64 } from std.atomic
+import { require } from std.meta
+import { Closeable } from std.traits
+import { Row, bind, failed, row_as, rows_of, stream_rows } from ._rows
+import { SqlValue, Value } from .value
+import {
+    sqlite_batch, sqlite_batch_params_free, sqlite_batch_params_new, sqlite_batch_params_push,
+    sqlite_close, sqlite_execute, sqlite_interrupt, sqlite_last_insert_id, sqlite_open, sqlite_params_free,
+    sqlite_prepare, sqlite_query, sqlite_rows_free, sqlite_stmt_close, sqlite_stmt_execute,
+    sqlite_stmt_execute_batch, sqlite_stmt_query
+} from ._native
+
+pub enum TransactionMode {
+    Deferred
+    Immediate
+    Exclusive
+}
+
+/// A transaction context manager, closes on task cancellation or error
+pub class Transaction: (Closeable) {
+    db: Database
+    active: AtomicBool
+
+    pub fn new(db: Database) -> Transaction {
+        return Transaction { db: db, active: AtomicBool.new(true) }
+    }
+
+    pub fn execute(self, sql: String, params: List<SqlValue> = []) -> Result<Int, Error> {
+        require(self.active.load(), "transaction is already completed")
+        return self.db.execute(sql, params)
+    }
+
+    pub fn query(self, sql: String, params: List<SqlValue> = []) -> Result<List<Row>, Error> {
+        require(self.active.load(), "transaction is already completed")
+        return self.db.query(sql, params)
+    }
+
+    pub fn query_row(self, sql: String, params: List<SqlValue> = []) -> Result<Row?, Error> {
+        let rows = self.query(sql, params)?
+        return Ok(if rows.len() == 0 { null } else { rows.get(0) })
+    }
+
+    pub fn stream(self, sql: String, params: List<SqlValue> = []) -> Result<Stream<Row>, Error> {
+        require(self.active.load(), "transaction is already completed")
+        return self.db.stream(sql, params)
+    }
+
+    pub fn prepare(self, sql: String) -> Result<PreparedStatement, Error> {
+        require(self.active.load(), "transaction is already completed")
+        return self.db.prepare(sql)
+    }
+
+    pub fn commit(self) -> Result<Null, Error> {
+        if !self.active.swap(false) { return Ok(null) }
+        return self.db.execute_batch("COMMIT")
+    }
+
+    pub fn rollback(self) -> Result<Null, Error> {
+        if !self.active.swap(false) { return Ok(null) }
+        return self.db.execute_batch("ROLLBACK")
+    }
+
+    pub fn close(self) -> Result<Null, Error> {
+        if self.active.swap(false) {
+            return self.db.execute_batch("ROLLBACK")
+        }
+        return Ok(null)
+    }
+}
+
+/// A compiled SQL statement. Reusable across parameter sets; Closeable.
+pub class PreparedStatement: (Closeable) {
+    handle: Int64
+
+    pub fn new(handle: Int) -> PreparedStatement {
+        return PreparedStatement { handle: Int64.new(handle) }
+    }
+
+    fn live(self) -> Int {
+        let handle = self.handle.load()
+        require(handle != 0, "the prepared statement is closed")
+        return handle
+    }
+
+    /// Executes the statement with bound parameters; returns rows changed.
+    pub fn execute(self, params: List<SqlValue> = []) -> Result<Int, Error> {
+        var error: [UInt8] = [0; 512]
+        let bound = bind(params)
+        let code = sqlite_stmt_execute(self.live(), bound, error)
+        sqlite_params_free(bound)
+        if code < 0 { return Err(failed(code, error)) }
+        return Ok(code)
+    }
+
+    /// Runs one query with bound parameters and returns all its rows.
+    pub fn query(self, params: List<SqlValue> = []) -> Result<List<Row>, Error> {
+        var error: [UInt8] = [0; 512]
+        let bound = bind(params)
+        let code = sqlite_stmt_query(self.live(), bound, error)
+        sqlite_params_free(bound)
+        if code < 0 { return Err(failed(code, error)) }
+        let rows = rows_of(code)
+        sqlite_rows_free(code)
+        return Ok(rows)
+    }
+
+    /// The first row of a query; null when it has none.
+    pub fn query_row(self, params: List<SqlValue> = []) -> Result<Row?, Error> {
+        let rows = self.query(params)?
+        return Ok(if rows.len() == 0 { null } else { rows.get(0) })
+    }
+
+    /// Lazily streams rows one at a time via a generator without buffering.
+    pub fn stream(self, params: List<SqlValue> = []) -> Stream<Row> {
+        let bound = bind(params)
+        return stream_rows(self.live(), bound)
+    }
+
+    /// Runs a batch of parameter rows in a single native pass.
+    pub fn execute_batch_params(self, param_rows: List<List<SqlValue>>) -> Result<Int, Error> {
+        var error: [UInt8] = [0; 512]
+        let batch = sqlite_batch_params_new()
+        for row in param_rows {
+            let bound = bind(row)
+            sqlite_batch_params_push(batch, bound)
+        }
+        let code = sqlite_stmt_execute_batch(self.live(), batch, error)
+        sqlite_batch_params_free(batch)
+        if code < 0 { return Err(failed(code, error)) }
+        return Ok(code)
+    }
+
+    pub fn close(self) -> Result<Null, Error> {
+        let handle = self.handle.swap(0)
+        if handle == 0 { return Err(Error.new(ErrorKind.Other, "sqlite: statement already closed")) }
+        sqlite_stmt_close(handle)
+        return Ok(null)
+    }
+}
+
+/// An open database. Closing it frees it; using it after that is a fault.
+pub class Database: (Closeable) {
+    handle: Int64
+
+    /// Opens the file at a path, making it when it is missing; `:memory:` is a private database in memory.
+    pub fn open(path: String) -> Result<Database, Error> {
+        var error: [UInt8] = [0; 512]
+        let handle = sqlite_open(path.bytes(), error)
+        if handle < 0 { return Err(failed(handle, error)) }
+        return Ok(Database { handle: Int64.new(handle) })
+    }
+
+    /// A private database in memory.
+    pub fn memory() -> Result<Database, Error> { return Database.open(":memory:") }
+
+    fn live(self) -> Int {
+        let handle = self.handle.load()
+        require(handle != 0, "the database is closed")
+        return handle
+    }
+
+    /// Runs statements separated by `;` that take no parameters, such as a schema.
+    pub fn execute_batch(self, sql: String) -> Result<Null, Error> {
+        var error: [UInt8] = [0; 512]
+        let code = sqlite_batch(self.live(), sql.bytes(), error)
+        if code < 0 { return Err(failed(code, error)) }
+        return Ok(null)
+    }
+
+    /// Runs one statement with the parameters bound to `?` in order; returns how many rows it changed.
+    pub fn execute(self, sql: String, params: List<SqlValue> = []) -> Result<Int, Error> {
+        var error: [UInt8] = [0; 512]
+        let bound = bind(params)
+        let code = sqlite_execute(self.live(), sql.bytes(), bound, error)
+        sqlite_params_free(bound)
+        if code < 0 { return Err(failed(code, error)) }
+        return Ok(code)
+    }
+
+    /// Compiles an SQL statement for reuse.
+    pub fn prepare(self, sql: String) -> Result<PreparedStatement, Error> {
+        var error: [UInt8] = [0; 512]
+        let handle = sqlite_prepare(self.live(), sql.bytes(), error)
+        if handle < 0 { return Err(failed(handle, error)) }
+        return Ok(PreparedStatement.new(handle))
+    }
+
+    /// Runs one query with the parameters bound to `?` in order and returns all its rows.
+    pub fn query(self, sql: String, params: List<SqlValue> = []) -> Result<List<Row>, Error> {
+        var error: [UInt8] = [0; 512]
+        let bound = bind(params)
+        let code = sqlite_query(self.live(), sql.bytes(), bound, error)
+        sqlite_params_free(bound)
+        if code < 0 { return Err(failed(code, error)) }
+        let rows = rows_of(code)
+        sqlite_rows_free(code)
+        return Ok(rows)
+    }
+
+    /// The first row of a query; null when it has none.
+    pub fn query_row(self, sql: String, params: List<SqlValue> = []) -> Result<Row?, Error> {
+        let rows = self.query(sql, params)?
+        return Ok(if rows.len() == 0 { null } else { rows.get(0) })
+    }
+
+    /// Compiles a statement and streams rows lazily.
+    pub fn stream(self, sql: String, params: List<SqlValue> = []) -> Result<Stream<Row>, Error> {
+        let stmt = self.prepare(sql)?
+        return Ok(stmt.stream(params))
+    }
+
+    /// The rowid of the last row inserted through this database.
+    pub fn last_insert_id(self) -> Int { return sqlite_last_insert_id(self.live()) }
+
+    /// Starts a transaction; it ends with `commit` or `rollback`.
+    pub fn begin(self) -> Result<Null, Error> { return self.execute_batch("BEGIN") }
+
+    pub fn commit(self) -> Result<Null, Error> { return self.execute_batch("COMMIT") }
+
+    pub fn rollback(self) -> Result<Null, Error> { return self.execute_batch("ROLLBACK") }
+
+    /// Runs the body in a transaction: committed when it returns `Ok`, rolled back when it returns `Err`.
+    pub fn transaction<T>(self, body: (Database) -> Result<T, Error>) -> Result<T, Error> {
+        self.begin()?
+        let result = body(self)
+        if result.is_err() {
+            self.rollback()?
+            return result
+        }
+        self.commit()?
+        return result
+    }
+
+    /// Creates a Closeable Transaction which gracefully rolls back on task cancellation and Error
+    pub fn begin_transaction(self, mode: TransactionMode = TransactionMode.Deferred) -> Result<Transaction, Error> {
+        let sql = match mode {
+            Deferred => "BEGIN DEFERRED"
+            Immediate => "BEGIN IMMEDIATE"
+            Exclusive => "BEGIN EXCLUSIVE"
+        }
+        self.execute_batch(sql)?
+        return Ok(Transaction.new(self))
+    }
+
+    /// Interrupts any ongoing query on this database. Safe to call from any task or thread.
+    pub fn interrupt(self) {
+        let handle = self.handle.load()
+        if handle != 0 {
+            sqlite_interrupt(handle)
+        }
+    }
+
+    pub fn close(self) -> Result<Null, Error> {
+        let handle = self.handle.swap(0)
+        if handle == 0 { return Err(Error.new(ErrorKind.Other, "sqlite: already closed")) }
+        sqlite_close(handle)
+        return Ok(null)
+    }
+}
+
+/// Runs a query against a database or transaction and decodes all rows into a List<T>.
+pub fn query_as<T>(target: Database | Transaction, sql: String, params: List<SqlValue> = []) -> Result<List<T>, Error> {
+    let rows = match target {
+        db: Database => db.query(sql, params)?
+        tx: Transaction => tx.query(sql, params)?
+    }
+    var result: List<T> = []
+    for row in rows {
+        result.push(row_as<T>(row)?)
+    }
+    return Ok(result)
+}
+
+/// Runs a query against a database or transaction and decodes the first row into T, or null when empty.
+pub fn query_row_as<T>(target: Database | Transaction, sql: String, params: List<SqlValue> = []) -> Result<T?, Error> {
+    let row = match target {
+        db: Database => db.query_row(sql, params)?
+        tx: Transaction => tx.query_row(sql, params)?
+    }
+    if row == null { return Ok(null) }
+    return Ok(row_as<T>(row)?)
+}
+
+/// Queries a prepared statement and decodes each row into struct T.
+pub fn stmt_query_as<T>(stmt: PreparedStatement, params: List<SqlValue> = []) -> Result<List<T>, Error> {
+    let rows = stmt.query(params)?
+    var result: List<T> = []
+    for row in rows {
+        result.push(row_as<T>(row)?)
+    }
+    return Ok(result)
+}
+
+/// Queries a prepared statement and decodes the first row into struct T, or null when empty.
+pub fn stmt_query_row_as<T>(stmt: PreparedStatement, params: List<SqlValue> = []) -> Result<T?, Error> {
+    let row = stmt.query_row(params)?
+    if row == null { return Ok(null) }
+    return Ok(row_as<T>(row)?)
+}
+
+/// Lazily queries and decodes each row into struct T on demand.
+pub fn stream_as<T>(target: Database | Transaction, sql: String, params: List<SqlValue> = []) -> Result<Stream<T>, Error> {
+    let rows_stream = match target {
+        db: Database => db.stream(sql, params)?
+        tx: Transaction => tx.stream(sql, params)?
+    }
+    return Ok(stream_map_as<T>(rows_stream))
+}
+
+/// Streams and decodes each row from a prepared statement into struct T.
+pub fn stmt_stream_as<T>(stmt: PreparedStatement, params: List<SqlValue> = []) -> Stream<T> {
+    return stream_map_as<T>(stmt.stream(params))
+}
+
+fn stream_map_as<T>(rows: Stream<Row>) -> Stream<T> {
+    for row in rows {
+        let decoded = row_as<T>(row)
+        if decoded.is_ok() {
+            yield decoded!
+        }
+    }
+}

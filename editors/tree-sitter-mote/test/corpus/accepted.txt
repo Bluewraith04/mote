@@ -1,0 +1,2688 @@
+================================================================================
+Name: fn f() {}
+================================================================================
+
+fn f() {}
+
+---
+
+(source_file
+  (function_item
+    (identifier)
+    (parameters)
+    (block)))
+
+================================================================================
+MemberName: a.from
+================================================================================
+
+a.from
+
+---
+
+(source_file
+  (member_expression
+    (identifier)
+    (identifier)))
+
+================================================================================
+Path: let v: a.b.C = x
+================================================================================
+
+let v: a.b.C = x
+
+---
+
+(source_file
+  (binding
+    (binding_pattern
+      (identifier))
+    (named_type
+      (path
+        (identifier)
+        (identifier)
+        (identifier)))
+    (identifier)))
+
+================================================================================
+Doc: /// one /// two fn f() {}
+================================================================================
+
+/// one
+/// two
+fn f() {}
+
+---
+
+(source_file
+  (doc_comment)
+  (doc_comment)
+  (function_item
+    (identifier)
+    (parameters)
+    (block)))
+
+================================================================================
+Separator: let a = 1; let b = 2
+================================================================================
+
+let a = 1; let b = 2
+
+---
+
+(source_file
+  (binding
+    (binding_pattern
+      (identifier))
+    (integer_literal))
+  (binding
+    (binding_pattern
+      (identifier))
+    (integer_literal)))
+
+================================================================================
+Block: fn f() { let a = 1; }
+================================================================================
+
+fn f() { let a = 1; }
+
+---
+
+(source_file
+  (function_item
+    (identifier)
+    (parameters)
+    (block
+      (binding
+        (binding_pattern
+          (identifier))
+        (integer_literal)))))
+
+================================================================================
+Program: fn f() {} let a = 1;
+================================================================================
+
+fn f() {}
+let a = 1;
+
+
+---
+
+(source_file
+  (function_item
+    (identifier)
+    (parameters)
+    (block))
+  (binding
+    (binding_pattern
+      (identifier))
+    (integer_literal)))
+
+================================================================================
+Item: /// d @t pub fn f() {}
+================================================================================
+
+/// d
+@t
+pub fn f() {}
+
+---
+
+(source_file
+  (doc_comment)
+  (attribute
+    (identifier))
+  (function_item
+    (visibility)
+    (identifier)
+    (parameters)
+    (block)))
+
+================================================================================
+Attribute: @a(x = 1, 2,) fn f() {}
+================================================================================
+
+@a(x = 1, 2,)
+fn f() {}
+
+---
+
+(source_file
+  (attribute
+    (identifier)
+    (attribute_argument
+      (path
+        (identifier))
+      (integer_literal))
+    (attribute_argument
+      (integer_literal)))
+  (function_item
+    (identifier)
+    (parameters)
+    (block)))
+
+================================================================================
+Attribute: @a fn f() {}
+================================================================================
+
+@a
+fn f() {}
+
+---
+
+(source_file
+  (attribute
+    (identifier))
+  (function_item
+    (identifier)
+    (parameters)
+    (block)))
+
+================================================================================
+AttributeArg: @a(k = "v") fn f() {}
+================================================================================
+
+@a(k = "v")
+fn f() {}
+
+---
+
+(source_file
+  (attribute
+    (identifier)
+    (attribute_argument
+      (path
+        (identifier))
+      (string_literal
+        (string_content))))
+  (function_item
+    (identifier)
+    (parameters)
+    (block)))
+
+================================================================================
+AttributeValue: @a(p.q, "s", 1, 1.5, true, false) fn f() {}
+================================================================================
+
+@a(p.q, "s", 1, 1.5, true, false)
+fn f() {}
+
+---
+
+(source_file
+  (attribute
+    (identifier)
+    (attribute_argument
+      (path
+        (identifier)
+        (identifier)))
+    (attribute_argument
+      (string_literal
+        (string_content)))
+    (attribute_argument
+      (integer_literal))
+    (attribute_argument
+      (float_literal))
+    (attribute_argument
+      (boolean_literal))
+    (attribute_argument
+      (boolean_literal)))
+  (function_item
+    (identifier)
+    (parameters)
+    (block)))
+
+================================================================================
+Function: pub fn f<T>(a: T) -> T { return a }
+================================================================================
+
+pub fn f<T>(a: T) -> T { return a }
+
+---
+
+(source_file
+  (function_item
+    (visibility)
+    (identifier)
+    (generics
+      (generic_parameter
+        (identifier)))
+    (parameters
+      (parameter
+        (identifier)
+        (named_type
+          (path
+            (identifier)))))
+    (named_type
+      (path
+        (identifier)))
+    (block
+      (return_statement
+        (identifier)))))
+
+================================================================================
+NativeFunction: pub native fn f<T>(a: Int) -> Int
+================================================================================
+
+pub native fn f<T>(a: Int) -> Int
+
+---
+
+(source_file
+  (native_function_item
+    (visibility)
+    (identifier)
+    (generics
+      (generic_parameter
+        (identifier)))
+    (parameters
+      (parameter
+        (identifier)
+        (named_type
+          (path
+            (identifier)))))
+    (named_type
+      (path
+        (identifier)))))
+
+================================================================================
+Test: test "t" { }
+================================================================================
+
+test "t" { }
+
+---
+
+(source_file
+  (test_item
+    (test_keyword)
+    (string_literal
+      (string_content))
+    (block)))
+
+================================================================================
+Record: pub struct S<T>: (Eq) { x: Int fn m(self) {} }
+================================================================================
+
+pub struct S<T>: (Eq) { x: Int
+fn m(self) {} }
+
+---
+
+(source_file
+  (struct_item
+    (visibility)
+    (identifier)
+    (generics
+      (generic_parameter
+        (identifier)))
+    (trait_list
+      (named_type
+        (path
+          (identifier))))
+    (field_declaration
+      (identifier)
+      (named_type
+        (path
+          (identifier))))
+    (function_item
+      (identifier)
+      (parameters
+        (self_parameter))
+      (block))))
+
+================================================================================
+Record: class C { }
+================================================================================
+
+class C { }
+
+---
+
+(source_file
+  (class_item
+    (identifier)))
+
+================================================================================
+Enum#2: pub enum E<T>: (Eq) { A, B(Int), C { x: Int }, D = 4 fn m(se
+================================================================================
+
+pub enum E<T>: (Eq) { A, B(Int), C { x: Int }, D = 4
+fn m(self) {} }
+
+---
+
+(source_file
+  (enum_item
+    (visibility)
+    (identifier)
+    (generics
+      (generic_parameter
+        (identifier)))
+    (trait_list
+      (named_type
+        (path
+          (identifier))))
+    (variant
+      (identifier))
+    (variant
+      (identifier)
+      (named_type
+        (path
+          (identifier))))
+    (variant
+      (identifier)
+      (field_declaration
+        (identifier)
+        (named_type
+          (path
+            (identifier)))))
+    (variant
+      (identifier)
+      (integer_literal))
+    (function_item
+      (identifier)
+      (parameters
+        (self_parameter))
+      (block))))
+
+================================================================================
+Trait#2: pub trait T<A> { fn f(self) -> Int fn g(self) { } }
+================================================================================
+
+pub trait T<A> { fn f(self) -> Int
+fn g(self) { } }
+
+---
+
+(source_file
+  (trait_item
+    (visibility)
+    (identifier)
+    (generics
+      (generic_parameter
+        (identifier)))
+    (trait_member
+      (identifier)
+      (parameters
+        (self_parameter))
+      (named_type
+        (path
+          (identifier))))
+    (trait_member
+      (identifier)
+      (parameters
+        (self_parameter))
+      (block))))
+
+================================================================================
+TypeAlias: pub type A<T> = List<T>
+================================================================================
+
+pub type A<T> = List<T>
+
+---
+
+(source_file
+  (type_alias
+    (visibility)
+    (identifier)
+    (generics
+      (generic_parameter
+        (identifier)))
+    (generic_type
+      (path
+        (identifier))
+      (type_arguments
+        (named_type
+          (path
+            (identifier)))))))
+
+================================================================================
+Import#2: pub import a.b as c
+================================================================================
+
+pub import a.b as c
+
+---
+
+(source_file
+  (import_item
+    (visibility)
+    (module_path
+      (identifier)
+      (identifier))
+    (identifier)))
+
+================================================================================
+Import#3: import { a as b, c, } from ..m
+================================================================================
+
+import { a as b, c, } from ..m
+
+---
+
+(source_file
+  (import_item
+    (import_name
+      (identifier)
+      (identifier))
+    (import_name
+      (identifier))
+    (module_path
+      (identifier))))
+
+================================================================================
+Import#3: import { * } from m
+================================================================================
+
+import { * } from m
+
+---
+
+(source_file
+  (import_item
+    (module_path
+      (identifier))))
+
+================================================================================
+ImportName: import { a as b } from m
+================================================================================
+
+import { a as b } from m
+
+---
+
+(source_file
+  (import_item
+    (import_name
+      (identifier)
+      (identifier))
+    (module_path
+      (identifier))))
+
+================================================================================
+ModulePath: import ..super.a.b
+================================================================================
+
+import ..super.a.b
+
+---
+
+(source_file
+  (import_item
+    (module_path
+      (identifier)
+      (identifier))))
+
+================================================================================
+TopLevelStmt: pub let a = 1 f(a)
+================================================================================
+
+pub let a = 1
+f(a)
+
+---
+
+(source_file
+  (public_binding
+    (visibility)
+    (binding
+      (binding_pattern
+        (identifier))
+      (integer_literal)))
+  (call_expression
+    (identifier)
+    (arguments
+      (argument
+        (identifier)))))
+
+================================================================================
+Generics: fn f<A, B: Eq + Ord,>() {}
+================================================================================
+
+fn f<A, B: Eq + Ord,>() {}
+
+---
+
+(source_file
+  (function_item
+    (identifier)
+    (generics
+      (generic_parameter
+        (identifier))
+      (generic_parameter
+        (identifier)
+        (named_type
+          (path
+            (identifier)))
+        (named_type
+          (path
+            (identifier)))))
+    (parameters)
+    (block)))
+
+================================================================================
+GenericParam: fn f<T: A + B>() {}
+================================================================================
+
+fn f<T: A + B>() {}
+
+---
+
+(source_file
+  (function_item
+    (identifier)
+    (generics
+      (generic_parameter
+        (identifier)
+        (named_type
+          (path
+            (identifier)))
+        (named_type
+          (path
+            (identifier)))))
+    (parameters)
+    (block)))
+
+================================================================================
+Traits: struct S: (A, B,) { }
+================================================================================
+
+struct S: (A, B,) { }
+
+---
+
+(source_file
+  (struct_item
+    (identifier)
+    (trait_list
+      (named_type
+        (path
+          (identifier)))
+      (named_type
+        (path
+          (identifier))))))
+
+================================================================================
+Params: fn f(a, b: Int,) {}
+================================================================================
+
+fn f(a, b: Int,) {}
+
+---
+
+(source_file
+  (function_item
+    (identifier)
+    (parameters
+      (parameter
+        (identifier))
+      (parameter
+        (identifier)
+        (named_type
+          (path
+            (identifier)))))
+    (block)))
+
+================================================================================
+Param: fn f(a: Int) {}
+================================================================================
+
+fn f(a: Int) {}
+
+---
+
+(source_file
+  (function_item
+    (identifier)
+    (parameters
+      (parameter
+        (identifier)
+        (named_type
+          (path
+            (identifier)))))
+    (block)))
+
+================================================================================
+SelfParam: struct S { fn m(var self) {} }
+================================================================================
+
+struct S { fn m(var self) {} }
+
+---
+
+(source_file
+  (struct_item
+    (identifier)
+    (function_item
+      (identifier)
+      (parameters
+        (self_parameter))
+      (block))))
+
+================================================================================
+VariadicParam: fn f(...xs: Int) {}
+================================================================================
+
+fn f(...xs: Int) {}
+
+---
+
+(source_file
+  (function_item
+    (identifier)
+    (parameters
+      (variadic_parameter
+        (identifier)
+        (named_type
+          (path
+            (identifier)))))
+    (block)))
+
+================================================================================
+NamedParam: fn f(var a: Int = 1) {}
+================================================================================
+
+fn f(var a: Int = 1) {}
+
+---
+
+(source_file
+  (function_item
+    (identifier)
+    (parameters
+      (parameter
+        (identifier)
+        (named_type
+          (path
+            (identifier)))
+        (integer_literal)))
+    (block)))
+
+================================================================================
+Field: struct S { /// d pub var a: Int = 1 let b: Int c: Int }
+================================================================================
+
+struct S { /// d
+pub var a: Int = 1
+let b: Int
+c: Int }
+
+---
+
+(source_file
+  (struct_item
+    (identifier)
+    (doc_comment)
+    (field_declaration
+      (visibility)
+      (identifier)
+      (named_type
+        (path
+          (identifier)))
+      (integer_literal))
+    (field_declaration
+      (identifier)
+      (named_type
+        (path
+          (identifier))))
+    (field_declaration
+      (identifier)
+      (named_type
+        (path
+          (identifier))))))
+
+================================================================================
+Variant: enum E { /// d @x A(Int, Int,), B { x: Int, }, C = 1, D }
+================================================================================
+
+enum E { /// d
+@x A(Int, Int,), B { x: Int, }, C = 1, D }
+
+---
+
+(source_file
+  (enum_item
+    (identifier)
+    (doc_comment)
+    (variant
+      (attribute
+        (identifier))
+      (identifier)
+      (named_type
+        (path
+          (identifier)))
+      (named_type
+        (path
+          (identifier))))
+    (variant
+      (identifier)
+      (field_declaration
+        (identifier)
+        (named_type
+          (path
+            (identifier)))))
+    (variant
+      (identifier)
+      (integer_literal))
+    (variant
+      (identifier))))
+
+================================================================================
+TraitMember: trait T { fn f<A>(self) -> Int { return 1 } fn g() }
+================================================================================
+
+trait T { fn f<A>(self) -> Int { return 1 }
+fn g() }
+
+---
+
+(source_file
+  (trait_item
+    (identifier)
+    (trait_member
+      (identifier)
+      (generics
+        (generic_parameter
+          (identifier)))
+      (parameters
+        (self_parameter))
+      (named_type
+        (path
+          (identifier)))
+      (block
+        (return_statement
+          (integer_literal))))
+    (trait_member
+      (identifier)
+      (parameters))))
+
+================================================================================
+NamedType: let a: a.B = x
+================================================================================
+
+let a: a.B = x
+
+---
+
+(source_file
+  (binding
+    (binding_pattern
+      (identifier))
+    (named_type
+      (path
+        (identifier)
+        (identifier)))
+    (identifier)))
+
+================================================================================
+GenericType: let a: List<Int, String,> = x
+================================================================================
+
+let a: List<Int, String,> = x
+
+---
+
+(source_file
+  (binding
+    (binding_pattern
+      (identifier))
+    (generic_type
+      (path
+        (identifier))
+      (type_arguments
+        (named_type
+          (path
+            (identifier)))
+        (named_type
+          (path
+            (identifier)))))
+    (identifier)))
+
+================================================================================
+NullableType: let a: Int? = x
+================================================================================
+
+let a: Int? = x
+
+---
+
+(source_file
+  (binding
+    (binding_pattern
+      (identifier))
+    (nullable_type
+      (named_type
+        (path
+          (identifier))))
+    (identifier)))
+
+================================================================================
+NullableType of NullableType: let a: Int?? = x
+================================================================================
+
+let a: Int?? = x
+
+---
+
+(source_file
+  (binding
+    (binding_pattern
+      (identifier))
+    (nullable_type
+      (named_type
+        (path
+          (identifier))))
+    (identifier)))
+
+================================================================================
+TupleType: let a: (Int, String,) = x
+================================================================================
+
+let a: (Int, String,) = x
+
+---
+
+(source_file
+  (binding
+    (binding_pattern
+      (identifier))
+    (tuple_type
+      (named_type
+        (path
+          (identifier)))
+      (named_type
+        (path
+          (identifier))))
+    (identifier)))
+
+================================================================================
+TupleType: let a: () = x
+================================================================================
+
+let a: () = x
+
+---
+
+(source_file
+  (binding
+    (binding_pattern
+      (identifier))
+    (tuple_type)
+    (identifier)))
+
+================================================================================
+TupleType: let a: (Int,) = x
+================================================================================
+
+let a: (Int,) = x
+
+---
+
+(source_file
+  (binding
+    (binding_pattern
+      (identifier))
+    (tuple_type
+      (named_type
+        (path
+          (identifier))))
+    (identifier)))
+
+================================================================================
+FunctionType: let f: Send (var Int, Int,) -> Int = g
+================================================================================
+
+let f: Send (var Int, Int,) -> Int = g
+
+---
+
+(source_file
+  (binding
+    (binding_pattern
+      (identifier))
+    (function_type
+      (send_keyword)
+      (named_type
+        (path
+          (identifier)))
+      (named_type
+        (path
+          (identifier)))
+      (named_type
+        (path
+          (identifier))))
+    (identifier)))
+
+================================================================================
+ArrayType: let a: [Int; 4] = x let b: [Int] = y
+================================================================================
+
+let a: [Int; 4] = x
+let b: [Int] = y
+
+---
+
+(source_file
+  (binding
+    (binding_pattern
+      (identifier))
+    (array_type
+      (named_type
+        (path
+          (identifier)))
+      (integer_literal))
+    (identifier))
+  (binding
+    (binding_pattern
+      (identifier))
+    (array_type
+      (named_type
+        (path
+          (identifier))))
+    (identifier)))
+
+================================================================================
+UnionType: let a: Int | String | Null = x
+================================================================================
+
+let a: Int | String | Null = x
+
+---
+
+(source_file
+  (binding
+    (binding_pattern
+      (identifier))
+    (union_type
+      (named_type
+        (path
+          (identifier)))
+      (named_type
+        (path
+          (identifier)))
+      (named_type
+        (path
+          (identifier))))
+    (identifier)))
+
+================================================================================
+SelfType: struct S { fn m() -> Self { } }
+================================================================================
+
+struct S { fn m() -> Self { } }
+
+---
+
+(source_file
+  (struct_item
+    (identifier)
+    (function_item
+      (identifier)
+      (parameters)
+      (named_type
+        (path
+          (self_type)))
+      (block))))
+
+================================================================================
+GroupedType: let a: (Int | String)? = x
+================================================================================
+
+let a: (Int | String)? = x
+
+---
+
+(source_file
+  (binding
+    (binding_pattern
+      (identifier))
+    (nullable_type
+      (parenthesized_type
+        (union_type
+          (named_type
+            (path
+              (identifier)))
+          (named_type
+            (path
+              (identifier))))))
+    (identifier)))
+
+================================================================================
+Binding: let (a, b): (Int, Int) = t var c = 1
+================================================================================
+
+let (a, b): (Int, Int) = t
+var c = 1
+
+---
+
+(source_file
+  (binding
+    (tuple_pattern
+      (binding_pattern
+        (identifier))
+      (binding_pattern
+        (identifier)))
+    (tuple_type
+      (named_type
+        (path
+          (identifier)))
+      (named_type
+        (path
+          (identifier))))
+    (identifier))
+  (binding
+    (binding_pattern
+      (identifier))
+    (integer_literal)))
+
+================================================================================
+Assign: a = 1 a += 1 a -= 1 a *= 1 a /= 1 a %= 1 a &= 1 a |= 1 a ^=
+================================================================================
+
+a = 1
+a += 1
+a -= 1
+a *= 1
+a /= 1
+a %= 1
+a &= 1
+a |= 1
+a ^= 1
+a <<= 1
+a >>= 1
+a ??= b
+
+---
+
+(source_file
+  (assignment
+    (identifier)
+    (integer_literal))
+  (assignment
+    (identifier)
+    (integer_literal))
+  (assignment
+    (identifier)
+    (integer_literal))
+  (assignment
+    (identifier)
+    (integer_literal))
+  (assignment
+    (identifier)
+    (integer_literal))
+  (assignment
+    (identifier)
+    (integer_literal))
+  (assignment
+    (identifier)
+    (integer_literal))
+  (assignment
+    (identifier)
+    (integer_literal))
+  (assignment
+    (identifier)
+    (integer_literal))
+  (assignment
+    (identifier)
+    (integer_literal))
+  (assignment
+    (identifier)
+    (integer_literal))
+  (assignment
+    (identifier)
+    (identifier)))
+
+================================================================================
+If#2: if x { } else if y { } else { }
+================================================================================
+
+if x { } else if y { } else { }
+
+---
+
+(source_file
+  (if_expression
+    (identifier)
+    (block)
+    (if_expression
+      (identifier)
+      (block)
+      (block))))
+
+================================================================================
+While#2: while x { }
+================================================================================
+
+while x { }
+
+---
+
+(source_file
+  (while_statement
+    (identifier)
+    (block)))
+
+================================================================================
+For#2: for (a, b) in xs { }
+================================================================================
+
+for (a, b) in xs { }
+
+---
+
+(source_file
+  (for_statement
+    (tuple_pattern
+      (binding_pattern
+        (identifier))
+      (binding_pattern
+        (identifier)))
+    (identifier)
+    (block)))
+
+================================================================================
+Match#2: match x { 1 => a, _ => { b } }
+================================================================================
+
+match x { 1 => a, _ => { b } }
+
+---
+
+(source_file
+  (match_expression
+    (identifier)
+    (match_arm
+      (literal_pattern
+        (integer_literal))
+      (identifier))
+    (match_arm
+      (binding_pattern
+        (identifier))
+      (block
+        (identifier)))))
+
+================================================================================
+MatchArm: match x { n if n > 1 => a _ => b }
+================================================================================
+
+match x { n if n > 1 => a
+_ => b }
+
+---
+
+(source_file
+  (match_expression
+    (identifier)
+    (match_arm
+      (binding_pattern
+        (identifier))
+      (binary_expression
+        (identifier)
+        (integer_literal))
+      (identifier))
+    (match_arm
+      (binding_pattern
+        (identifier))
+      (identifier))))
+
+================================================================================
+Condition: if let Some(a) = x { } if y { }
+================================================================================
+
+if let Some(a) = x { }
+if y { }
+
+---
+
+(source_file
+  (if_expression
+    (let_condition
+      (tuple_struct_pattern
+        (path
+          (identifier))
+        (binding_pattern
+          (identifier)))
+      (identifier))
+    (block))
+  (if_expression
+    (identifier)
+    (block)))
+
+================================================================================
+Scope#2: scope { }
+================================================================================
+
+scope { }
+
+---
+
+(source_file
+  (scope_statement
+    (block)))
+
+================================================================================
+With#2: with a = b { }
+================================================================================
+
+with a = b { }
+
+---
+
+(source_file
+  (with_statement
+    (identifier)
+    (identifier)
+    (block)))
+
+================================================================================
+SpawnStmt: spawn work() spawn { }
+================================================================================
+
+spawn work()
+spawn { }
+
+---
+
+(source_file
+  (spawn_expression
+    (call_expression
+      (identifier)
+      (arguments)))
+  (spawn_expression
+    (block)))
+
+================================================================================
+Return#2: fn f() { return 1 } fn g() { return }
+================================================================================
+
+fn f() { return 1 }
+fn g() { return }
+
+---
+
+(source_file
+  (function_item
+    (identifier)
+    (parameters)
+    (block
+      (return_statement
+        (integer_literal))))
+  (function_item
+    (identifier)
+    (parameters)
+    (block
+      (return_statement))))
+
+================================================================================
+Break#2: while a { break 1 } while a { break }
+================================================================================
+
+while a { break 1 }
+while a { break }
+
+---
+
+(source_file
+  (while_statement
+    (identifier)
+    (block
+      (break_statement
+        (integer_literal))))
+  (while_statement
+    (identifier)
+    (block
+      (break_statement))))
+
+================================================================================
+Continue#2: while a { continue }
+================================================================================
+
+while a { continue }
+
+---
+
+(source_file
+  (while_statement
+    (identifier)
+    (block
+      (continue_statement))))
+
+================================================================================
+Yield#2: fn f() { yield 1 }
+================================================================================
+
+fn f() { yield 1 }
+
+---
+
+(source_file
+  (function_item
+    (identifier)
+    (parameters)
+    (block
+      (yield_statement
+        (integer_literal)))))
+
+================================================================================
+ExprStmt: f(1)
+================================================================================
+
+f(1)
+
+---
+
+(source_file
+  (call_expression
+    (identifier)
+    (arguments
+      (argument
+        (integer_literal)))))
+
+================================================================================
+Stmt: let b = 1 f() fn g() {}
+================================================================================
+
+let b = 1
+f()
+fn g() {}
+
+---
+
+(source_file
+  (binding
+    (binding_pattern
+      (identifier))
+    (integer_literal))
+  (call_expression
+    (identifier)
+    (arguments))
+  (function_item
+    (identifier)
+    (parameters)
+    (block)))
+
+================================================================================
+WildcardPattern: let _ = x
+================================================================================
+
+let _ = x
+
+---
+
+(source_file
+  (binding
+    (binding_pattern
+      (identifier))
+    (identifier)))
+
+================================================================================
+LiteralPattern: match x { -1 => a "s" => b 3 => c true => d false => e null
+================================================================================
+
+match x { -1 => a
+"s" => b
+3 => c
+true => d
+false => e
+null => f }
+
+---
+
+(source_file
+  (match_expression
+    (identifier)
+    (match_arm
+      (literal_pattern
+        (integer_literal))
+      (identifier))
+    (match_arm
+      (literal_pattern
+        (string_literal
+          (string_content)))
+      (identifier))
+    (match_arm
+      (literal_pattern
+        (integer_literal))
+      (identifier))
+    (match_arm
+      (literal_pattern
+        (boolean_literal))
+      (identifier))
+    (match_arm
+      (literal_pattern
+        (boolean_literal))
+      (identifier))
+    (match_arm
+      (literal_pattern
+        (null_literal))
+      (identifier))))
+
+================================================================================
+RangePattern: match x { 1..5 => a 1..=5 => b }
+================================================================================
+
+match x { 1..5 => a
+1..=5 => b }
+
+---
+
+(source_file
+  (match_expression
+    (identifier)
+    (match_arm
+      (range_pattern
+        (literal_pattern
+          (integer_literal))
+        (literal_pattern
+          (integer_literal)))
+      (identifier))
+    (match_arm
+      (range_pattern
+        (literal_pattern
+          (integer_literal))
+        (literal_pattern
+          (integer_literal)))
+      (identifier))))
+
+================================================================================
+BindingPattern: let a = x
+================================================================================
+
+let a = x
+
+---
+
+(source_file
+  (binding
+    (binding_pattern
+      (identifier))
+    (identifier)))
+
+================================================================================
+AtPattern: match x { n @ 1..5 => a }
+================================================================================
+
+match x { n @ 1..5 => a }
+
+---
+
+(source_file
+  (match_expression
+    (identifier)
+    (match_arm
+      (at_pattern
+        (identifier)
+        (range_pattern
+          (literal_pattern
+            (integer_literal))
+          (literal_pattern
+            (integer_literal))))
+      (identifier))))
+
+================================================================================
+OrPattern: match x { 1 | 2 | 3 => a }
+================================================================================
+
+match x { 1 | 2 | 3 => a }
+
+---
+
+(source_file
+  (match_expression
+    (identifier)
+    (match_arm
+      (or_pattern
+        (literal_pattern
+          (integer_literal))
+        (literal_pattern
+          (integer_literal))
+        (literal_pattern
+          (integer_literal)))
+      (identifier))))
+
+================================================================================
+TuplePattern: let (a, b,) = t let () = u
+================================================================================
+
+let (a, b,) = t
+let () = u
+
+---
+
+(source_file
+  (binding
+    (tuple_pattern
+      (binding_pattern
+        (identifier))
+      (binding_pattern
+        (identifier)))
+    (identifier))
+  (binding
+    (tuple_pattern)
+    (identifier)))
+
+================================================================================
+PathPattern: match x { a.B => 1 }
+================================================================================
+
+match x { a.B => 1 }
+
+---
+
+(source_file
+  (match_expression
+    (identifier)
+    (match_arm
+      (path_pattern
+        (identifier)
+        (identifier))
+      (integer_literal))))
+
+================================================================================
+TupleStructPattern: match x { Some(a, b,) => 1 None() => 2 }
+================================================================================
+
+match x { Some(a, b,) => 1
+None() => 2 }
+
+---
+
+(source_file
+  (match_expression
+    (identifier)
+    (match_arm
+      (tuple_struct_pattern
+        (path
+          (identifier))
+        (binding_pattern
+          (identifier))
+        (binding_pattern
+          (identifier)))
+      (integer_literal))
+    (match_arm
+      (tuple_struct_pattern
+        (path
+          (identifier)))
+      (integer_literal))))
+
+================================================================================
+StructPattern: match x { P { x, y: 1, .. } => 1 Q { } => 2 }
+================================================================================
+
+match x { P { x, y: 1, .. } => 1
+Q { } => 2 }
+
+---
+
+(source_file
+  (match_expression
+    (identifier)
+    (match_arm
+      (struct_pattern
+        (path
+          (identifier))
+        (field_pattern
+          (identifier))
+        (field_pattern
+          (identifier)
+          (literal_pattern
+            (integer_literal))))
+      (integer_literal))
+    (match_arm
+      (struct_pattern
+        (path
+          (identifier)))
+      (integer_literal))))
+
+================================================================================
+FieldPattern: match x { P { y: 1, z } => a }
+================================================================================
+
+match x { P { y: 1, z } => a }
+
+---
+
+(source_file
+  (match_expression
+    (identifier)
+    (match_arm
+      (struct_pattern
+        (path
+          (identifier))
+        (field_pattern
+          (identifier)
+          (literal_pattern
+            (integer_literal)))
+        (field_pattern
+          (identifier)))
+      (identifier))))
+
+================================================================================
+TypePattern: match x { n: Int => a _: String => b }
+================================================================================
+
+match x { n: Int => a
+_: String => b }
+
+---
+
+(source_file
+  (match_expression
+    (identifier)
+    (match_arm
+      (type_pattern
+        (identifier)
+        (named_type
+          (path
+            (identifier))))
+      (identifier))
+    (match_arm
+      (type_pattern
+        (identifier)
+        (named_type
+          (path
+            (identifier))))
+      (identifier))))
+
+================================================================================
+IntLiteral: 1
+================================================================================
+
+1
+
+---
+
+(source_file
+  (integer_literal))
+
+================================================================================
+FloatLiteral: 1.5
+================================================================================
+
+1.5
+
+---
+
+(source_file
+  (float_literal))
+
+================================================================================
+StringLiteral: "s"
+================================================================================
+
+"s"
+
+---
+
+(source_file
+  (string_literal
+    (string_content)))
+
+================================================================================
+InterpolatedString: "a${1}b${x}c"
+================================================================================
+
+"a${1}b${x}c"
+
+---
+
+(source_file
+  (string_literal
+    (string_content)
+    (interpolation
+      (integer_literal))
+    (string_content)
+    (interpolation
+      (identifier))
+    (string_content)))
+
+================================================================================
+BoolLiteral: true false
+================================================================================
+
+true
+false
+
+---
+
+(source_file
+  (boolean_literal)
+  (boolean_literal))
+
+================================================================================
+NullLiteral: null
+================================================================================
+
+null
+
+---
+
+(source_file
+  (null_literal))
+
+================================================================================
+Ident#2: x
+================================================================================
+
+x
+
+---
+
+(source_file
+  (identifier))
+
+================================================================================
+SelfValue: struct S { fn m(self) { self } }
+================================================================================
+
+struct S { fn m(self) { self } }
+
+---
+
+(source_file
+  (struct_item
+    (identifier)
+    (function_item
+      (identifier)
+      (parameters
+        (self_parameter))
+      (block
+        (self_value)))))
+
+================================================================================
+Grouped: (1)
+================================================================================
+
+(1)
+
+---
+
+(source_file
+  (parenthesized_expression
+    (integer_literal)))
+
+================================================================================
+TupleLiteral: (1, 2,) () (1,)
+================================================================================
+
+(1, 2,)
+()
+(1,)
+
+---
+
+(source_file
+  (tuple_expression
+    (integer_literal)
+    (integer_literal))
+  (tuple_expression)
+  (tuple_expression
+    (integer_literal)))
+
+================================================================================
+ArrayRepeat: [0; 4]
+================================================================================
+
+[0; 4]
+
+---
+
+(source_file
+  (array_repeat_expression
+    (integer_literal)
+    (integer_literal)))
+
+================================================================================
+MapLiteral: let m = {1: 2, 3: 4,} let e = {}
+================================================================================
+
+let m = {1: 2, 3: 4,}
+let e = {}
+
+---
+
+(source_file
+  (binding
+    (binding_pattern
+      (identifier))
+    (map_expression
+      (integer_literal)
+      (integer_literal)
+      (integer_literal)
+      (integer_literal)))
+  (binding
+    (binding_pattern
+      (identifier))
+    (map_expression)))
+
+================================================================================
+StructInit: let p = P { x: 1, y, ..d }
+================================================================================
+
+let p = P { x: 1, y, ..d }
+
+---
+
+(source_file
+  (binding
+    (binding_pattern
+      (identifier))
+    (struct_expression
+      (identifier)
+      (field_initializer
+        (identifier)
+        (integer_literal))
+      (field_initializer
+        (identifier))
+      (field_initializer
+        (identifier)))))
+
+================================================================================
+FieldInit: let p = P { a: 1, b, ..d }
+================================================================================
+
+let p = P { a: 1, b, ..d }
+
+---
+
+(source_file
+  (binding
+    (binding_pattern
+      (identifier))
+    (struct_expression
+      (identifier)
+      (field_initializer
+        (identifier)
+        (integer_literal))
+      (field_initializer
+        (identifier))
+      (field_initializer
+        (identifier)))))
+
+================================================================================
+Lambda: let f = |a, var b: Int,| -> Int { a } let g = || 1 let h = |
+================================================================================
+
+let f = |a, var b: Int,| -> Int { a }
+let g = || 1
+let h = |x| x
+
+---
+
+(source_file
+  (binding
+    (binding_pattern
+      (identifier))
+    (lambda_expression
+      (lambda_parameter
+        (identifier))
+      (lambda_parameter
+        (identifier)
+        (parameter_type
+          (named_type
+            (path
+              (identifier)))))
+      (return_type
+        (named_type
+          (path
+            (identifier))))
+      (block
+        (identifier))))
+  (binding
+    (binding_pattern
+      (identifier))
+    (lambda_expression
+      (integer_literal)))
+  (binding
+    (binding_pattern
+      (identifier))
+    (lambda_expression
+      (lambda_parameter
+        (identifier))
+      (identifier))))
+
+================================================================================
+LambdaParam: let f = |var a: Int, b| a
+================================================================================
+
+let f = |var a: Int, b| a
+
+---
+
+(source_file
+  (binding
+    (binding_pattern
+      (identifier))
+    (lambda_expression
+      (lambda_parameter
+        (identifier)
+        (parameter_type
+          (named_type
+            (path
+              (identifier)))))
+      (lambda_parameter
+        (identifier))
+      (identifier))))
+
+================================================================================
+Call: f(1, a = 2,)
+================================================================================
+
+f(1, a = 2,)
+
+---
+
+(source_file
+  (call_expression
+    (identifier)
+    (arguments
+      (argument
+        (integer_literal))
+      (argument
+        (identifier)
+        (integer_literal)))))
+
+================================================================================
+Arg: f(a = 1, 2)
+================================================================================
+
+f(a = 1, 2)
+
+---
+
+(source_file
+  (call_expression
+    (identifier)
+    (arguments
+      (argument
+        (identifier)
+        (integer_literal))
+      (argument
+        (integer_literal)))))
+
+================================================================================
+Member: a.b
+================================================================================
+
+a.b
+
+---
+
+(source_file
+  (member_expression
+    (identifier)
+    (identifier)))
+
+================================================================================
+TupleIndex: a.0.1
+================================================================================
+
+a.0.1
+
+---
+
+(source_file
+  (tuple_index_expression
+    (tuple_index_expression
+      (identifier)
+      (integer_literal))
+    (integer_literal)))
+
+================================================================================
+OptionalMember: a?.b
+================================================================================
+
+a?.b
+
+---
+
+(source_file
+  (optional_member_expression
+    (identifier)
+    (identifier)))
+
+================================================================================
+Index: a[1]
+================================================================================
+
+a[1]
+
+---
+
+(source_file
+  (index_expression
+    (identifier)
+    (integer_literal)))
+
+================================================================================
+Slice: a[1..2] a[..=2] a[1..] a[..] a[1..2..3]
+================================================================================
+
+a[1..2]
+a[..=2]
+a[1..]
+a[..]
+a[1..2..3]
+
+---
+
+(source_file
+  (slice_expression
+    (identifier)
+    (integer_literal)
+    (integer_literal))
+  (slice_expression
+    (identifier)
+    (integer_literal))
+  (slice_expression
+    (identifier)
+    (integer_literal))
+  (slice_expression
+    (identifier))
+  (slice_expression
+    (identifier)
+    (integer_literal)
+    (integer_literal)
+    (integer_literal)))
+
+================================================================================
+TypeApply: let m = Map<String, Int,>()
+================================================================================
+
+let m = Map<String, Int,>()
+
+---
+
+(source_file
+  (binding
+    (binding_pattern
+      (identifier))
+    (call_expression
+      (type_apply_callee
+        (identifier)
+        (type_arguments
+          (named_type
+            (path
+              (identifier)))
+          (named_type
+            (path
+              (identifier)))))
+      (arguments))))
+
+================================================================================
+Unwrap: a!
+================================================================================
+
+a!
+
+---
+
+(source_file
+  (unwrap_expression
+    (identifier)))
+
+================================================================================
+Propagate: a?
+================================================================================
+
+a?
+
+---
+
+(source_file
+  (propagate_expression
+    (identifier)))
+
+================================================================================
+Unary: -a !a ~a
+================================================================================
+
+-a
+!a
+~a
+
+---
+
+(source_file
+  (unary_expression
+    (unwrap_expression
+      (identifier)))
+  (identifier)
+  (unary_expression
+    (identifier)))
+
+================================================================================
+Binary: a + b * c
+================================================================================
+
+a + b * c
+
+---
+
+(source_file
+  (binary_expression
+    (identifier)
+    (binary_expression
+      (identifier)
+      (identifier))))
+
+================================================================================
+TypeTest: a is Int
+================================================================================
+
+a is Int
+
+---
+
+(source_file
+  (type_test_expression
+    (identifier)
+    (named_type
+      (path
+        (identifier)))))
+
+================================================================================
+Cast: a as Int
+================================================================================
+
+a as Int
+
+---
+
+(source_file
+  (cast_expression
+    (identifier)
+    (named_type
+      (path
+        (identifier)))))
+
+================================================================================
+Range: a..b a..=b
+================================================================================
+
+a..b
+a..=b
+
+---
+
+(source_file
+  (range_expression
+    (identifier)
+    (identifier))
+  (range_expression
+    (identifier)
+    (identifier)))
+
+================================================================================
+SpawnExpr: let t = spawn f() let u = spawn { 1 }
+================================================================================
+
+let t = spawn f()
+let u = spawn { 1 }
+
+---
+
+(source_file
+  (binding
+    (binding_pattern
+      (identifier))
+    (spawn_expression
+      (call_expression
+        (identifier)
+        (arguments))))
+  (binding
+    (binding_pattern
+      (identifier))
+    (spawn_expression
+      (block
+        (integer_literal)))))
+
+================================================================================
+IfExpr: let a = if x { 1 } else if y { 2 } else { 3 }
+================================================================================
+
+let a = if x { 1 } else if y { 2 } else { 3 }
+
+---
+
+(source_file
+  (binding
+    (binding_pattern
+      (identifier))
+    (if_expression
+      (identifier)
+      (block
+        (integer_literal))
+      (if_expression
+        (identifier)
+        (block
+          (integer_literal))
+        (block
+          (integer_literal))))))
+
+================================================================================
+MatchExpr: let a = match x { 1 => 2, _ => 3 }
+================================================================================
+
+let a = match x { 1 => 2, _ => 3 }
+
+---
+
+(source_file
+  (binding
+    (binding_pattern
+      (identifier))
+    (match_expression
+      (identifier)
+      (match_arm
+        (literal_pattern
+          (integer_literal))
+        (integer_literal))
+      (match_arm
+        (binding_pattern
+          (identifier))
+        (integer_literal)))))
+
+================================================================================
+ValueArm: let a = match x { n if n > 1 => 2, _ => 3 }
+================================================================================
+
+let a = match x { n if n > 1 => 2, _ => 3 }
+
+---
+
+(source_file
+  (binding
+    (binding_pattern
+      (identifier))
+    (match_expression
+      (identifier)
+      (match_arm
+        (binding_pattern
+          (identifier))
+        (binary_expression
+          (identifier)
+          (integer_literal))
+        (integer_literal))
+      (match_arm
+        (binding_pattern
+          (identifier))
+        (integer_literal)))))
+
+================================================================================
+Expr: f(a)[0].b
+================================================================================
+
+f(a)[0].b
+
+---
+
+(source_file
+  (member_expression
+    (index_expression
+      (call_expression
+        (identifier)
+        (arguments
+          (argument
+            (identifier))))
+      (integer_literal))
+    (identifier)))
+
+================================================================================
+Pattern: let (a, _) = t
+================================================================================
+
+let (a, _) = t
+
+---
+
+(source_file
+  (binding
+    (tuple_pattern
+      (binding_pattern
+        (identifier))
+      (binding_pattern
+        (identifier)))
+    (identifier)))
+
+================================================================================
+Type#2: let a: Int = 1
+================================================================================
+
+let a: Int = 1
+
+---
+
+(source_file
+  (binding
+    (binding_pattern
+      (identifier))
+    (named_type
+      (path
+        (identifier)))
+    (integer_literal)))
+
+================================================================================
+Precedence 1: a ?? b || c
+================================================================================
+
+a ?? b || c
+
+---
+
+(source_file
+  (binary_expression
+    (identifier)
+    (binary_expression
+      (identifier)
+      (identifier))))
+
+================================================================================
+Precedence 2: a || b && c
+================================================================================
+
+a || b && c
+
+---
+
+(source_file
+  (binary_expression
+    (identifier)
+    (binary_expression
+      (identifier)
+      (identifier))))
+
+================================================================================
+Precedence 3: a && b | c
+================================================================================
+
+a && b | c
+
+---
+
+(source_file
+  (binary_expression
+    (identifier)
+    (binary_expression
+      (identifier)
+      (identifier))))
+
+================================================================================
+Precedence 4: a | b ^ c
+================================================================================
+
+a | b ^ c
+
+---
+
+(source_file
+  (binary_expression
+    (identifier)
+    (binary_expression
+      (identifier)
+      (identifier))))
+
+================================================================================
+Precedence 5: a ^ b & c
+================================================================================
+
+a ^ b & c
+
+---
+
+(source_file
+  (binary_expression
+    (identifier)
+    (binary_expression
+      (identifier)
+      (identifier))))
+
+================================================================================
+Precedence 6: a & b == c
+================================================================================
+
+a & b == c
+
+---
+
+(source_file
+  (binary_expression
+    (identifier)
+    (binary_expression
+      (identifier)
+      (identifier))))
+
+================================================================================
+Precedence 7: a == b < c a != b < c
+================================================================================
+
+a == b < c
+a != b < c
+
+---
+
+(source_file
+  (binary_expression
+    (identifier)
+    (binary_expression
+      (identifier)
+      (identifier)))
+  (binary_expression
+    (identifier)
+    (binary_expression
+      (identifier)
+      (identifier))))
+
+================================================================================
+Precedence 8: a < b + c a >= b + c
+================================================================================
+
+a < b + c
+a >= b + c
+
+---
+
+(source_file
+  (binary_expression
+    (identifier)
+    (binary_expression
+      (identifier)
+      (identifier)))
+  (binary_expression
+    (identifier)
+    (binary_expression
+      (identifier)
+      (identifier))))
+
+================================================================================
+Precedence 9: a << b is T
+================================================================================
+
+a << b is T
+
+---
+
+(source_file
+  (type_test_expression
+    (binary_expression
+      (identifier)
+      (identifier))
+    (named_type
+      (path
+        (identifier)))))
+
+================================================================================
+Precedence 10: a << b..c a >> b + c
+================================================================================
+
+a << b..c
+a >> b + c
+
+---
+
+(source_file
+  (binary_expression
+    (identifier)
+    (range_expression
+      (identifier)
+      (identifier)))
+  (binary_expression
+    (identifier)
+    (binary_expression
+      (identifier)
+      (identifier))))
+
+================================================================================
+Precedence 11: a..b + c a..=b + c
+================================================================================
+
+a..b + c
+a..=b + c
+
+---
+
+(source_file
+  (range_expression
+    (identifier)
+    (binary_expression
+      (identifier)
+      (identifier)))
+  (range_expression
+    (identifier)
+    (binary_expression
+      (identifier)
+      (identifier))))
+
+================================================================================
+Precedence 12: a + b * c a - b % c
+================================================================================
+
+a + b * c
+a - b % c
+
+---
+
+(source_file
+  (binary_expression
+    (identifier)
+    (binary_expression
+      (identifier)
+      (identifier)))
+  (binary_expression
+    (identifier)
+    (binary_expression
+      (identifier)
+      (identifier))))
+
+================================================================================
+Precedence 13: a * b as T a / b as T
+================================================================================
+
+a * b as T
+a / b as T
+
+---
+
+(source_file
+  (binary_expression
+    (identifier)
+    (cast_expression
+      (identifier)
+      (named_type
+        (path
+          (identifier)))))
+  (binary_expression
+    (identifier)
+    (cast_expression
+      (identifier)
+      (named_type
+        (path
+          (identifier))))))
+
+================================================================================
+Precedence 14: -a as T
+================================================================================
+
+-a as T
+
+---
+
+(source_file
+  (cast_expression
+    (unary_expression
+      (identifier))
+    (named_type
+      (path
+        (identifier)))))
+
+================================================================================
+Precedence 15: -a.b !a.b ~a.b
+================================================================================
+
+-a.b
+!a.b
+~a.b
+
+---
+
+(source_file
+  (unary_expression
+    (unwrap_expression
+      (member_expression
+        (identifier)
+        (identifier))))
+  (member_expression
+    (identifier)
+    (identifier))
+  (unary_expression
+    (member_expression
+      (identifier)
+      (identifier))))
+
+================================================================================
+Precedence 16: a.b(c)[d]!?
+================================================================================
+
+a.b(c)[d]!?
+
+---
+
+(source_file
+  (propagate_expression
+    (unwrap_expression
+      (index_expression
+        (call_expression
+          (member_expression
+            (identifier)
+            (identifier))
+          (arguments
+            (argument
+              (identifier))))
+        (identifier)))))
+
+================================================================================
+Contextual word: let test = 1 let Send = 2 fn _() {}
+================================================================================
+
+let test = 1
+let Send = 2
+fn _() {}
+
+---
+
+(source_file
+  (binding
+    (binding_pattern
+      (identifier))
+    (integer_literal))
+  (binding
+    (binding_pattern
+      (identifier))
+    (integer_literal))
+  (function_item
+    (identifier)
+    (parameters)
+    (block)))

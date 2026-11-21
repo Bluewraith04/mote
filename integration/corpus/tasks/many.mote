@@ -1,0 +1,26 @@
+import { Task, await_all } from std.task
+
+fn fib(n: Int) -> Int {
+    if n < 2 {
+        return n
+    }
+    return fib(n - 1) + fib(n - 2)
+}
+
+fn main() {
+    var tasks: List<Task<Int>> = List.new()
+    var i = 0
+    while i < 200 {
+        let n = i % 15
+        tasks.push(spawn fib(n))
+        i += 1
+    }
+    var total = 0
+    for task in tasks {
+        total += task.await().unwrap()
+    }
+    println(total)
+    let some = await_all([spawn { return 1 }, spawn { return 2 }, spawn { return 3 }])
+    println(some.len())
+    println(some[2].unwrap())
+}

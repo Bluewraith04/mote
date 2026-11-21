@@ -1,0 +1,14 @@
+fn divide(a: Int, b: Int) -> Int {
+    return a / b
+}
+
+fn remainder(a: Int, b: Int) -> Int {
+    return a % b
+}
+
+fn main() {
+    let least = -9223372036854775807 - 1
+    println(remainder(least, -1))
+    println(divide(least, 2))
+    println(divide(least, -1))
+}

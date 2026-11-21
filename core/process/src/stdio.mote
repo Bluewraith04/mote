@@ -1,0 +1,13 @@
+// Where a standard stream of the child goes.
+
+/// Where a standard stream of the child goes.
+pub enum Stdio {
+    /// The stream of this program.
+    Inherit
+    /// A pipe this program reads or writes.
+    Piped
+    /// The null device: no input, output thrown away.
+    Null
+    /// For standard error only: the same place as standard output.
+    Merged
+}

@@ -1,0 +1,19 @@
+start
+test "Int8 has every method"
+passed
+test "Int16 has every method"
+passed
+test "Int32 has every method"
+passed
+test "Int has every method"
+passed
+test "UInt8 has every method"
+passed
+test "UInt16 has every method"
+passed
+test "UInt32 has every method"
+passed
+test "UInt64 has every method"
+passed
+test "Float, Float32, Bool and String have eq, clone and debug"
+passed

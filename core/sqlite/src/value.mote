@@ -1,0 +1,63 @@
+// The value of a column or of a bound parameter.
+
+/// A value that can be bound as a statement parameter.
+pub type SqlValue = Value | Int | Float | String | [UInt8] | Bool | Null
+
+/// Converts an SqlValue parameter into a stored Value enum.
+pub fn to_value(param: SqlValue) -> Value {
+    return match param {
+        v: Value => v
+        n: Int => Value.Integer(n)
+        f: Float => Value.Real(f)
+        s: String => Value.Text(s)
+        b: [UInt8] => Value.Blob(b)
+        flag: Bool => Value.Integer(if flag { 1 } else { 0 })
+        _ => Value.Null
+    }
+}
+
+/// A value in a column or a bound parameter.
+pub enum Value {
+    Null
+    Integer(Int)
+    Real(Float)
+    Text(String)
+    Blob([UInt8])
+
+    pub fn is_null(self) -> Bool {
+        return match self {
+            Null => true
+            _ => false
+        }
+    }
+
+    pub fn as_int(self) -> Int? {
+        return match self {
+            Integer(value) => value
+            _ => null
+        }
+    }
+
+    /// A real, or an integer as a real.
+    pub fn as_float(self) -> Float? {
+        return match self {
+            Real(value) => value
+            Integer(value) => value as Float
+            _ => null
+        }
+    }
+
+    pub fn as_text(self) -> String? {
+        return match self {
+            Text(value) => value
+            _ => null
+        }
+    }
+
+    pub fn as_blob(self) -> [UInt8]? {
+        return match self {
+            Blob(value) => value
+            _ => null
+        }
+    }
+}

@@ -1,0 +1,4 @@
+fn main() {
+    let text = "hello"
+    println(text.repeat(100000000).len())
+}

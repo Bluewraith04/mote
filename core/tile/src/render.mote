@@ -1,0 +1,83 @@
+// Drawing a view onto a grid.
+import { Grid } from .grid
+import { Style } from term
+import { Shape, View } from .view
+import { lengths } from ._layout
+
+/// Where a named view was drawn: the cells from `row` and `col`, `rows` high and `cols` wide.
+pub struct Area {
+    pub tag: String
+    pub row: Int
+    pub col: Int
+    pub rows: Int
+    pub cols: Int
+}
+
+/// A drawn grid and the areas of the named views, in paint order.
+pub class Painted {
+    pub grid: Grid
+    pub areas: List<Area>
+}
+
+fn paint(view: View, var grid: Grid, var areas: List<Area>, top: Int, left: Int, height: Int, width: Int) {
+    if height <= 0 || width <= 0 { return }
+    if view.tag != "" { areas.push(Area { tag: view.tag, row: top, col: left, rows: height, cols: width }) }
+    if view.shape == Shape.Text {
+        grid.draw(view.label, view.style, top, left, height, width)
+    } else if view.shape == Shape.Fill {
+        for row in top..top + height {
+            for col in left..left + width {
+                grid.put(row, col, view.label, view.style)
+            }
+        }
+    } else if view.shape == Shape.Column {
+        let sizes = lengths(view.children, height, true)
+        var at = top
+        for index in 0..view.children.len() {
+            paint(view.children[index].view, grid, areas, at, left, sizes[index], width)
+            at += sizes[index]
+        }
+    } else if view.shape == Shape.Row {
+        let sizes = lengths(view.children, width, false)
+        var at = left
+        for index in 0..view.children.len() {
+            paint(view.children[index].view, grid, areas, top, at, height, sizes[index])
+            at += sizes[index]
+        }
+    } else if view.shape == Shape.Pad {
+        let cells = view.amount
+        paint(view.inner!, grid, areas, top + cells, left + cells, height - 2 * cells, width - 2 * cells)
+    } else if view.shape == Shape.Border {
+        if height < 2 || width < 2 { return }
+        let plain = Style {}
+        grid.put(top, left, "┌", plain)
+        grid.put(top, left + width - 1, "┐", plain)
+        grid.put(top + height - 1, left, "└", plain)
+        grid.put(top + height - 1, left + width - 1, "┘", plain)
+        for col in left + 1..left + width - 1 {
+            grid.put(top, col, "─", plain)
+            grid.put(top + height - 1, col, "─", plain)
+        }
+        for row in top + 1..top + height - 1 {
+            grid.put(row, left, "│", plain)
+            grid.put(row, left + width - 1, "│", plain)
+        }
+        if view.label != "" && width > 4 {
+            grid.draw(" ${view.label} ", plain, top, left + 1, 1, width - 2)
+        }
+        paint(view.inner!, grid, areas, top + 1, left + 1, height - 2, width - 2)
+    }
+}
+
+/// The grid a view draws on a screen of the given size.
+pub fn render(view: View, rows: Int, cols: Int) -> Grid {
+    return render_areas(view, rows, cols).grid
+}
+
+/// As `render`, with the areas of the views that have a tag.
+pub fn render_areas(view: View, rows: Int, cols: Int) -> Painted {
+    var grid = Grid.blank(rows, cols)
+    var areas: List<Area> = []
+    paint(view, grid, areas, 0, 0, rows, cols)
+    return Painted { grid: grid, areas: areas }
+}

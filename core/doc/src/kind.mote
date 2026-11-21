@@ -1,0 +1,10 @@
+// What a node is.
+
+/// What a node is.
+pub enum NodeKind {
+    Document
+    Element
+    Text
+    Comment
+    Raw
+}

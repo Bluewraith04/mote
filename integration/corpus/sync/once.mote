@@ -1,0 +1,39 @@
+import { Once } from std.sync
+import { Task, await_all } from std.task
+import std.atomic as atomic
+
+fn main() {
+    let hits = atomic.Int64(0)
+    let once = Once<Int>()
+    let first = once.get_or_init(|| {
+        hits.fetch_add(1)
+        return 42
+    })
+    let second = once.get_or_init(|| {
+        hits.fetch_add(1)
+        return 0
+    })
+    println(first)
+    println(second)
+    println(hits.load())
+    let shared = Once<Int>()
+    let runs = atomic.Int64(0)
+    var tasks: List<Task<Int>> = []
+    for i in 0..4 {
+        tasks.push(spawn {
+            return shared.get_or_init(|| {
+                runs.fetch_add(1)
+                return 7
+            })
+        })
+    }
+    var total = 0
+    for result in await_all(tasks) {
+        total += result.unwrap()
+    }
+    println(total)
+    println(runs.load())
+    let text = Once<String>()
+    println(text.get_or_init(|| { return "ready" }))
+    println(text.get_or_init(|| { return "again" }))
+}

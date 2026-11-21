@@ -1,0 +1,18 @@
+[package]
+name = "mote-integration"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+mote.workspace = true
+
+[dev-dependencies]
+mote-abi.workspace = true
+mote-codegen.workspace = true
+mote-ir.workspace = true
+mote-runtime.workspace = true
+mote-scheduler.workspace = true
+mote-semantics.workspace = true
+mote-syntax.workspace = true
+mote-packages = { workspace = true, features = ["testing"] }

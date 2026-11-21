@@ -1,0 +1,50 @@
+import { Channel } from std.sync
+
+struct Point {
+    x: Int
+    y: Float
+    name: String
+}
+
+enum Cmd {
+    Stop
+    Move(Int)
+}
+
+fn main() {
+    let (bt, br) = Channel<Bool>(2)
+    let (ft, fr) = Channel<Float>(2)
+    let (pt, pr) = Channel<Point>(2)
+    let (ct, cr) = Channel<Cmd>(2)
+    let (tt, tr) = Channel<(Int, String)>(2)
+    let (lt, lr) = Channel<[Int]>(2)
+    bt.send(true)
+    bt.send(false)
+    ft.send(2.5)
+    pt.send(Point { x: 3, y: 1.5, name: "p" })
+    ct.send(Cmd.Move(7))
+    ct.send(Cmd.Stop)
+    tt.send((4, "four"))
+    lt.send([1, 2, 3])
+    println(br.recv()!)
+    println(br.recv()!)
+    println(fr.recv()!)
+    let p = pr.recv()!
+    println(p.x)
+    println(p.y)
+    println(p.name)
+    match cr.recv()! {
+        Stop => println("stop")
+        Move(n) => println(n)
+    }
+    match cr.recv()! {
+        Stop => println("stop")
+        Move(n) => println(n)
+    }
+    let t = tr.recv()!
+    println(t.0)
+    println(t.1)
+    let l = lr.recv()!
+    println(l.len())
+    println(l[2])
+}

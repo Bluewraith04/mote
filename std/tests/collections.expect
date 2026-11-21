@@ -1,0 +1,39 @@
+start
+test "a list grows and shrinks"
+passed
+test "first, last and get_or"
+passed
+test "set and index write an element"
+passed
+test "contains and slice"
+passed
+test "set_slice replaces a range"
+passed
+test "clone is shallow and deep_clone copies everything"
+passed
+test "an index out of range is a fault in a task"
+passed
+test "a list streams its elements"
+passed
+test "an array has a fixed length"
+passed
+test "a map keeps insertion order"
+passed
+test "a map looks up, removes and clears"
+passed
+test "map items are pairs"
+passed
+test "a map compares by value and clones"
+passed
+test "map helpers"
+passed
+test "a set holds each value once"
+passed
+test "set operations"
+passed
+test "a range holds its ends"
+passed
+test "a range iterates"
+passed
+test "a deep clone of a set is a set of its own"
+passed

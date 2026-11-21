@@ -1,0 +1,40 @@
+[workspace]
+members = [
+    "base",
+    "syntax",
+    "semantics",
+    "abi",
+    "ir",
+    "codegen",
+    "heap",
+    "scheduler",
+    "runtime",
+    "packages",
+    "integration",
+    "mote",
+]
+resolver = "3"
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[workspace.package]
+version = "0.2.0"
+edition = "2024"
+license = "MIT"
+
+[workspace.dependencies]
+mote-base = { path = "base" }
+mote-syntax = { path = "syntax" }
+mote-semantics = { path = "semantics" }
+mote-abi = { path = "abi" }
+mote-ir = { path = "ir" }
+mote-codegen = { path = "codegen" }
+mote-heap = { path = "heap" }
+mote-scheduler = { path = "scheduler" }
+mote-runtime = { path = "runtime" }
+mote-packages = { path = "packages" }
+mote = { path = "mote" }

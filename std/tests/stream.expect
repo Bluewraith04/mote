@@ -1,0 +1,21 @@
+start
+test "a generator yields on demand"
+passed
+test "next steps one value at a time and ends with null"
+passed
+test "collect gathers the rest"
+passed
+test "a generator that never ends can be left early"
+passed
+test "a generator can read another"
+passed
+test "a generator over text"
+passed
+test "return ends the stream"
+passed
+test "two streams from one generator are independent"
+passed
+test "a stream widens to a stream of optionals"
+passed
+test "a generator runs on the reader's task"
+passed

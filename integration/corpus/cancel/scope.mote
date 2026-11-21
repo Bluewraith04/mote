@@ -1,0 +1,30 @@
+import { sleep } from std.task
+
+class Res {
+    let label: String
+
+    fn close(self) {
+        println("closed ${self.label}")
+    }
+}
+
+fn main() {
+    let h = spawn {
+        with outer = Res { label: "outer" } {
+            scope {
+                spawn {
+                    with inner = Res { label: "child" } {
+                        sleep(1000)
+                        println("child done")
+                    }
+                }
+                sleep(1000)
+            }
+        }
+        return 1
+    }
+    sleep(100)
+    h.cancel()
+    println(h.await().is_err())
+    println("end")
+}

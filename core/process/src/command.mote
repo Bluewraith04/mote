@@ -1,0 +1,246 @@
+// A program to run, and the process it starts.
+import { Int64 } from std.atomic
+import { Closeable } from std.traits
+import { vars } from env
+import { Stdio } from .stdio
+import { Output, Status } from .status
+import { block_of, descriptor, failure, mode_of, read_all_from } from ._support
+import { process_spawn, process_wait, process_try_wait, process_kill, process_read, process_write, process_close } from ._native
+
+/// A program to run, with its arguments, environment, working directory and the three streams. Each method gives a changed copy.
+pub class Command {
+    pub program: String
+    pub args: List<String>
+    pub env: List<(String, String)>
+    pub clear_env: Bool
+    pub cwd: String
+    pub stdin: Stdio
+    pub stdout: Stdio
+    pub stderr: Stdio
+
+    fn changed(self, args: List<String>, env: List<(String, String)>, clear_env: Bool, cwd: String, streams: (Stdio, Stdio, Stdio)) -> Command {
+        return Command { program: self.program, args: args, env: env, clear_env: clear_env, cwd: cwd, stdin: streams.0, stdout: streams.1, stderr: streams.2 }
+    }
+
+    /// Adds one argument.
+    pub fn arg(self, argument: String) -> Command {
+        var args = self.args
+        args.push(argument)
+        return self.changed(args, self.env, self.clear_env, self.cwd, (self.stdin, self.stdout, self.stderr))
+    }
+
+    /// Adds arguments.
+    pub fn with_args(self, more: List<String>) -> Command {
+        var args = self.args
+        for argument in more {
+            args.push(argument)
+        }
+        return self.changed(args, self.env, self.clear_env, self.cwd, (self.stdin, self.stdout, self.stderr))
+    }
+
+    /// Sets a variable of the child, which replaces one of the same name.
+    pub fn set_env(self, name: String, value: String) -> Command {
+        var env: List<(String, String)> = []
+        for (key, old) in self.env {
+            if key != name { env.push((key, old)) }
+        }
+        env.push((name, value))
+        return self.changed(self.args, env, self.clear_env, self.cwd, (self.stdin, self.stdout, self.stderr))
+    }
+
+    /// The child gets only the variables set with `set_env`.
+    pub fn without_inherited_env(self) -> Command {
+        return self.changed(self.args, self.env, true, self.cwd, (self.stdin, self.stdout, self.stderr))
+    }
+
+    /// Runs the child in a directory.
+    pub fn in_dir(self, cwd: String) -> Command {
+        return self.changed(self.args, self.env, self.clear_env, cwd, (self.stdin, self.stdout, self.stderr))
+    }
+
+    pub fn with_stdin(self, stdin: Stdio) -> Command {
+        return self.changed(self.args, self.env, self.clear_env, self.cwd, (stdin, self.stdout, self.stderr))
+    }
+
+    pub fn with_stdout(self, stdout: Stdio) -> Command {
+        return self.changed(self.args, self.env, self.clear_env, self.cwd, (self.stdin, stdout, self.stderr))
+    }
+
+    pub fn with_stderr(self, stderr: Stdio) -> Command {
+        return self.changed(self.args, self.env, self.clear_env, self.cwd, (self.stdin, self.stdout, stderr))
+    }
+
+    /// Starts the program, found on `PATH` when its name has no `/`.
+    pub fn start(self) -> Result<Child, Error> {
+        if self.stdin == Stdio.Merged || self.stdout == Stdio.Merged { return Err(Error.new(ErrorKind.InvalidData, "${self.program}: only standard error can be merged")) }
+        if self.program == "" || self.program.contains("\u{0}") { return Err(Error.new(ErrorKind.InvalidData, "${self.program}: not a program name")) }
+        var argv: List<String> = [self.program]
+        for argument in self.args {
+            argv.push(argument)
+        }
+        var variables: List<String> = []
+        let inherit = self.env.is_empty() && !self.clear_env
+        if !inherit {
+            var merged: List<(String, String)> = []
+            if !self.clear_env { merged = vars() }
+            for (name, value) in self.env {
+                var kept: List<(String, String)> = []
+                for (key, old) in merged {
+                    if key != name { kept.push((key, old)) }
+                }
+                kept.push((name, value))
+                merged = kept
+            }
+            for (name, value) in merged {
+                variables.push(name + "=" + value)
+            }
+        }
+        let fds: [UInt8] = [0; 12]
+        let modes = mode_of(self.stdin) + mode_of(self.stdout) * 4 + mode_of(self.stderr) * 16
+        let pid = process_spawn(self.program, block_of(argv), block_of(variables), if inherit { 1 } else { 0 }, self.cwd, modes, fds)
+        if pid < 0 { return Err(failure(pid, self.program)) }
+        return Ok(Child { pid: pid, status: Int64.new(-1), stdin: Int64.new(descriptor(fds, 0)), stdout: Int64.new(descriptor(fds, 1)), stderr: Int64.new(descriptor(fds, 2)) })
+    }
+
+    /// Runs the program to its end with its streams as they are and gives how it ended.
+    pub fn status(self) -> Result<Status, Error> {
+        let child = self.start()?
+        let status = child.wait()
+        child.close()?
+        return status
+    }
+
+    /// Runs the program with no input, collects what it writes to standard output and error and waits for it.
+    pub fn output(self) -> Result<Output, Error> {
+        return self.output_with([])
+    }
+
+    /// Like `output`, with `input` as the program's standard input.
+    pub fn output_with(self, input: [UInt8]) -> Result<Output, Error> {
+        let child = self.with_stdin(Stdio.Piped).with_stdout(Stdio.Piped).with_stderr(Stdio.Piped).start()?
+        let stdin = child.stdin.swap(-1)
+        let stderr = child.stderr.swap(-1)
+        let stdout = child.stdout.swap(-1)
+        let feeder = spawn {
+            let code = if input.len() > 0 { process_write(stdin, input, input.len()) } else { 0 }
+            process_close(stdin)
+            return code
+        }
+        let drain = spawn {
+            let bytes = read_all_from(stderr)
+            process_close(stderr)
+            return bytes
+        }
+        let out = read_all_from(stdout)
+        process_close(stdout)
+        let err = drain.await()?
+        feeder.await()?
+        let status = child.wait()?
+        return Ok(Output { status: status, stdout: out?, stderr: err? })
+    }
+}
+
+/// A command for a program with no arguments, whose streams are this program's.
+pub fn command(program: String) -> Command {
+    return Command { program: program, args: [], env: [], clear_env: false, cwd: "", stdin: Stdio.Inherit, stdout: Stdio.Inherit, stderr: Stdio.Inherit }
+}
+
+/// A running or finished process and the parent's ends of its pipes. Closing it closes the pipes; it does not wait for the process.
+pub class Child: (Closeable) {
+    pid: Int
+    status: Int64
+    stdin: Int64
+    stdout: Int64
+    stderr: Int64
+
+    /// The process id.
+    pub fn id(self) -> Int { return self.pid }
+
+    fn pipe(cell: Int64, name: String) -> Result<Int, Error> {
+        let fd = cell.load()
+        if fd < 0 { return Err(Error.new(ErrorKind.InvalidData, "${name} is not a pipe or is closed")) }
+        return Ok(fd)
+    }
+
+    /// Writes all of `bytes` to the child's standard input.
+    pub fn write(self, bytes: [UInt8]) -> Result<Null, Error> {
+        let fd = Child.pipe(self.stdin, "standard input")?
+        let code = process_write(fd, bytes, bytes.len())
+        if code < 0 { return Err(failure(code, "write")) }
+        return Ok(null)
+    }
+
+    pub fn write_string(self, text: String) -> Result<Null, Error> { return self.write(text.bytes()) }
+
+    /// Closes the child's standard input, so it reads the end of its input.
+    pub fn close_stdin(self) -> Result<Null, Error> { return Child.shut(self.stdin, "standard input") }
+
+    fn shut(cell: Int64, name: String) -> Result<Null, Error> {
+        let fd = cell.swap(-1)
+        if fd < 0 { return Err(Error.new(ErrorKind.InvalidData, "${name} is not a pipe or is closed")) }
+        let code = process_close(fd)
+        if code < 0 { return Err(failure(code, "close")) }
+        return Ok(null)
+    }
+
+    /// Up to `count` bytes of standard output, none at the end.
+    pub fn read(self, count: Int) -> Result<[UInt8], Error> { return Child.take(self.stdout, "standard output", count) }
+
+    /// Up to `count` bytes of standard error, none at the end.
+    pub fn read_stderr(self, count: Int) -> Result<[UInt8], Error> { return Child.take(self.stderr, "standard error", count) }
+
+    fn take(cell: Int64, name: String, count: Int) -> Result<[UInt8], Error> {
+        let fd = Child.pipe(cell, name)?
+        let buffer: [UInt8] = [0; count]
+        let got = process_read(fd, buffer, count)
+        if got < 0 { return Err(failure(got, "read")) }
+        return Ok(buffer.slice(0, got))
+    }
+
+    /// Everything standard output gives until it ends.
+    pub fn read_all(self) -> Result<[UInt8], Error> { return read_all_from(Child.pipe(self.stdout, "standard output")?) }
+
+    /// Everything standard error gives until it ends.
+    pub fn read_all_stderr(self) -> Result<[UInt8], Error> { return read_all_from(Child.pipe(self.stderr, "standard error")?) }
+
+    /// Waits for the process to end; waiting again gives the same status.
+    pub fn wait(self) -> Result<Status, Error> {
+        let known = self.status.load()
+        if known >= 0 { return Ok(Status { raw: known }) }
+        let code = process_wait(self.pid)
+        if code < 0 { return Err(failure(code, "wait")) }
+        self.status.store(code)
+        return Ok(Status { raw: code })
+    }
+
+    /// The status if the process has ended, else null.
+    pub fn try_wait(self) -> Result<Status?, Error> {
+        let known = self.status.load()
+        if known >= 0 { return Ok(Status { raw: known }) }
+        let code = process_try_wait(self.pid)
+        if code == -1 { return Ok(null) }
+        if code < 0 { return Err(failure(code, "wait")) }
+        self.status.store(code)
+        return Ok(Status { raw: code })
+    }
+
+    /// Sends the process a signal by its number (9 kills, 15 asks it to end).
+    pub fn signal(self, number: Int) -> Result<Null, Error> {
+        if self.status.load() >= 0 { return Ok(null) }
+        let code = process_kill(self.pid, number)
+        if code < 0 { return Err(failure(code, "signal")) }
+        return Ok(null)
+    }
+
+    /// Ends the process with signal 9.
+    pub fn kill(self) -> Result<Null, Error> { return self.signal(9) }
+
+    /// Closes the pipes that are still open.
+    pub fn close(self) -> Result<Null, Error> {
+        for cell in [self.stdin, self.stdout, self.stderr] {
+            let fd = cell.swap(-1)
+            if fd >= 0 { process_close(fd) }
+        }
+        return Ok(null)
+    }
+}

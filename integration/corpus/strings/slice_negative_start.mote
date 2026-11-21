@@ -1,0 +1,6 @@
+fn main() {
+    let text = "hello"
+    var start = 1
+    start -= 2
+    println(text.slice(start, 3))
+}

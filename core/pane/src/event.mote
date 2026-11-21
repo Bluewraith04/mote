@@ -1,0 +1,27 @@
+// What a window tells the program, what the program answers, and the key codes.
+
+/// What a window tells the program; `Click` names the element under the point, `Wheel` is in hundredths of a notch, `Key` is a raylib key code and `Text` a typed code point.
+pub enum Event {
+    Click(String?, Int, Int, Int)
+    Key(Int)
+    Text(Int)
+    Wheel(Int, Int, Int, Int)
+    Resized(Int, Int)
+    Close
+}
+
+/// What the program answers an event with: the next state, or the last one.
+pub enum Next<S> {
+    Continue(S)
+    Quit(S)
+}
+
+pub let KEY_SPACE = 32
+pub let KEY_ESCAPE = 256
+pub let KEY_ENTER = 257
+pub let KEY_TAB = 258
+pub let KEY_BACKSPACE = 259
+pub let KEY_RIGHT = 262
+pub let KEY_LEFT = 263
+pub let KEY_DOWN = 264
+pub let KEY_UP = 265

@@ -1,0 +1,20 @@
+// The functions of the native library `regex`.
+
+@link("regex")
+pub native fn regex_new(pattern: [UInt8], error: [UInt8]) -> Int
+
+@link("regex")
+pub native fn regex_free(handle: Int) -> Int
+
+@link("regex")
+pub native fn regex_groups(handle: Int) -> Int
+
+@link("regex")
+pub native fn regex_group_name(handle: Int, index: Int, out: [UInt8]) -> Int
+
+@link("regex")
+pub native fn regex_captures(handle: Int, text: [UInt8], start: Int, out: [UInt8]) -> Int
+
+@link("regex")
+pub native fn regex_is_match(handle: Int, text: [UInt8]) -> Int
+

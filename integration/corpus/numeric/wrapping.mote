@@ -1,0 +1,62 @@
+fn bytes() {
+    let hi: Int8 = 127
+    let lo: Int8 = -128
+    let one: Int8 = 1
+    println(hi.wrapping_add(one))
+    println(lo.wrapping_sub(one))
+    println(hi.wrapping_mul(hi))
+    println(lo.wrapping_neg())
+    println(one.wrapping_shl(7))
+    println(one.wrapping_shl(9))
+    println(lo.wrapping_shr(3))
+    println(lo.wrapping_shr(-1))
+    let top: UInt8 = 255
+    let two: UInt8 = 2
+    println(top.wrapping_add(two))
+    println(two.wrapping_sub(top))
+    println(top.wrapping_mul(top))
+    println(two.wrapping_neg())
+    println(top.wrapping_shl(4))
+    println(top.wrapping_shr(12))
+}
+
+fn words() {
+    let hi: Int32 = 2147483647
+    let lo: Int32 = -2147483648
+    println(hi.wrapping_add(1))
+    println(lo.wrapping_sub(1))
+    println(hi.wrapping_mul(2))
+    println(lo.wrapping_neg())
+    let top: UInt32 = 4294967295
+    println(top.wrapping_add(1))
+    println(top.wrapping_mul(top))
+    println(top.wrapping_shl(33))
+    println(top.wrapping_shr(31))
+    let short: Int16 = 32767
+    println(short.wrapping_add(1))
+    let ushort: UInt16 = 65535
+    println(ushort.wrapping_mul(ushort))
+}
+
+fn longs() {
+    let hi: Int = 9223372036854775807
+    let lo: Int = -9223372036854775807 - 1
+    println(hi.wrapping_add(1))
+    println(lo.wrapping_sub(1))
+    println(hi.wrapping_mul(3))
+    println(lo.wrapping_neg())
+    println(hi.wrapping_shl(1))
+    println(lo.wrapping_shr(63))
+    println(lo.wrapping_shl(64))
+    let top: UInt64 = 18446744073709551615
+    println(top.wrapping_add(2))
+    println(top.wrapping_mul(top))
+    println(top.wrapping_neg())
+    println(top.wrapping_shr(60))
+}
+
+fn main() {
+    bytes()
+    words()
+    longs()
+}

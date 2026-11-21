@@ -1,0 +1,480 @@
+# One case per line: rule ‖ verb ‖ source ‖ result. A rule is a left side of Syntax.md, with #n when it repeats.
+# The source escapes \n, \t and \\. The result is recorded by `MOTE_BLESS=1 cargo test -p mote-syntax grammar`.
+# A token rule is lexed and its result is the token and comment names; a node rule is parsed and its result is the tree or the first error.
+Whitespace ‖ accept ‖ \t  \t ‖ Eof
+Whitespace ‖ reject ‖ x ‖ Ident Newline Eof
+LineComment#1 ‖ accept ‖ // note ‖ LineComment Eof
+LineComment#1 ‖ reject ‖ / note ‖ Slash Ident Newline Eof
+LineComment#2 ‖ accept ‖ //// banner ‖ LineComment Eof
+LineComment#2 ‖ reject ‖ /// doc ‖ DocComment Eof
+DocComment ‖ accept ‖ /// doc ‖ DocComment Eof
+DocComment ‖ reject ‖ // plain ‖ LineComment Eof
+LineComment#3 ‖ accept ‖ x /// after code ‖ Ident LineComment Newline Eof
+LineComment#3 ‖ reject ‖ /// at line start ‖ DocComment Eof
+BlockComment ‖ accept ‖ /* a /* nested */ b */ ‖ BlockComment Eof
+BlockComment ‖ reject ‖ /* open ‖ error: the comment is never closed
+Newline ‖ accept ‖ a\nb ‖ Ident Newline Ident Newline Eof
+Newline ‖ reject ‖ +\n+ ‖ Plus Plus Eof
+Eof ‖ accept ‖  ‖ Eof
+Eof ‖ reject ‖ "open ‖ error: the string is never closed
+Ident#1 ‖ accept ‖ _name9 ‖ Ident Newline Eof
+Ident#1 ‖ reject ‖ 9 ‖ Int(Decimal 9 none) Newline Eof
+Int#1 ‖ accept ‖ 0xFF_u8 ‖ Int(Hexadecimal 255 U8) Newline Eof
+Int#1 ‖ reject ‖ 0xZ ‖ error: the number has no digits
+Int#2 ‖ accept ‖ 0b1010i16 ‖ Int(Binary 10 I16) Newline Eof
+Int#2 ‖ reject ‖ 0b2 ‖ error: the number has no digits
+Int#3 ‖ accept ‖ 0o17 ‖ Int(Octal 15 none) Newline Eof
+Int#3 ‖ reject ‖ 0o8 ‖ error: the number has no digits
+Int#4 ‖ accept ‖ 1_000_u32 ‖ Int(Decimal 1000 U32) Newline Eof
+Int#4 ‖ reject ‖ _1 ‖ Ident Newline Eof
+Float#1 ‖ accept ‖ 1.5e3f32 ‖ Float(1500 F32) Newline Eof
+Float#1 ‖ reject ‖ 1. ‖ Int(Decimal 1 none) Dot Eof
+Float#2 ‖ accept ‖ 2E+10 ‖ Float(20000000000 none) Newline Eof
+Float#2 ‖ reject ‖ 2e ‖ error: the number is malformed
+Int Dot Int ‖ accept ‖ a.0.1 ‖ Ident Dot Int(Decimal 0 none) Dot Int(Decimal 1 none) Newline Eof
+Int Dot Int ‖ reject ‖ 0.1 ‖ Float(0.1 none) Newline Eof
+String ‖ accept ‖ "a\\"b $x" ‖ String Newline Eof
+String ‖ reject ‖ "open ‖ error: the string is never closed
+InterpStart ‖ accept ‖ "a${x}" ‖ InterpStart Ident InterpEnd Newline Eof
+InterpStart ‖ reject ‖ "a" ‖ String Newline Eof
+InterpMid ‖ accept ‖ "a${x}b${y}c" ‖ InterpStart Ident InterpMid Ident InterpEnd Newline Eof
+InterpMid ‖ reject ‖ "a${x}c" ‖ InterpStart Ident InterpEnd Newline Eof
+InterpEnd ‖ accept ‖ "${x}b" ‖ InterpStart Ident InterpEnd Newline Eof
+InterpEnd ‖ reject ‖ "${x ‖ error: the `${` is never closed
+Let ‖ accept ‖ let ‖ Let Eof
+Let ‖ reject ‖ letx ‖ Ident Newline Eof
+Var ‖ accept ‖ var ‖ Var Eof
+Var ‖ reject ‖ varx ‖ Ident Newline Eof
+Fn ‖ accept ‖ fn ‖ Fn Eof
+Fn ‖ reject ‖ fnx ‖ Ident Newline Eof
+Struct ‖ accept ‖ struct ‖ Struct Eof
+Struct ‖ reject ‖ structx ‖ Ident Newline Eof
+Class ‖ accept ‖ class ‖ Class Eof
+Class ‖ reject ‖ classx ‖ Ident Newline Eof
+Enum#1 ‖ accept ‖ enum ‖ Enum Eof
+Enum#1 ‖ reject ‖ enumx ‖ Ident Newline Eof
+Trait#1 ‖ accept ‖ trait ‖ Trait Eof
+Trait#1 ‖ reject ‖ traitx ‖ Ident Newline Eof
+Type#1 ‖ accept ‖ type ‖ Type Eof
+Type#1 ‖ reject ‖ typex ‖ Ident Newline Eof
+Pub ‖ accept ‖ pub ‖ Pub Eof
+Pub ‖ reject ‖ pubx ‖ Ident Newline Eof
+Import#1 ‖ accept ‖ import ‖ Import Eof
+Import#1 ‖ reject ‖ importx ‖ Ident Newline Eof
+From ‖ accept ‖ from ‖ From Eof
+From ‖ reject ‖ fromx ‖ Ident Newline Eof
+As ‖ accept ‖ as ‖ As Eof
+As ‖ reject ‖ asx ‖ Ident Newline Eof
+Native ‖ accept ‖ native ‖ Native Eof
+Native ‖ reject ‖ nativex ‖ Ident Newline Eof
+Scope#1 ‖ accept ‖ scope ‖ Scope Eof
+Scope#1 ‖ reject ‖ scopex ‖ Ident Newline Eof
+Spawn ‖ accept ‖ spawn ‖ Spawn Eof
+Spawn ‖ reject ‖ spawnx ‖ Ident Newline Eof
+With#1 ‖ accept ‖ with ‖ With Eof
+With#1 ‖ reject ‖ withx ‖ Ident Newline Eof
+Return#1 ‖ accept ‖ return ‖ Return Newline Eof
+Return#1 ‖ reject ‖ returnx ‖ Ident Newline Eof
+If#1 ‖ accept ‖ if ‖ If Eof
+If#1 ‖ reject ‖ ifx ‖ Ident Newline Eof
+Else ‖ accept ‖ else ‖ Else Eof
+Else ‖ reject ‖ elsex ‖ Ident Newline Eof
+Match#1 ‖ accept ‖ match ‖ Match Eof
+Match#1 ‖ reject ‖ matchx ‖ Ident Newline Eof
+While#1 ‖ accept ‖ while ‖ While Eof
+While#1 ‖ reject ‖ whilex ‖ Ident Newline Eof
+For#1 ‖ accept ‖ for ‖ For Eof
+For#1 ‖ reject ‖ forx ‖ Ident Newline Eof
+In ‖ accept ‖ in ‖ In Eof
+In ‖ reject ‖ inx ‖ Ident Newline Eof
+Break#1 ‖ accept ‖ break ‖ Break Newline Eof
+Break#1 ‖ reject ‖ breakx ‖ Ident Newline Eof
+Continue#1 ‖ accept ‖ continue ‖ Continue Newline Eof
+Continue#1 ‖ reject ‖ continuex ‖ Ident Newline Eof
+Yield#1 ‖ accept ‖ yield ‖ Yield Newline Eof
+Yield#1 ‖ reject ‖ yieldx ‖ Ident Newline Eof
+SelfLower ‖ accept ‖ self ‖ SelfLower Eof
+SelfLower ‖ reject ‖ Self ‖ SelfUpper Eof
+SelfUpper ‖ accept ‖ Self ‖ SelfUpper Eof
+SelfUpper ‖ reject ‖ self ‖ SelfLower Eof
+True ‖ accept ‖ true ‖ True Newline Eof
+True ‖ reject ‖ True ‖ Ident Newline Eof
+False ‖ accept ‖ false ‖ False Newline Eof
+False ‖ reject ‖ False ‖ Ident Newline Eof
+Null ‖ accept ‖ null ‖ Null Newline Eof
+Null ‖ reject ‖ Null ‖ Ident Newline Eof
+Super ‖ accept ‖ super ‖ Super Eof
+Super ‖ reject ‖ superx ‖ Ident Newline Eof
+Is ‖ accept ‖ is ‖ Is Eof
+Is ‖ reject ‖ isx ‖ Ident Newline Eof
+Plus ‖ accept ‖ + ‖ Plus Eof
+Plus ‖ reject ‖ - ‖ Minus Eof
+Minus ‖ accept ‖ - ‖ Minus Eof
+Minus ‖ reject ‖ -> ‖ Arrow Eof
+Star ‖ accept ‖ * ‖ Star Eof
+Star ‖ reject ‖ *= ‖ StarEq Eof
+Slash ‖ accept ‖ / ‖ Slash Eof
+Slash ‖ reject ‖ /= ‖ SlashEq Eof
+Percent ‖ accept ‖ % ‖ Percent Eof
+Percent ‖ reject ‖ %= ‖ PercentEq Eof
+Caret ‖ accept ‖ ^ ‖ Caret Eof
+Caret ‖ reject ‖ ^= ‖ CaretEq Eof
+Ampersand ‖ accept ‖ & ‖ Ampersand Eof
+Ampersand ‖ reject ‖ && ‖ AndAnd Eof
+Pipe ‖ accept ‖ | ‖ Pipe Eof
+Pipe ‖ reject ‖ || ‖ OrOr Eof
+Tilde ‖ accept ‖ ~ ‖ Tilde Eof
+Tilde ‖ reject ‖ ! ‖ Bang Newline Eof
+Bang ‖ accept ‖ ! ‖ Bang Newline Eof
+Bang ‖ reject ‖ != ‖ NotEq Eof
+EqEq ‖ accept ‖ == ‖ EqEq Eof
+EqEq ‖ reject ‖ = ‖ Eq Eof
+NotEq ‖ accept ‖ != ‖ NotEq Eof
+NotEq ‖ reject ‖ ! ‖ Bang Newline Eof
+Lt ‖ accept ‖ < ‖ Lt Eof
+Lt ‖ reject ‖ <= ‖ LtEq Eof
+LtEq ‖ accept ‖ <= ‖ LtEq Eof
+LtEq ‖ reject ‖ < ‖ Lt Eof
+Gt ‖ accept ‖ > ‖ Gt Eof
+Gt ‖ reject ‖ >= ‖ GtEq Eof
+GtEq ‖ accept ‖ >= ‖ GtEq Eof
+GtEq ‖ reject ‖ > ‖ Gt Eof
+AndAnd ‖ accept ‖ && ‖ AndAnd Eof
+AndAnd ‖ reject ‖ & ‖ Ampersand Eof
+OrOr ‖ accept ‖ || ‖ OrOr Eof
+OrOr ‖ reject ‖ | ‖ Pipe Eof
+Shl ‖ accept ‖ << ‖ Shl Eof
+Shl ‖ reject ‖ <<= ‖ ShlEq Eof
+Shr ‖ accept ‖ >> ‖ Shr Eof
+Shr ‖ reject ‖ >>= ‖ ShrEq Eof
+Eq ‖ accept ‖ = ‖ Eq Eof
+Eq ‖ reject ‖ == ‖ EqEq Eof
+PlusEq ‖ accept ‖ += ‖ PlusEq Eof
+PlusEq ‖ reject ‖ + ‖ Plus Eof
+MinusEq ‖ accept ‖ -= ‖ MinusEq Eof
+MinusEq ‖ reject ‖ - ‖ Minus Eof
+StarEq ‖ accept ‖ *= ‖ StarEq Eof
+StarEq ‖ reject ‖ * ‖ Star Eof
+SlashEq ‖ accept ‖ /= ‖ SlashEq Eof
+SlashEq ‖ reject ‖ / ‖ Slash Eof
+PercentEq ‖ accept ‖ %= ‖ PercentEq Eof
+PercentEq ‖ reject ‖ % ‖ Percent Eof
+AmpEq ‖ accept ‖ &= ‖ AmpEq Eof
+AmpEq ‖ reject ‖ & ‖ Ampersand Eof
+PipeEq ‖ accept ‖ |= ‖ PipeEq Eof
+PipeEq ‖ reject ‖ | ‖ Pipe Eof
+CaretEq ‖ accept ‖ ^= ‖ CaretEq Eof
+CaretEq ‖ reject ‖ ^ ‖ Caret Eof
+ShlEq ‖ accept ‖ <<= ‖ ShlEq Eof
+ShlEq ‖ reject ‖ << ‖ Shl Eof
+ShrEq ‖ accept ‖ >>= ‖ ShrEq Eof
+ShrEq ‖ reject ‖ >> ‖ Shr Eof
+NullCoalesceEq ‖ accept ‖ ??= ‖ NullCoalesceEq Eof
+NullCoalesceEq ‖ reject ‖ ?? ‖ QuestionQuestion Eof
+Arrow ‖ accept ‖ -> ‖ Arrow Eof
+Arrow ‖ reject ‖ - ‖ Minus Eof
+FatArrow ‖ accept ‖ => ‖ FatArrow Eof
+FatArrow ‖ reject ‖ = ‖ Eq Eof
+ColonColon ‖ accept ‖ :: ‖ ColonColon Eof
+ColonColon ‖ reject ‖ : ‖ Colon Eof
+DotDotEq ‖ accept ‖ ..= ‖ DotDotEq Eof
+DotDotEq ‖ reject ‖ .. ‖ DotDot Eof
+DotDotDot ‖ accept ‖ ... ‖ DotDotDot Eof
+DotDotDot ‖ reject ‖ .. ‖ DotDot Eof
+DotDot ‖ accept ‖ .. ‖ DotDot Eof
+DotDot ‖ reject ‖ . ‖ Dot Eof
+Question ‖ accept ‖ ? ‖ Question Newline Eof
+Question ‖ reject ‖ ?? ‖ QuestionQuestion Eof
+QuestionDot ‖ accept ‖ ?. ‖ QuestionDot Eof
+QuestionDot ‖ reject ‖ ? ‖ Question Newline Eof
+QuestionQuestion ‖ accept ‖ ?? ‖ QuestionQuestion Eof
+QuestionQuestion ‖ reject ‖ ??= ‖ NullCoalesceEq Eof
+OpenParen ‖ accept ‖ ( ‖ OpenParen Eof
+OpenParen ‖ reject ‖ ) ‖ CloseParen Newline Eof
+CloseParen ‖ accept ‖ ) ‖ CloseParen Newline Eof
+CloseParen ‖ reject ‖ ( ‖ OpenParen Eof
+OpenBrace ‖ accept ‖ { ‖ OpenBrace Eof
+OpenBrace ‖ reject ‖ } ‖ CloseBrace Newline Eof
+CloseBrace ‖ accept ‖ } ‖ CloseBrace Newline Eof
+CloseBrace ‖ reject ‖ { ‖ OpenBrace Eof
+OpenBracket ‖ accept ‖ [ ‖ OpenBracket Eof
+OpenBracket ‖ reject ‖ ] ‖ CloseBracket Newline Eof
+CloseBracket ‖ accept ‖ ] ‖ CloseBracket Newline Eof
+CloseBracket ‖ reject ‖ [ ‖ OpenBracket Eof
+Comma ‖ accept ‖ , ‖ Comma Eof
+Comma ‖ reject ‖ ; ‖ Semicolon Eof
+Colon ‖ accept ‖ : ‖ Colon Eof
+Colon ‖ reject ‖ :: ‖ ColonColon Eof
+Dot ‖ accept ‖ . ‖ Dot Eof
+Dot ‖ reject ‖ .. ‖ DotDot Eof
+Semicolon ‖ accept ‖ ; ‖ Semicolon Eof
+Semicolon ‖ reject ‖ , ‖ Comma Eof
+At ‖ accept ‖ @ ‖ At Eof
+At ‖ reject ‖ # ‖ error: unexpected character `#`
+Name ‖ accept ‖ fn f() {} ‖ (fn f () (block))
+Name ‖ reject ‖ fn 1() {} ‖ error: expected a name, found a number
+MemberName ‖ accept ‖ a.from ‖ (. a from)
+MemberName ‖ reject ‖ a.fn ‖ error: expected a name, found `fn`
+Path ‖ accept ‖ let v: a.b.C = x ‖ (let v:a.b.C x)
+Path ‖ reject ‖ let v: a..C = x ‖ error: expected `=`, found `..`
+Doc ‖ accept ‖ /// one\n/// two\nfn f() {} ‖ (fn f () (block))
+Doc ‖ warn ‖ fn f() {\n/// stray\nlet a = 1\n} ‖ warning: this doc comment documents nothing
+Separator ‖ accept ‖ let a = 1; let b = 2 ‖ (let a 1) ; (let b 2)
+Separator ‖ reject ‖ let a = 1, let b = 2 ‖ error: expected an item, found `,`
+Block ‖ accept ‖ fn f() { let a = 1; } ‖ (fn f () (block (let a 1)))
+Block ‖ reject ‖ fn f() { let a = 1 ‖ error: expected `}`, found the end of the file
+Program ‖ accept ‖ fn f() {}\nlet a = 1;\n ‖ (fn f () (block)) ; (let a 1)
+Program ‖ reject ‖ fn f( ‖ error: expected `)`, found the end of the file
+Item ‖ accept ‖ /// d\n@t\npub fn f() {} ‖ @t pub (fn f () (block))
+Item ‖ reject ‖ pub 1 ‖ error: expected an item, found a number
+ErrorItem ‖ recover ‖ ) )\nfn f() {} ‖ expected an item, found `)` => (error) ; (fn f () (block))
+ErrorItem ‖ reject ‖ ) ‖ error: expected an item, found `)`
+Attribute ‖ accept ‖ @a(x = 1, 2,)\nfn f() {} ‖ @a(x=1, 2) (fn f () (block))
+Attribute ‖ accept ‖ @a\nfn f() {} ‖ @a (fn f () (block))
+Attribute ‖ reject ‖ @\nfn f() {} ‖ error: expected a name, found `fn`
+AttributeArg ‖ accept ‖ @a(k = "v")\nfn f() {} ‖ @a(k="v") (fn f () (block))
+AttributeArg ‖ reject ‖ @a(k =)\nfn f() {} ‖ error: expected a name or a literal, found `)`
+AttributeValue ‖ accept ‖ @a(p.q, "s", 1, 1.5, true, false)\nfn f() {} ‖ @a(p.q, "s", 1, 1.5, true, false) (fn f () (block))
+AttributeValue ‖ reject ‖ @a(x + 1)\nfn f() {} ‖ error: expected `)`, found `+`
+Function ‖ accept ‖ pub fn f<T>(a: T) -> T { return a } ‖ pub (fn f<T> (a:T) -> T (block (return a)))
+Function ‖ reject ‖ fn f( {} ‖ error: expected a name, found `{`
+NativeFunction ‖ accept ‖ pub native fn f<T>(a: Int) -> Int ‖ pub (native f<T> (a:Int) -> Int)
+NativeFunction ‖ reject ‖ native f() ‖ error: expected `fn`, found a name
+Test ‖ accept ‖ test "t" { } ‖ (test "t" (block))
+Test ‖ reject ‖ test "t" ‖ error: expected `{`, found the end of the file
+Record ‖ accept ‖ pub struct S<T>: (Eq) { x: Int\nfn m(self) {} } ‖ pub (struct S<T>: (Eq) (field x:Int) (fn m (self) (block)))
+Record ‖ accept ‖ class C { } ‖ (class C)
+Record ‖ reject ‖ struct { } ‖ error: expected a name, found `{`
+Enum#2 ‖ accept ‖ pub enum E<T>: (Eq) { A, B(Int), C { x: Int }, D = 4\nfn m(self) {} } ‖ pub (enum E<T>: (Eq) A B(Int) C{(field x:Int)} D=4 (fn m (self) (block)))
+Enum#2 ‖ reject ‖ enum E { 1 } ‖ error: expected a name, found a number
+Trait#2 ‖ accept ‖ pub trait T<A> { fn f(self) -> Int\nfn g(self) { } } ‖ pub (trait T<A> (fn f (self) -> Int) (fn g (self) (block)))
+Trait#2 ‖ reject ‖ trait T { let x } ‖ error: expected `fn`, found `let`
+TypeAlias ‖ accept ‖ pub type A<T> = List<T> ‖ pub (type A<T> = List<T>)
+TypeAlias ‖ reject ‖ type A ‖ error: expected `=`, found the end of the line
+Import#2 ‖ accept ‖ pub import a.b as c ‖ pub (import a.b as c)
+Import#2 ‖ reject ‖ import ‖ error: expected a name, found the end of the file
+Import#3 ‖ accept ‖ import { a as b, c, } from ..m ‖ (import {a as b, c} from ..m)
+Import#3 ‖ accept ‖ import { * } from m ‖ (import {*} from m)
+Import#3 ‖ reject ‖ import { a b } from m ‖ error: expected `}`, found a name
+ImportName ‖ accept ‖ import { a as b } from m ‖ (import {a as b} from m)
+ImportName ‖ reject ‖ import { as b } from m ‖ error: expected a name, found `as`
+ModulePath ‖ accept ‖ import ..super.a.b ‖ (import ..super.a.b)
+ModulePath ‖ reject ‖ import a..b ‖ error: expected an item, found `..`
+TopLevelStmt ‖ accept ‖ pub let a = 1\nf(a) ‖ pub (let a 1) ; (call f a)
+TopLevelStmt ‖ reject ‖ pub f(a) ‖ error: expected an item, found a name
+Generics ‖ accept ‖ fn f<A, B: Eq + Ord,>() {} ‖ (fn f<A, B: Eq + Ord> () (block))
+Generics ‖ reject ‖ fn f<>() {} ‖ error: expected a name, found `>`
+GenericParam ‖ accept ‖ fn f<T: A + B>() {} ‖ (fn f<T: A + B> () (block))
+GenericParam ‖ reject ‖ fn f<1>() {} ‖ error: expected a name, found a number
+Traits ‖ accept ‖ struct S: (A, B,) { } ‖ (struct S: (A, B))
+Traits ‖ reject ‖ struct S: A { } ‖ error: expected `(`, found a name
+Params ‖ accept ‖ fn f(a, b: Int,) {} ‖ (fn f (a b:Int) (block))
+Params ‖ reject ‖ fn f(a b) {} ‖ error: expected `)`, found a name
+Param ‖ accept ‖ fn f(a: Int) {} ‖ (fn f (a:Int) (block))
+Param ‖ reject ‖ fn f(1) {} ‖ error: expected a name, found a number
+SelfParam ‖ accept ‖ struct S { fn m(var self) {} } ‖ (struct S (fn m (var self) (block)))
+SelfParam ‖ reject ‖ struct S { fn m(var) {} } ‖ error: expected a name, found `)`
+VariadicParam ‖ accept ‖ fn f(...xs: Int) {} ‖ (fn f (...xs:Int) (block))
+VariadicParam ‖ reject ‖ fn f(...) {} ‖ error: expected a name, found `)`
+NamedParam ‖ accept ‖ fn f(var a: Int = 1) {} ‖ (fn f (var a:Int=1) (block))
+NamedParam ‖ reject ‖ fn f(var = 1) {} ‖ error: expected a name, found `=`
+Field ‖ accept ‖ struct S { /// d\npub var a: Int = 1\nlet b: Int\nc: Int } ‖ (struct S (field pub var a:Int = 1) (field let b:Int) (field c:Int))
+Field ‖ reject ‖ struct S { a } ‖ error: expected `:`, found `}`
+Variant ‖ accept ‖ enum E { /// d\n@x A(Int, Int,), B { x: Int, }, C = 1, D } ‖ (enum E A(Int, Int) B{(field x:Int)} C=1 D)
+Variant ‖ reject ‖ enum E { A( } ‖ error: expected a type, found `}`
+TraitMember ‖ accept ‖ trait T { fn f<A>(self) -> Int { return 1 }\nfn g() } ‖ (trait T (fn f<A> (self) -> Int (block (return 1))) (fn g ()))
+TraitMember ‖ reject ‖ trait T { f() } ‖ error: expected `fn`, found a name
+NamedType ‖ accept ‖ let a: a.B = x ‖ (let a:a.B x)
+NamedType ‖ reject ‖ let a: = x ‖ error: expected a type, found `=`
+GenericType ‖ accept ‖ let a: List<Int, String,> = x ‖ (let a:List<Int, String> x)
+GenericType ‖ reject ‖ let a: List<> = x ‖ error: expected a type, found `>`
+NullableType ‖ accept ‖ let a: Int? = x ‖ (let a:Int? x)
+NullableType ‖ reject ‖ let a: ? = x ‖ error: expected a type, found `?`
+NullableType of NullableType ‖ accept ‖ let a: Int?? = x ‖ (let a:Int?? x)
+NullableType of NullableType ‖ reject ‖ let a: ?? = x ‖ error: expected a type, found `??`
+TupleType ‖ accept ‖ let a: (Int, String,) = x ‖ (let a:(Int, String) x)
+TupleType ‖ accept ‖ let a: () = x ‖ (let a:() x)
+TupleType ‖ accept ‖ let a: (Int,) = x ‖ (let a:(Int,) x)
+TupleType ‖ reject ‖ let a: (Int String) = x ‖ error: expected `)`, found a name
+FunctionType ‖ accept ‖ let f: Send (var Int, Int,) -> Int = g ‖ (let f:Send (var Int, Int) -> Int g)
+FunctionType ‖ reject ‖ let f: (Int) Int = g ‖ error: expected `=`, found a name
+ArrayType ‖ accept ‖ let a: [Int; 4] = x\nlet b: [Int] = y ‖ (let a:[Int; 4] x) ; (let b:[Int] y)
+ArrayType ‖ reject ‖ let a: [Int; ] = x ‖ error: expected an expression, found `]`
+UnionType ‖ accept ‖ let a: Int | String | Null = x ‖ (let a:Int | String | Null x)
+UnionType ‖ reject ‖ let a: Int | = x ‖ error: expected a type, found `=`
+SelfType ‖ accept ‖ struct S { fn m() -> Self { } } ‖ (struct S (fn m () -> Self (block)))
+SelfType ‖ reject ‖ struct S { fn m() -> self { } } ‖ error: expected a type, found `self`
+GroupedType ‖ accept ‖ let a: (Int | String)? = x ‖ (let a:(Int | String)? x)
+GroupedType ‖ reject ‖ let a: (Int = x ‖ error: expected `)`, found `=`
+Binding ‖ accept ‖ let (a, b): (Int, Int) = t\nvar c = 1 ‖ (let (a, b):(Int, Int) t) ; (var c 1)
+Binding ‖ reject ‖ let a: Int ‖ error: expected `=`, found the end of the line
+Assign ‖ accept ‖ a = 1\na += 1\na -= 1\na *= 1\na /= 1\na %= 1\na &= 1\na |= 1\na ^= 1\na <<= 1\na >>= 1\na ??= b ‖ (= a 1) ; (+= a 1) ; (-= a 1) ; (*= a 1) ; (/= a 1) ; (%= a 1) ; (&= a 1) ; (|= a 1) ; (^= a 1) ; (<<= a 1) ; (>>= a 1) ; (??= a b)
+Assign ‖ reject ‖ a += ‖ error: expected an expression, found the end of the file
+If#2 ‖ accept ‖ if x { } else if y { } else { } ‖ (if x (block) (if y (block) (block)))
+If#2 ‖ reject ‖ if x ‖ error: expected `{`, found the end of the file
+While#2 ‖ accept ‖ while x { } ‖ (while x (block))
+While#2 ‖ reject ‖ while { } ‖ error: expected `{`, found the end of the file
+For#2 ‖ accept ‖ for (a, b) in xs { } ‖ (for (a, b) xs (block))
+For#2 ‖ reject ‖ for a xs { } ‖ error: expected `in`, found a name
+Match#2 ‖ accept ‖ match x { 1 => a, _ => { b } } ‖ (match x (1 => a) (_ => (block b)))
+Match#2 ‖ reject ‖ match x { 1 } ‖ error: expected `=>`, found `}`
+MatchArm ‖ accept ‖ match x { n if n > 1 => a\n_ => b } ‖ (match x (n if (> n 1) => a) (_ => b))
+MatchArm ‖ reject ‖ match x { n if => a } ‖ error: expected an expression, found `=>`
+Condition ‖ accept ‖ if let Some(a) = x { }\nif y { } ‖ (if (let Some(a) x) (block)) ; (if y (block))
+Condition ‖ reject ‖ if let a { } ‖ error: expected `=`, found the end of the line
+Scope#2 ‖ accept ‖ scope { } ‖ (scope (block))
+Scope#2 ‖ reject ‖ scope ‖ error: expected `{`, found the end of the file
+With#2 ‖ accept ‖ with a = b { } ‖ (with a b (block))
+With#2 ‖ reject ‖ with a { } ‖ error: expected `=`, found `{`
+SpawnStmt ‖ accept ‖ spawn work()\nspawn { } ‖ (spawn (call work)) ; (spawn (block))
+SpawnStmt ‖ reject ‖ spawn ‖ error: expected an expression, found the end of the file
+Return#2 ‖ accept ‖ fn f() { return 1 }\nfn g() { return } ‖ (fn f () (block (return 1))) ; (fn g () (block (return)))
+Return#2 ‖ reject ‖ fn f() { return = } ‖ error: expected a statement, found `=`
+Break#2 ‖ accept ‖ while a { break 1 }\nwhile a { break } ‖ (while a (block (break 1))) ; (while a (block (break)))
+Break#2 ‖ reject ‖ while a { break = } ‖ error: expected a statement, found `=`
+Continue#2 ‖ accept ‖ while a { continue } ‖ (while a (block (continue)))
+Continue#2 ‖ reject ‖ while a { continue = } ‖ error: expected a statement, found `=`
+Yield#2 ‖ accept ‖ fn f() { yield 1 } ‖ (fn f () (block (yield 1)))
+Yield#2 ‖ reject ‖ fn f() { yield } ‖ error: expected an expression, found `}`
+ExprStmt ‖ accept ‖ f(1) ‖ (call f 1)
+ExprStmt ‖ reject ‖ f(1 ‖ error: expected `)`, found the end of the file
+Stmt ‖ accept ‖ let b = 1\nf()\nfn g() {} ‖ (let b 1) ; (call f) ; (fn g () (block))
+Stmt ‖ reject ‖ 1 + ‖ error: expected an expression, found the end of the file
+ErrorStmt ‖ recover ‖ fn f() { ) )\nlet a = 1 } ‖ expected a statement, found `)` => (fn f () (block (error) (let a 1)))
+ErrorStmt ‖ reject ‖ fn f() { ) } ‖ error: expected a statement, found `)`
+WildcardPattern ‖ accept ‖ let _ = x ‖ (let _ x)
+WildcardPattern ‖ reject ‖ let _ _ = x ‖ error: expected `=`, found a name
+LiteralPattern ‖ accept ‖ match x { -1 => a\n"s" => b\n3 => c\ntrue => d\nfalse => e\nnull => f } ‖ (match x (-1 => a) ("s" => b) (3 => c) (true => d) (false => e) (null => f))
+LiteralPattern ‖ reject ‖ match x { - => a } ‖ error: expected a number, found `=>`
+RangePattern ‖ accept ‖ match x { 1..5 => a\n1..=5 => b } ‖ (match x (1..5 => a) (1..=5 => b))
+RangePattern ‖ reject ‖ match x { 1.. => a } ‖ error: expected a pattern, found `=>`
+BindingPattern ‖ accept ‖ let a = x ‖ (let a x)
+BindingPattern ‖ reject ‖ let 1a = x ‖ error: the number is malformed
+AtPattern ‖ accept ‖ match x { n @ 1..5 => a } ‖ (match x (n @ 1..5 => a))
+AtPattern ‖ reject ‖ match x { n @ => a } ‖ error: expected a pattern, found `=>`
+OrPattern ‖ accept ‖ match x { 1 | 2 | 3 => a } ‖ (match x (1 | 2 | 3 => a))
+OrPattern ‖ reject ‖ match x { 1 | => a } ‖ error: expected a pattern, found `=>`
+TuplePattern ‖ accept ‖ let (a, b,) = t\nlet () = u ‖ (let (a, b) t) ; (let () u)
+TuplePattern ‖ reject ‖ let (a b) = t ‖ error: expected `)`, found a name
+PathPattern ‖ accept ‖ match x { a.B => 1 } ‖ (match x (a.B => 1))
+PathPattern ‖ reject ‖ match x { a. => 1 } ‖ error: expected `=>`, found `.`
+TupleStructPattern ‖ accept ‖ match x { Some(a, b,) => 1\nNone() => 2 } ‖ (match x (Some(a, b) => 1) (None() => 2))
+TupleStructPattern ‖ reject ‖ match x { Some(a => 1 } ‖ error: expected `)`, found `=>`
+StructPattern ‖ accept ‖ match x { P { x, y: 1, .. } => 1\nQ { } => 2 } ‖ (match x (P { x, y: 1, .. } => 1) (Q {  } => 2))
+StructPattern ‖ reject ‖ match x { P { x: } => 1 } ‖ error: expected a pattern, found `}`
+FieldPattern ‖ accept ‖ match x { P { y: 1, z } => a } ‖ (match x (P { y: 1, z } => a))
+FieldPattern ‖ reject ‖ match x { P { : 1 } => a } ‖ error: expected a name, found `:`
+TypePattern ‖ accept ‖ match x { n: Int => a\n_: String => b } ‖ (match x (n: Int => a) (_: String => b))
+TypePattern ‖ reject ‖ match x { n: => a } ‖ error: expected a type, found `=>`
+IntLiteral ‖ accept ‖ 1 ‖ 1
+IntLiteral ‖ reject ‖ f(1 2) ‖ error: expected `)`, found a number
+FloatLiteral ‖ accept ‖ 1.5 ‖ 1.5
+FloatLiteral ‖ reject ‖ f(1.5 2.5) ‖ error: expected `)`, found a number
+StringLiteral ‖ accept ‖ "s" ‖ "s"
+StringLiteral ‖ reject ‖ f("s" "t") ‖ error: expected `)`, found a string
+InterpolatedString ‖ accept ‖ "a${1}b${x}c" ‖ (interp "a" 1 "b" x "c")
+InterpolatedString ‖ reject ‖ "a${}c" ‖ error: the `${}` is empty
+BoolLiteral ‖ accept ‖ true\nfalse ‖ true ; false
+BoolLiteral ‖ reject ‖ f(true false) ‖ error: expected `)`, found `false`
+NullLiteral ‖ accept ‖ null ‖ null
+NullLiteral ‖ reject ‖ f(null null) ‖ error: expected `)`, found `null`
+Ident#2 ‖ accept ‖ x ‖ x
+Ident#2 ‖ reject ‖ f(x y) ‖ error: expected `)`, found a name
+SelfValue ‖ accept ‖ struct S { fn m(self) { self } } ‖ (struct S (fn m (self) (block self)))
+SelfValue ‖ reject ‖ struct S { fn m(self) { f(self self) } } ‖ error: expected `)`, found `self`
+Grouped ‖ accept ‖ (1) ‖ (paren 1)
+Grouped ‖ reject ‖ (1 ‖ error: expected `)`, found the end of the file
+TupleLiteral ‖ accept ‖ (1, 2,)\n()\n(1,) ‖ (tuple 1 2) ; (tuple) ; (tuple 1)
+TupleLiteral ‖ reject ‖ (1 2) ‖ error: expected `)`, found a number
+ListLiteral ‖ accept ‖ [1, 2,]\n[] ‖ (list 1 2) ; (list)
+ListLiteral ‖ reject ‖ [1 2] ‖ error: expected `]`, found a number
+ArrayRepeat ‖ accept ‖ [0; 4] ‖ (repeat 0 4)
+ArrayRepeat ‖ reject ‖ [0; ] ‖ error: expected an expression, found `]`
+MapLiteral ‖ accept ‖ let m = {1: 2, 3: 4,}\nlet e = {} ‖ (let m (map (1 2) (3 4))) ; (let e (map))
+MapLiteral ‖ reject ‖ let m = {1: } ‖ error: expected an expression, found `}`
+StructInit ‖ accept ‖ let p = P { x: 1, y, ..d } ‖ (let p (init P (x 1) y (.. d)))
+StructInit ‖ reject ‖ let p = P { x: } ‖ error: expected an expression, found `}`
+FieldInit ‖ accept ‖ let p = P { a: 1, b, ..d } ‖ (let p (init P (a 1) b (.. d)))
+FieldInit ‖ reject ‖ let p = P { 1 } ‖ error: expected `:`, found `}`
+Lambda ‖ accept ‖ let f = |a, var b: Int,| -> Int { a }\nlet g = || 1\nlet h = |x| x ‖ (let f (lambda (a var b:Int) -> Int (block a))) ; (let g (lambda () 1)) ; (let h (lambda (x) x))
+Lambda ‖ reject ‖ let f = |a ‖ error: expected `|`, found the end of the line
+LambdaParam ‖ accept ‖ let f = |var a: Int, b| a ‖ (let f (lambda (var a:Int b) a))
+LambdaParam ‖ reject ‖ let f = |1| a ‖ error: expected a name, found a number
+Call ‖ accept ‖ f(1, a = 2,) ‖ (call f 1 a=2)
+Call ‖ reject ‖ f(1 2) ‖ error: expected `)`, found a number
+Arg ‖ accept ‖ f(a = 1, 2) ‖ (call f a=1 2)
+Arg ‖ reject ‖ f(= 1) ‖ error: expected an expression, found `=`
+Member ‖ accept ‖ a.b ‖ (. a b)
+Member ‖ reject ‖ a. ‖ error: expected a name, found the end of the file
+TupleIndex ‖ accept ‖ a.0.1 ‖ (. (. a 0) 1)
+TupleIndex ‖ reject ‖ a.-1 ‖ error: expected a name, found `-`
+OptionalMember ‖ accept ‖ a?.b ‖ (?. a b)
+OptionalMember ‖ reject ‖ a?. ‖ error: expected a name, found the end of the file
+Index ‖ accept ‖ a[1] ‖ (index a 1)
+Index ‖ reject ‖ a[] ‖ error: expected an expression, found `]`
+Slice ‖ accept ‖ a[1..2]\na[..=2]\na[1..]\na[..]\na[1..2..3] ‖ (slice a 1 2 _) ; (slice= a _ 2 _) ; (slice a 1 _ _) ; (slice a _ _ _) ; (slice a 1 2 3)
+Slice ‖ reject ‖ a[1..2..] ‖ error: expected an expression, found `]`
+TypeApply ‖ accept ‖ let m = Map<String, Int,>() ‖ (let m (call (apply Map String Int)))
+TypeApply ‖ reject ‖ let m = Map<>() ‖ error: expected a type, found `>`
+Unwrap ‖ accept ‖ a! ‖ (unwrap a)
+Unwrap ‖ reject ‖ ! ‖ error: expected an expression, found the end of the line
+Propagate ‖ accept ‖ a? ‖ (propagate a)
+Propagate ‖ reject ‖ ? ‖ error: expected an item, found `?`
+Unary ‖ accept ‖ -a\n!a\n~a ‖ (neg a) ; (not a) ; (bitnot a)
+Unary ‖ reject ‖ - ‖ error: expected an expression, found the end of the file
+Binary ‖ accept ‖ a + b * c ‖ (+ a (* b c))
+Binary ‖ reject ‖ a + ‖ error: expected an expression, found the end of the file
+TypeTest ‖ accept ‖ a is Int ‖ (is a Int)
+TypeTest ‖ reject ‖ a is ‖ error: expected a type, found the end of the file
+Cast ‖ accept ‖ a as Int ‖ (as a Int)
+Cast ‖ reject ‖ a as ‖ error: expected a type, found the end of the file
+Range ‖ accept ‖ a..b\na..=b ‖ (.. a b) ; (..= a b)
+Range ‖ reject ‖ a..= ‖ error: expected an expression, found the end of the file
+SpawnExpr ‖ accept ‖ let t = spawn f()\nlet u = spawn { 1 } ‖ (let t (spawn (call f))) ; (let u (spawn (block 1)))
+SpawnExpr ‖ reject ‖ let t = spawn ‖ error: expected an expression, found the end of the file
+IfExpr ‖ accept ‖ let a = if x { 1 } else if y { 2 } else { 3 } ‖ (let a (if x 1 (if y 2 3)))
+IfExpr ‖ reject ‖ let a = if x { 1 } ‖ error: a value `if` needs an `else`
+MatchExpr ‖ accept ‖ let a = match x { 1 => 2, _ => 3 } ‖ (let a (match x (1 => 2) (_ => 3)))
+MatchExpr ‖ reject ‖ let a = match x { 1 => } ‖ error: expected an expression, found `}`
+ValueArm ‖ accept ‖ let a = match x { n if n > 1 => 2, _ => 3 } ‖ (let a (match x (n if (> n 1) => 2) (_ => 3)))
+ValueArm ‖ reject ‖ let a = match x { n if => 2 } ‖ error: expected an expression, found `=>`
+Expr ‖ accept ‖ f(a)[0].b ‖ (. (index (call f a) 0) b)
+Expr ‖ reject ‖ + ‖ error: expected an item, found `+`
+Pattern ‖ accept ‖ let (a, _) = t ‖ (let (a, _) t)
+Pattern ‖ reject ‖ let + = t ‖ error: expected a pattern, found `+`
+Type#2 ‖ accept ‖ let a: Int = 1 ‖ (let a:Int 1)
+Type#2 ‖ reject ‖ let a: + = 1 ‖ error: expected a type, found `+`
+Precedence 1 ‖ accept ‖ a ?? b || c ‖ (?? a (|| b c))
+Precedence 1 ‖ reject ‖ a ?? ‖ error: expected an expression, found the end of the file
+Precedence 2 ‖ accept ‖ a || b && c ‖ (|| a (&& b c))
+Precedence 2 ‖ reject ‖ a || ‖ error: expected an expression, found the end of the file
+Precedence 3 ‖ accept ‖ a && b | c ‖ (&& a (| b c))
+Precedence 3 ‖ reject ‖ a && ‖ error: expected an expression, found the end of the file
+Precedence 4 ‖ accept ‖ a | b ^ c ‖ (| a (^ b c))
+Precedence 4 ‖ reject ‖ a | ‖ error: expected an expression, found the end of the file
+Precedence 5 ‖ accept ‖ a ^ b & c ‖ (^ a (& b c))
+Precedence 5 ‖ reject ‖ a ^ ‖ error: expected an expression, found the end of the file
+Precedence 6 ‖ accept ‖ a & b == c ‖ (& a (== b c))
+Precedence 6 ‖ reject ‖ a & ‖ error: expected an expression, found the end of the file
+Precedence 7 ‖ accept ‖ a == b < c\na != b < c ‖ (== a (< b c)) ; (!= a (< b c))
+Precedence 7 ‖ reject ‖ a == ‖ error: expected an expression, found the end of the file
+Precedence 8 ‖ accept ‖ a < b + c\na >= b + c ‖ (< a (+ b c)) ; (>= a (+ b c))
+Precedence 8 ‖ reject ‖ a < ‖ error: expected an expression, found the end of the file
+Precedence 9 ‖ accept ‖ a << b is T ‖ (is (<< a b) T)
+Precedence 9 ‖ reject ‖ a is ‖ error: expected a type, found the end of the file
+Precedence 10 ‖ accept ‖ a << b..c\na >> b + c ‖ (<< a (.. b c)) ; (>> a (+ b c))
+Precedence 10 ‖ reject ‖ a << ‖ error: expected an expression, found the end of the file
+Precedence 11 ‖ accept ‖ a..b + c\na..=b + c ‖ (.. a (+ b c)) ; (..= a (+ b c))
+Precedence 11 ‖ reject ‖ a.. = ‖ error: expected an expression, found `=`
+Precedence 12 ‖ accept ‖ a + b * c\na - b % c ‖ (+ a (* b c)) ; (- a (% b c))
+Precedence 12 ‖ reject ‖ a + ‖ error: expected an expression, found the end of the file
+Precedence 13 ‖ accept ‖ a * b as T\na / b as T ‖ (* a (as b T)) ; (/ a (as b T))
+Precedence 13 ‖ reject ‖ a * ‖ error: expected an expression, found the end of the file
+Precedence 14 ‖ accept ‖ -a as T ‖ (as (neg a) T)
+Precedence 14 ‖ reject ‖ a as ‖ error: expected a type, found the end of the file
+Precedence 15 ‖ accept ‖ -a.b\n!a.b\n~a.b ‖ (neg (. a b)) ; (not (. a b)) ; (bitnot (. a b))
+Precedence 15 ‖ reject ‖ -.b ‖ error: expected an expression, found `.`
+Precedence 16 ‖ accept ‖ a.b(c)[d]!? ‖ (propagate (unwrap (index (call (. a b) c) d)))
+Precedence 16 ‖ reject ‖ a.( ‖ error: expected a name, found `(`
+Contextual word ‖ accept ‖ let test = 1\nlet Send = 2\nfn _() {} ‖ (let test 1) ; (let Send 2) ; (fn _ () (block))
+Contextual word ‖ reject ‖ let if = 1 ‖ error: expected a pattern, found `if`

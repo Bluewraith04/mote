@@ -1,0 +1,28 @@
+# machine AMD Ryzen 5 PRO 4650U with Radeon Graphics, 6 threads
+# mote 54c2fd69, 2026-10-22
+# name key value: ms is the median of 5 runs; memory is the resident kilobytes (parked_kb 0.9 s into a run of 10000 parked tasks, cold_kb 4 s in, idle_kb of a run with none)
+fib output 102334155
+fib ms 1090
+sieve output 1270607
+sieve ms 540
+mandelbrot output 366440
+mandelbrot ms 1910
+trees output 7339991
+trees ms 900
+maps output 40816387755,1000000
+maps ms 920
+strings output 9518516,item 499999: 1499997
+strings ms 240
+sort output true,1047,2147483573
+sort ms 560
+closures output 59999999900000000
+closures ms 400
+channel output 4999950000,true
+channel ms 170
+spawn output 499900000
+spawn ms 590
+memory idle_kb 3604
+memory parked_kb 52832
+memory cold_kb 21024
+memory parked_task_bytes 5040
+memory cold_task_bytes 1783

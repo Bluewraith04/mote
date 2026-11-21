@@ -1,0 +1,28 @@
+// Shared by the terminal files: the failure text, the end-of-input code and the escape character.
+
+pub let END_OF_INPUT = -4096
+pub let SAVED_SIZE = 36
+
+pub fn failure(code: Int, what: String) -> Error {
+    let errno = -code
+    var kind = ErrorKind.Other
+    var text = "error ${errno}"
+    if errno == 5 {
+        text = "input/output error"
+    } else if errno == 9 {
+        text = "bad file descriptor"
+    } else if errno == 25 {
+        kind = ErrorKind.Unsupported
+        text = "not a terminal"
+    } else if errno == 22 {
+        kind = ErrorKind.InvalidData
+        text = "invalid argument"
+    }
+    return Error.new(kind, "${what}: ${text}")
+}
+
+pub fn text_of(bytes: [UInt8]) -> String? {
+    return String.from_bytes(bytes)
+}
+
+pub let ESC = "\u{1b}"

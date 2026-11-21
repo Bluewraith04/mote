@@ -1,0 +1,8 @@
+fn main() {
+    let zero = 0
+    println("start")
+    scope {
+        spawn { return 1 / zero }
+    }
+    println("not reached")
+}

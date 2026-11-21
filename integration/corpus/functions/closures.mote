@@ -1,0 +1,89 @@
+struct Wide {
+    a: Int
+    b: Int
+    c: Int
+    d: Int
+    e: Int
+}
+
+fn double(n: Int) -> Int {
+    return n * 2
+}
+
+fn apply(f: (Int) -> Int, n: Int) -> Int {
+    return f(n)
+}
+
+fn twice(f: (Int) -> Int, n: Int) -> Int {
+    return f(f(n))
+}
+
+fn adder(by: Int) -> (Int) -> Int {
+    return |n| n + by
+}
+
+fn counter() -> () -> Int {
+    var count = 0
+    return || {
+        count += 1
+        return count
+    }
+}
+
+fn label(prefix: String) -> (String) -> String {
+    return |s| prefix + s
+}
+
+fn bump_all(f: (var Int) -> Null, n: Int) -> Int {
+    var x = n
+    f(x)
+    f(x)
+    return x
+}
+
+fn make_wide() -> (Int) -> Wide {
+    return |n| Wide { a: n, b: n + 1, c: n + 2, d: n + 3, e: n + 4 }
+}
+
+fn sum_wide() -> (Wide) -> Int {
+    return |w| w.a + w.b + w.c + w.d + w.e
+}
+
+fn main() {
+    println(apply(double, 21))
+    println(apply(|n| n - 1, 10))
+    println(twice(double, 5))
+    let add5 = adder(5)
+    println(add5(1))
+    println(twice(add5, 0))
+    let next = counter()
+    println(next())
+    println(next())
+    println(next())
+    let other = counter()
+    println(other())
+    println(next())
+    let hello = label("hello ")
+    println(hello("world"))
+    println(bump_all(|n| { n += 10 }, 1))
+    let build = make_wide()
+    let w = build(100)
+    println(w.e)
+    let total = sum_wide()
+    println(total(w))
+    var shared = 0
+    let inc = || { shared += 1 }
+    inc()
+    inc()
+    println(shared)
+    shared = 40
+    inc()
+    println(shared)
+    let fns: (Int) -> Int = double
+    println(fns(8))
+    let outer = |x: Int| {
+        let inner = |y: Int| x + y
+        return inner(1) + inner(2)
+    }
+    println(outer(10))
+}

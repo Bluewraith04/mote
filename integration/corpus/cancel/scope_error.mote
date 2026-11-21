@@ -1,0 +1,25 @@
+struct Res {
+    var id: Int
+
+    fn close(self) {
+        println("closed ${self.id}")
+    }
+}
+
+fn work() -> Result<Int, Error> {
+    let n = 0
+    with r = Res { id: 1 } {
+        scope {
+            spawn { return 1 / n }
+        }
+        println("after scope")
+    }
+    return Ok(1)
+}
+
+fn main() {
+    match work() {
+        Ok(value) => println(value)
+        Err(error) => println(error.message)
+    }
+}

@@ -1,0 +1,8 @@
+import { Mutex } from std.sync
+
+fn main() {
+    let m = Mutex(0)
+    let again: Send () -> Int = || { return m.lock(|n| { return n }) }
+    println("before")
+    println(m.lock(|n| { return again() }))
+}

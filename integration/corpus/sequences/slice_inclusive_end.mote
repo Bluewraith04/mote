@@ -1,0 +1,7 @@
+fn main() {
+    let text = "abc"
+    var end = 2
+    println(text[0..=end])
+    end += 1
+    println(text[0..=end])
+}

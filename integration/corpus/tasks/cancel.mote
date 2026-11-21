@@ -1,0 +1,18 @@
+fn main() {
+    let h = spawn {
+        var n = 0
+        while true {
+            n += 1
+        }
+        return n
+    }
+    h.cancel()
+    match h.await() {
+        Ok(_) => println("returned")
+        Err(e) => {
+            println(e.message)
+            println(e.kind == ErrorKind.Interrupted)
+        }
+    }
+    println(h.is_ready())
+}

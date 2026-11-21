@@ -1,0 +1,3 @@
+# Blocks of docs/reference that build and run, and do not do what their page says.
+# Each line is `page@hash | first line of the difference`. Each one is a defect of the page or the compiler; the
+# docs test fails on a block that is missing here, on a line that changed, and on a line whose block now agrees.

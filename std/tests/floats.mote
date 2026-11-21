@@ -1,0 +1,77 @@
+// Float, Float32 and std.math.
+import { assert, assert_eq } from std.test
+import { PI, E, sqrt, floor, ceil, round, pow, exp, ln, log10, sin, cos, tan, atan2 } from std.math
+
+fn near(a: Float, b: Float) -> Bool {
+    return (a - b).abs() < 0.000001
+}
+
+test "abs, min and max" {
+    assert_eq((-2.5).abs(), 2.5)
+    assert_eq(1.5.min(0.5), 0.5)
+    assert_eq(1.5.max(0.5), 1.5)
+}
+
+test "to_string is the shortest text that reads back" {
+    assert_eq(1.5.to_string(), "1.5")
+    assert_eq(2.0.to_string(), "2.0")
+    assert_eq((-0.25).to_string(), "-0.25")
+    let single: Float32 = 0.1
+    assert_eq(single.to_string(), "0.1")
+}
+
+test "nan and infinity are detected" {
+    let nan = 0.0 / 0.0
+    let inf = 1.0 / 0.0
+    assert(nan.is_nan(), "nan")
+    assert(!nan.is_infinite(), "nan is not infinite")
+    assert(inf.is_infinite(), "inf")
+    assert(!inf.is_nan(), "inf is not nan")
+    assert(!(1.0).is_nan(), "a number")
+    assert(nan != nan, "nan differs from itself")
+}
+
+test "from converts between Int, Float and Float32" {
+    assert_eq(Float.from(3), 3.0)
+    let single: Float32 = 1.5
+    assert_eq(Float.from(single), 1.5)
+    assert_eq(Float32.from(2).to_string(), "2.0")
+}
+
+test "compare orders floats" {
+    assert_eq(1.0.compare(2.0), -1)
+    assert_eq(2.0.compare(2.0), 0)
+    assert_eq(3.0.compare(2.0), 1)
+}
+
+test "rounding functions" {
+    assert_eq(floor(2.7), 2.0)
+    assert_eq(floor(-2.1), -3.0)
+    assert_eq(ceil(2.1), 3.0)
+    assert_eq(ceil(-2.7), -2.0)
+    assert_eq(round(2.5), 3.0)
+    assert_eq(round(-2.5), -3.0)
+    assert_eq(round(2.4), 2.0)
+}
+
+test "powers, roots and logarithms" {
+    assert_eq(sqrt(9.0), 3.0)
+    assert_eq(pow(2.0, 10.0), 1024.0)
+    assert(near(exp(1.0), E), "exp 1 is E")
+    assert(near(ln(E), 1.0), "ln E is 1")
+    assert(near(log10(1000.0), 3.0), "log10 1000 is 3")
+    assert(sqrt(-1.0).is_nan(), "sqrt of a negative")
+}
+
+test "trigonometry" {
+    assert(near(sin(0.0), 0.0), "sin 0")
+    assert(near(cos(0.0), 1.0), "cos 0")
+    assert(near(sin(PI / 2.0), 1.0), "sin pi/2")
+    assert(near(tan(PI / 4.0), 1.0), "tan pi/4")
+    assert(near(atan2(1.0, 1.0), PI / 4.0), "atan2 1 1")
+}
+
+test "constants" {
+    assert(near(PI, 3.14159265358979), "PI")
+    assert(near(E, 2.71828182845904), "E")
+}

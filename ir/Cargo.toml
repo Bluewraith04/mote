@@ -1,0 +1,13 @@
+[package]
+name = "mote-ir"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+mote-base.workspace = true
+mote-semantics.workspace = true
+mote-abi.workspace = true
+
+[dev-dependencies]
+mote-semantics = { workspace = true, features = ["testing"] }

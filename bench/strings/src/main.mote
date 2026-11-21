@@ -1,0 +1,14 @@
+fn main() {
+    var parts: List<String> = List.new()
+    var i = 0
+    while i < 500000 {
+        parts.push("item ${i}: ${i * 3}")
+        i += 1
+    }
+    var total = 0
+    for part in parts {
+        total += part.len()
+    }
+    println(total)
+    println(parts.get(499999))
+}

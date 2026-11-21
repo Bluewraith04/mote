@@ -1,0 +1,19 @@
+import { sleep } from std.task
+
+fn main() {
+    let h = spawn {
+        sleep(100000)
+        println("never")
+        return 1
+    }
+    let w = spawn {
+        println(h.await_timeout(100000) == null)
+        return 2
+    }
+    sleep(20)
+    w.cancel()
+    h.cancel()
+    println(h.await().is_err())
+    println(w.await().is_err())
+    println("end")
+}

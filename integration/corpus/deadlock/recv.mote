@@ -1,0 +1,7 @@
+import { Channel } from std.sync
+
+fn main() {
+    let (tx, rx) = Channel<Int>(1)
+    println("waiting")
+    println(rx.recv()!)
+}

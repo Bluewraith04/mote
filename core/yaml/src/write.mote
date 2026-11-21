@@ -1,0 +1,25 @@
+// Writing YAML text.
+import { Json, encode as encode_json } from json
+import { join } from std.string
+import { call } from ._call
+import { yaml_print } from ._native
+
+/// The YAML text of a value.
+pub fn to_text(value: Json) -> Result<String, Error> {
+    let json = value.to_string().bytes()
+    return call(|buffer: [UInt8]| yaml_print(json, buffer))
+}
+
+/// The YAML text of several documents, each after a `---` line.
+pub fn to_text_all(values: List<Json>) -> Result<String, Error> {
+    var parts: List<String> = []
+    for value in values {
+        parts.push(to_text(value)?)
+    }
+    return Ok(if parts.is_empty() { "" } else { "---\n" + join(parts, "---\n") })
+}
+
+/// The YAML text of a `T`, as `json.encode` reads a value.
+pub fn dump<T>(value: T) -> Result<String, Error> {
+    return to_text(encode_json(value)?)
+}

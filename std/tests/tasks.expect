@@ -1,0 +1,33 @@
+start
+test "a task gives its value to await"
+passed
+test "spawn of a call is shorthand for a block"
+passed
+test "a task sees the values it captured"
+passed
+test "await can be asked again"
+passed
+test "a task that faults gives await an Err"
+passed
+test "await_all gathers results in order"
+passed
+test "tasks take turns while they sleep"
+passed
+test "await_timeout gives null when time runs out"
+passed
+test "cancel stops a task and is not a fault"
+passed
+test "is_ready tells whether a task has ended"
+passed
+test "with_timeout cancels work that runs long"
+passed
+test "scope waits for every task spawned in it"
+passed
+test "a scope can be left early by break and return paths"
+passed
+test "a task spawned in a scope is awaited when the scope ends"
+passed
+test "a detached task is dropped when the test ends"
+passed
+test "tasks hand results to each other over a channel"
+passed

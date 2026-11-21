@@ -1,0 +1,57 @@
+import { Stream } from std.collections
+
+struct Wide {
+    a: Int
+    b: Int
+    c: Int
+    d: Int
+    var e: Int
+    var f: Float
+}
+
+fn wides(n: Int) -> Stream<Wide> {
+    var i = 0
+    while i < n {
+        yield Wide { a: i, b: i + 1, c: i + 2, d: i + 3, e: i * 10, f: 0.5 }
+        i += 1
+    }
+}
+
+fn texts(n: Int) -> Stream<String> {
+    var i = 0
+    while i < n {
+        yield "item ${i}"
+        i += 1
+    }
+}
+
+fn pairs(n: Int) -> Stream<(Int, String)> {
+    for i in 0..n {
+        yield (i, "p${i}")
+    }
+}
+
+fn floats() -> Stream<Float> {
+    yield 1.5
+    yield 2.5
+}
+
+fn main() {
+    var total = 0
+    for w in wides(5) {
+        total += w.a + w.b + w.c + w.d + w.e
+    }
+    println(total)
+    for t in texts(3) {
+        println(t)
+    }
+    for pair in pairs(3) {
+        println("${pair.0} ${pair.1}")
+    }
+    var sum = 0.0
+    for f in floats() {
+        sum += f
+    }
+    println(sum)
+    println(texts(4).collect().len())
+}

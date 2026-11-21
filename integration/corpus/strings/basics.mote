@@ -1,0 +1,78 @@
+import { join, lines, is_blank, pad_start } from std.string
+
+fn show(parts: List<String>) {
+    var line = "${parts.len()}:"
+    for part in parts {
+        line = line + " [" + part + "]"
+    }
+    println(line)
+}
+
+fn at(found: Int?) {
+    if found == null {
+        println("none")
+    } else {
+        println(found)
+    }
+}
+
+fn main() {
+    let text = "Hello, Wörld! ßeta"
+    println(text.len())
+    println(text.is_empty())
+    println("".is_empty())
+    println(text.concat("!") + "?")
+    println(text.slice(0, 5))
+    println(text.slice(7, 8))
+    println(text.slice(7, 9 + 1))
+    println(text.slice(3, 3).len())
+    println(text.replace("l", "L"))
+    println(text.replace("", "x"))
+    println(text.replace("Wörld", ""))
+    println(text.replace("zzz", "y"))
+    println(text.to_upper())
+    println(text.to_lower())
+    println("  \t padded \n".trim() + "|")
+    println("".trim().len())
+    println("ab".repeat(3))
+    println("ab".repeat(0).len())
+    println("".repeat(5).len())
+    println(text.contains("Wör"))
+    println(text.contains("wör"))
+    println(text.starts_with("Hello"))
+    println(text.starts_with("ello"))
+    println(text.ends_with("eta"))
+    println(text.ends_with("Hello"))
+    println("abc".ends_with(""))
+    at(text.find("l"))
+    at(text.rfind("l"))
+    at(text.find("ö"))
+    at(text.find("nope"))
+    at(text.rfind("nope"))
+    at(text.find(""))
+    at(text.rfind(""))
+    at("".find(""))
+    show("a,b,,c".split(","))
+    show("a,b,,c,".split(","))
+    show(",a".split(","))
+    show("abc".split(""))
+    show("héy".split(""))
+    show("".split(""))
+    show("".split(","))
+    show("no separator".split(";"))
+    show("a--b--c".split("--"))
+    let bytes = "héllo".bytes()
+    println(bytes[0])
+    println(bytes[1])
+    println(bytes[2])
+    println(bytes[5])
+    println(join("a,b,c".split(","), " + "))
+    println(join("".split(","), "-").len())
+    show(lines("one\r\ntwo\nthree"))
+    println(is_blank("  \n"))
+    println(is_blank(" x "))
+    println(pad_start("7", 3, "0"))
+    println("a" < "b")
+    println("apple" == "apple")
+    println("Zebra" < "apple")
+}
